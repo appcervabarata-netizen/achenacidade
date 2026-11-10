@@ -38,35 +38,35 @@ export const Navbar: React.FC = () => {
 
   return (
     <header className="sticky top-0 z-40 bg-white/95 dark:bg-slate-900/95 backdrop-blur-md border-b border-slate-200 dark:border-slate-800 transition-colors safe-top">
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between gap-3 md:gap-8">
+      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-2.5 sm:py-0 min-h-16 sm:h-16 flex items-center justify-center sm:justify-between gap-3 md:gap-8 relative">
         
-        {/* Zone 1: Brand Wordmark & City Selector */}
-        <div className="flex items-center gap-3 sm:gap-4 shrink-0">
+        {/* Zone 1: Brand Wordmark & City Selector (Centered on mobile with city selector below text) */}
+        <div className="flex flex-col sm:flex-row items-center justify-center sm:justify-start gap-1 sm:gap-4 w-full sm:w-auto shrink-0">
           <button
             onClick={() => navigateToView('home')}
-            className="group flex items-center gap-2.5 whitespace-nowrap cursor-pointer text-left"
+            className="group flex items-center justify-center gap-2 sm:gap-2.5 whitespace-nowrap cursor-pointer text-center sm:text-left"
           >
             <img
               src="/logo.png"
               alt="achenacidade"
-              className="w-10 h-10 object-contain rounded-full shadow-sm group-hover:scale-105 transition-transform bg-white"
+              className="w-9 h-9 sm:w-10 sm:h-10 object-contain rounded-full shadow-sm group-hover:scale-105 transition-transform bg-white"
             />
-            <div className="flex flex-col">
-              <span className="text-xl font-extrabold tracking-tight text-slate-900 dark:text-white font-display">
+            <div className="flex flex-col items-center sm:items-start">
+              <span className="text-lg sm:text-xl font-extrabold tracking-tight text-slate-900 dark:text-white font-display">
                 achena<span className="text-orange-600">cidade</span>
               </span>
             </div>
           </button>
 
-          {/* City Selector: Prominently shown when more than 2 cities are registered */}
+          {/* City Selector: Centered below title text on mobile, inline on desktop */}
           {showCitySelector && (
-            <div className="relative flex items-center">
-              <div className="flex items-center gap-1.5 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200/80 px-2.5 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 text-xs font-semibold text-slate-800 dark:text-slate-100 transition-colors">
+            <div className="relative flex items-center justify-center w-full sm:w-auto mt-0.5 sm:mt-0">
+              <div className="flex items-center justify-center gap-1.5 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200/80 px-2.5 py-1 rounded-lg border border-slate-200 dark:border-slate-700 text-xs font-semibold text-slate-800 dark:text-slate-100 transition-colors">
                 <MapPin className="w-3.5 h-3.5 text-orange-600 shrink-0" />
                 <select
                   value={selectedCityId}
                   onChange={(e) => setSelectedCityId(e.target.value)}
-                  className="bg-transparent border-none outline-none cursor-pointer pr-1 text-xs font-medium text-slate-900 dark:text-white"
+                  className="bg-transparent border-none outline-none cursor-pointer pr-1 text-[11px] sm:text-xs font-medium text-slate-900 dark:text-white"
                   title="Escolha a cidade para filtrar empresas e produtos"
                 >
                   <option value="all" className="dark:bg-slate-800">Todas as Cidades</option>
@@ -130,7 +130,7 @@ export const Navbar: React.FC = () => {
         </nav>
 
         {/* Zone 3: Actions (Favorites, Cadastrar Loja, Login/Account) */}
-        <div className="flex items-center gap-2 sm:gap-2.5 shrink-0">
+        <div className="absolute right-3 top-3.5 sm:static flex items-center gap-2 sm:gap-2.5 shrink-0">
           {/* Favorites Button (Hidden on mobile to preserve layout, accessible in bottom nav/bubble) */}
           <button
             onClick={() => openModal('favorites')}
