@@ -37,7 +37,7 @@ export const Navbar: React.FC = () => {
   };
 
   return (
-    <header className="sticky top-0 z-40 bg-white/95 dark:bg-slate-900/95 backdrop-blur-md border-b border-slate-200 dark:border-slate-800 transition-colors">
+    <header className="sticky top-0 z-40 bg-white/95 dark:bg-slate-900/95 backdrop-blur-md border-b border-slate-200 dark:border-slate-800 transition-colors safe-top">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between gap-3 md:gap-8">
         
         {/* Zone 1: Brand Wordmark & City Selector */}
@@ -131,14 +131,14 @@ export const Navbar: React.FC = () => {
 
         {/* Zone 3: Actions (Favorites, Cadastrar Loja, Login/Account) */}
         <div className="flex items-center gap-2 sm:gap-2.5 shrink-0">
-          {/* Favorites Button */}
+          {/* Favorites Button (Hidden on mobile to preserve layout, accessible in bottom nav/bubble) */}
           <button
             onClick={() => openModal('favorites')}
-            className="relative flex items-center gap-1.5 px-2.5 sm:px-3 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-200 hover:text-rose-600 dark:hover:text-rose-400 hover:border-rose-200 dark:hover:border-rose-800 text-xs font-semibold transition-colors cursor-pointer whitespace-nowrap shadow-xs"
+            className="hidden sm:flex relative items-center gap-1.5 px-2.5 sm:px-3 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-200 hover:text-rose-600 dark:hover:text-rose-400 hover:border-rose-200 dark:hover:border-rose-800 text-xs font-semibold transition-colors cursor-pointer whitespace-nowrap shadow-xs"
             title="Ver empresas e produtos favoritados"
           >
             <Heart className={`w-3.5 h-3.5 ${totalFavoritesCount > 0 ? 'text-rose-500 fill-rose-500' : 'text-slate-400'}`} />
-            <span className="hidden sm:inline">Favoritos</span>
+            <span className="hidden md:inline">Favoritos</span>
             {totalFavoritesCount > 0 && (
               <span className="flex items-center justify-center min-w-4.5 h-4 px-1 rounded-full bg-rose-600 text-white text-[10px] font-black">
                 {totalFavoritesCount}
@@ -152,7 +152,7 @@ export const Navbar: React.FC = () => {
               {authSession.role === 'admin' ? (
                 <button
                   onClick={() => setCurrentView('admin')}
-                  className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition-colors cursor-pointer whitespace-nowrap shadow-xs ${
+                  className={`flex items-center gap-1.5 px-2.5 sm:px-3 py-1.5 rounded-lg text-xs font-bold transition-colors cursor-pointer whitespace-nowrap shadow-xs ${
                     currentView === 'admin'
                       ? 'bg-orange-600 text-white'
                       : 'bg-slate-900 hover:bg-slate-800 text-white dark:bg-slate-100 dark:hover:bg-white dark:text-slate-900'
@@ -160,12 +160,12 @@ export const Navbar: React.FC = () => {
                   title="Abrir Painel Administrativo"
                 >
                   <ShieldCheck className="w-3.5 h-3.5 text-orange-400" />
-                  <span>Painel Admin</span>
+                  <span className="hidden sm:inline">Painel Admin</span>
                 </button>
               ) : (
                 <button
                   onClick={() => setCurrentView('business_portal')}
-                  className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition-colors cursor-pointer whitespace-nowrap shadow-xs ${
+                  className={`flex items-center gap-1.5 px-2.5 sm:px-3 py-1.5 rounded-lg text-xs font-bold transition-colors cursor-pointer whitespace-nowrap shadow-xs ${
                     currentView === 'business_portal'
                       ? 'bg-blue-700 text-white'
                       : 'bg-blue-600 hover:bg-blue-700 text-white'
@@ -173,7 +173,7 @@ export const Navbar: React.FC = () => {
                   title="Abrir Painel da Loja"
                 >
                   <Store className="w-3.5 h-3.5" />
-                  <span className="max-w-28 truncate">{currentBusinessAuth?.name || 'Minha Loja'}</span>
+                  <span className="max-w-20 sm:max-w-28 truncate">{currentBusinessAuth?.name || 'Minha Loja'}</span>
                 </button>
               )}
 
@@ -187,10 +187,10 @@ export const Navbar: React.FC = () => {
             </div>
           ) : (
             <div className="flex items-center gap-1.5 sm:gap-2">
-              {/* Cadastrar Loja Button: opens the store registration page as requested */}
+              {/* Cadastrar Loja Button: Hidden on mobile (< sm) so header doesn't break; mobile uses bottom nav */}
               <button
-                onClick={() => setCurrentView('business_portal')}
-                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-orange-200 dark:border-orange-900 bg-orange-50 dark:bg-orange-950/40 text-orange-700 dark:text-orange-300 hover:bg-orange-100 text-xs font-bold transition-colors cursor-pointer whitespace-nowrap shadow-xs"
+                onClick={() => setCurrentView('register_store')}
+                className="hidden sm:flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-orange-200 dark:border-orange-900 bg-orange-50 dark:bg-orange-950/40 text-orange-700 dark:text-orange-300 hover:bg-orange-100 text-xs font-bold transition-colors cursor-pointer whitespace-nowrap shadow-xs"
                 title="Cadastrar Nova Loja no Achenacidade"
               >
                 <PlusCircle className="w-3.5 h-3.5 text-orange-600" />

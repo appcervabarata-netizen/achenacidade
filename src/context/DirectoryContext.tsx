@@ -1,5 +1,5 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
-import { City, Category, Plan, Business, Product, AdminTheme, AdBanner, AppView, StoreProductCategory } from '../types';
+import { City, Category, Plan, Business, Product, AdminTheme, AdBanner, AppView, StoreProductCategory, SessionConfig, AuthSession } from '../types';
 import {
   initialCities,
   initialCategories,
@@ -75,13 +75,10 @@ interface DirectoryContextType {
   recordBannerClick: (id: string) => void;
 
   // Auth Session System
-  authSession: {
-    isAuthenticated: boolean;
-    role: 'admin' | 'business' | null;
-    name: string;
-    email: string;
-    businessId?: string;
-  };
+  authSession: AuthSession;
+  sessionConfig: SessionConfig;
+  updateSessionConfig: (updates: Partial<SessionConfig>) => void;
+  renewSession: () => void;
   loginAsAdmin: (email?: string) => void;
   loginAsStoreOwner: (businessId: string, email?: string) => void;
   logout: () => void;
@@ -223,8 +220,21 @@ export const DirectoryProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     }
   });
 
-  // Full Screen Navigation State
-  const [currentView, setCurrentView] = useState<AppView>('home');
+  // Full Screen Navigation State with History Support for Mobile Back Button
+  const [currentView, setCurrentViewState] = useState<AppView>('home');
+
+  const setCurrentView = (view: AppView, replace: boolean = false) => {
+    setCurrentViewState((prev) => {
+      if (prev !== view) {
+        if (replace) {
+          window.history.replaceState({ view, modal: null }, '');
+        } else {
+          window.history.pushState({ view, modal: null }, '');
+        }
+      }
+      return view;
+    });
+  };
 
   // Ad Banners State (Admin only, billed separately)
   const [banners, setBanners] = useState<AdBanner[]>(() => {
@@ -240,19 +250,43 @@ export const DirectoryProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     localStorage.setItem('achenacidade_banners', JSON.stringify(banners));
   }, [banners]);
 
-  // Auth session (persisted in localStorage)
-  const [authSession, setAuthSession] = useState<{
-    isAuthenticated: boolean;
-    role: 'admin' | 'business' | null;
-    name: string;
-    email: string;
-    businessId?: string;
-  }>(() => {
+  // Session Configuration (Configurable in Admin)
+  const defaultSessionConfig: SessionConfig = {
+    adminSessionDurationMinutes: 120, // 2 hours
+    businessSessionDurationMinutes: 1440, // 24 hours
+  };
+
+  const [sessionConfig, setSessionConfig] = useState<SessionConfig>(() => {
     try {
-      const saved = localStorage.getItem('achenacidade_auth');
-      return saved
-        ? JSON.parse(saved)
-        : { isAuthenticated: false, role: null, name: '', email: '' };
+      const saved = localStorage.getItem('achenacidade_session_config');
+      return saved ? JSON.parse(saved) : defaultSessionConfig;
+    } catch {
+      return defaultSessionConfig;
+    }
+  });
+
+  useEffect(() => {
+    localStorage.setItem('achenacidade_session_config', JSON.stringify(sessionConfig));
+  }, [sessionConfig]);
+
+  const updateSessionConfig = (updates: Partial<SessionConfig>) => {
+    setSessionConfig((prev) => ({ ...prev, ...updates }));
+  };
+
+  // Auth session (persisted in localStorage with expiration checking)
+  const [authSession, setAuthSession] = useState<AuthSession>(() => {
+    try {
+      const savedRaw = localStorage.getItem('achenacidade_auth');
+      if (!savedRaw) {
+        return { isAuthenticated: false, role: null, name: '', email: '' };
+      }
+      const saved: AuthSession = JSON.parse(savedRaw);
+      // If session is expired, invalidate it
+      if (saved.isAuthenticated && saved.expiresAt && Date.now() > saved.expiresAt) {
+        localStorage.removeItem('achenacidade_auth');
+        return { isAuthenticated: false, role: null, name: '', email: '' };
+      }
+      return saved;
     } catch {
       return { isAuthenticated: false, role: null, name: '', email: '' };
     }
@@ -261,6 +295,31 @@ export const DirectoryProvider: React.FC<{ children: React.ReactNode }> = ({ chi
   useEffect(() => {
     localStorage.setItem('achenacidade_auth', JSON.stringify(authSession));
   }, [authSession]);
+
+  // Restore currentBusinessAuth when user is authenticated as business
+  useEffect(() => {
+    if (authSession.isAuthenticated && authSession.role === 'business' && authSession.businessId) {
+      const found = businesses.find((b) => b.id === authSession.businessId);
+      if (found) {
+        setCurrentBusinessAuth(found);
+      }
+    } else if (!authSession.isAuthenticated) {
+      setCurrentBusinessAuth(null);
+    }
+  }, [authSession.isAuthenticated, authSession.role, authSession.businessId, businesses]);
+
+  // Periodic session expiration watchdog (checks every 10 seconds)
+  useEffect(() => {
+    const interval = setInterval(() => {
+      if (authSession.isAuthenticated && authSession.expiresAt) {
+        if (Date.now() >= authSession.expiresAt) {
+          logout();
+          alert('Sua sessão expirou por segurança. Faça login novamente para continuar.');
+        }
+      }
+    }, 10000);
+    return () => clearInterval(interval);
+  }, [authSession.isAuthenticated, authSession.expiresAt]);
 
   // Active Modals
   const [activeModal, setActiveModal] = useState<{
@@ -517,12 +576,16 @@ export const DirectoryProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     const biz = directBiz || businesses.find((b) => b.id === businessId);
     if (biz) {
       setCurrentBusinessAuth(biz);
+      const now = Date.now();
+      const durationMs = (sessionConfig.businessSessionDurationMinutes || 1440) * 60 * 1000;
       setAuthSession({
         isAuthenticated: true,
         role: 'business',
         name: biz.name,
         email: biz.ownerEmail || biz.email || 'lojista@achenacidade.com.br',
         businessId: biz.id,
+        loginTimestamp: now,
+        expiresAt: now + durationMs,
       });
       setCurrentView('business_portal');
     }
@@ -562,11 +625,15 @@ export const DirectoryProvider: React.FC<{ children: React.ReactNode }> = ({ chi
 
   // Auth Actions
   const loginAsAdmin = (email: string = 'admin@achenacidade.com.br') => {
-    const session = {
+    const now = Date.now();
+    const durationMs = (sessionConfig.adminSessionDurationMinutes || 120) * 60 * 1000;
+    const session: AuthSession = {
       isAuthenticated: true,
-      role: 'admin' as const,
+      role: 'admin',
       name: 'Administrador Master',
       email,
+      loginTimestamp: now,
+      expiresAt: now + durationMs,
     };
     setAuthSession(session);
     setCurrentView('admin');
@@ -576,16 +643,33 @@ export const DirectoryProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     const biz = businesses.find((b) => b.id === businessId);
     if (biz) {
       setCurrentBusinessAuth(biz);
-      const session = {
+      const now = Date.now();
+      const durationMs = (sessionConfig.businessSessionDurationMinutes || 1440) * 60 * 1000;
+      const session: AuthSession = {
         isAuthenticated: true,
-        role: 'business' as const,
+        role: 'business',
         name: biz.name,
-        email: email || biz.email || 'lojista@achenacidade.com.br',
+        email: email || biz.ownerEmail || biz.email || 'lojista@achenacidade.com.br',
         businessId: biz.id,
+        loginTimestamp: now,
+        expiresAt: now + durationMs,
       };
       setAuthSession(session);
       setCurrentView('business_portal');
     }
+  };
+
+  const renewSession = () => {
+    if (!authSession.isAuthenticated || !authSession.role) return;
+    const now = Date.now();
+    const durationMinutes = authSession.role === 'admin'
+      ? (sessionConfig.adminSessionDurationMinutes || 120)
+      : (sessionConfig.businessSessionDurationMinutes || 1440);
+    setAuthSession((prev) => ({
+      ...prev,
+      loginTimestamp: now,
+      expiresAt: now + durationMinutes * 60 * 1000,
+    }));
   };
 
   const logout = () => {
@@ -594,7 +678,7 @@ export const DirectoryProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     setCurrentView('home');
   };
 
-  // Modals
+  // Modals with History State for native back button
   const openModal = (
     type: 'business_detail' | 'product_detail' | 'business_portal' | 'admin' | 'favorites',
     id?: string
@@ -609,11 +693,44 @@ export const DirectoryProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       return;
     }
     setActiveModal({ type, id });
+    window.history.pushState({ view: currentView, modal: type, modalId: id }, '');
   };
 
   const closeModal = () => {
     setActiveModal({ type: null });
+    if (window.history.state && window.history.state.modal) {
+      window.history.back();
+    }
   };
+
+  // Support smartphone hardware & gesture back button
+  useEffect(() => {
+    if (!window.history.state || typeof window.history.state.view === 'undefined') {
+      window.history.replaceState({ view: currentView, modal: null }, '');
+    }
+
+    const handlePopState = (event: PopStateEvent) => {
+      const state = event.state;
+      if (state) {
+        if (state.modal) {
+          setActiveModal({ type: state.modal, id: state.modalId });
+        } else {
+          setActiveModal({ type: null });
+        }
+        if (state.view) {
+          setCurrentViewState(state.view);
+        } else {
+          setCurrentViewState('home');
+        }
+      } else {
+        setActiveModal({ type: null });
+        setCurrentViewState('home');
+      }
+    };
+
+    window.addEventListener('popstate', handlePopState);
+    return () => window.removeEventListener('popstate', handlePopState);
+  }, [currentView]);
 
   // Reset demo
   const resetToDemoData = () => {
@@ -714,6 +831,9 @@ export const DirectoryProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         currentView,
         setCurrentView,
         authSession,
+        sessionConfig,
+        updateSessionConfig,
+        renewSession,
         loginAsAdmin,
         loginAsStoreOwner,
         logout,

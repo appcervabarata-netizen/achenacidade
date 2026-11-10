@@ -185,7 +185,7 @@ export const LoginScreen: React.FC = () => {
               <div className="pt-2 text-center">
                 <button
                   type="button"
-                  onClick={() => setCurrentView('business_portal')}
+                  onClick={() => setCurrentView('register_store')}
                   className="w-full py-2.5 px-4 rounded-xl border border-orange-200 dark:border-orange-900 bg-orange-50 dark:bg-orange-950/40 text-orange-700 dark:text-orange-300 hover:bg-orange-100 text-xs font-bold transition flex items-center justify-center gap-2 cursor-pointer shadow-xs"
                 >
                   <Store className="w-3.5 h-3.5 text-orange-600" />

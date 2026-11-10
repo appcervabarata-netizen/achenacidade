@@ -111,6 +111,21 @@ export interface StoreProductCategory {
   description?: string;
 }
 
+export interface SessionConfig {
+  adminSessionDurationMinutes: number; // e.g. 120 (2h)
+  businessSessionDurationMinutes: number; // e.g. 1440 (24h)
+}
+
+export interface AuthSession {
+  isAuthenticated: boolean;
+  role: 'admin' | 'business' | null;
+  name: string;
+  email: string;
+  businessId?: string;
+  loginTimestamp?: number;
+  expiresAt?: number;
+}
+
 export type AppView =
   | 'home'
   | 'categories'
@@ -119,5 +134,6 @@ export type AppView =
   | 'plans'
   | 'admin'
   | 'business_portal'
-  | 'login';
+  | 'login'
+  | 'register_store';
 

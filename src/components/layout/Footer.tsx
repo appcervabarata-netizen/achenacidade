@@ -4,7 +4,7 @@ import { ShieldCheck, MapPin, Building2, ShoppingBag, Sparkles } from 'lucide-re
 import { PWAInstallButton } from '../common/PWAInstallButton';
 
 export const Footer: React.FC = () => {
-  const { cities, setSelectedCityId, openModal } = useDirectory();
+  const { cities, setSelectedCityId, openModal, setCurrentView } = useDirectory();
 
   const activeCities = cities.filter((c) => c.isActive);
 
@@ -89,7 +89,10 @@ export const Footer: React.FC = () => {
               </li>
               <li>
                 <button
-                  onClick={() => openModal('business_portal')}
+                  onClick={() => {
+                    setCurrentView('register_store');
+                    window.scrollTo({ top: 0, behavior: 'smooth' });
+                  }}
                   className="hover:text-white transition text-left cursor-pointer"
                 >
                   Cadastrar Minha Loja

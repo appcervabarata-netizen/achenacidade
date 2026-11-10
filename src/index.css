@@ -32,3 +32,20 @@ h1, h2, h3, h4, h5, h6, .font-display {
 ::-webkit-scrollbar-thumb:hover {
   background: rgba(100, 116, 139, 0.6);
 }
+
+/* Safe-area insets for native mobile edge-to-edge */
+.safe-top {
+  padding-top: max(env(safe-area-inset-top, 0px), 0px);
+}
+
+.safe-bottom {
+  padding-bottom: max(env(safe-area-inset-bottom, 0px), 0px);
+}
+
+/* Standalone / Fullscreen PWA native optimizations */
+@media all and (display-mode: standalone), all and (display-mode: fullscreen) {
+  html, body {
+    overscroll-behavior-y: none;
+    -webkit-tap-highlight-color: transparent;
+  }
+}

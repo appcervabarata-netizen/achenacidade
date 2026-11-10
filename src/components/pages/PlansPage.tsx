@@ -18,8 +18,8 @@ export const PlansPage: React.FC = () => {
   const { plans, setCurrentView } = useDirectory();
 
   const handleChoosePlan = () => {
-    // Lead visitor directly to login/registration as requested
-    setCurrentView('login');
+    // Lead visitor directly to register their store
+    setCurrentView('register_store');
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 

@@ -17,6 +17,7 @@ import { PlansPage } from './components/pages/PlansPage';
 import { LoginScreen } from './components/auth/LoginScreen';
 import { AdminScreen } from './components/admin/AdminScreen';
 import { BusinessPortalScreen } from './components/business/BusinessPortalScreen';
+import { RegisterStoreScreen } from './components/business/RegisterStoreScreen';
 import { BusinessDetailModal } from './components/business/BusinessDetailModal';
 import { ProductDetailModal } from './components/business/ProductDetailModal';
 import { FavoritesModal } from './components/favorites/FavoritesModal';
@@ -34,6 +35,7 @@ function AppContent() {
       {currentView === 'login' && <LoginScreen />}
       {currentView === 'admin' && <AdminScreen />}
       {currentView === 'business_portal' && <BusinessPortalScreen />}
+      {currentView === 'register_store' && <RegisterStoreScreen />}
       {currentView === 'categories' && <CategoriesPage />}
       {currentView === 'stores' && <StoresPage />}
       {currentView === 'products' && <ProductsPage />}

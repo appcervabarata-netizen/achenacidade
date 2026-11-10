@@ -18,8 +18,9 @@ export default defineConfig(() => {
           short_name: 'achenacidade',
           description: 'Diretório de empresas e catálogo de produtos por cidades com planos de divulgação.',
           theme_color: '#1D4ED8',
-          background_color: '#F8FAFC',
-          display: 'standalone',
+          display: 'fullscreen',
+          display_override: ['fullscreen', 'standalone', 'minimal-ui'],
+          orientation: 'portrait-primary',
           start_url: '/',
           scope: '/',
           icons: [

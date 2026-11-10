@@ -29,8 +29,9 @@ export const BottomNav: React.FC = () => {
         setCurrentView('business_portal');
       }
     } else {
-      setCurrentView('login');
+      setCurrentView('register_store');
     }
+    window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
   return (
@@ -118,7 +119,7 @@ export const BottomNav: React.FC = () => {
           <button
             onClick={handleAnunciarClick}
             className={`flex flex-col items-center justify-center gap-1 h-full cursor-pointer transition-colors ${
-              currentView === 'login' || currentView === 'business_portal' || currentView === 'admin'
+              currentView === 'login' || currentView === 'business_portal' || currentView === 'admin' || currentView === 'register_store'
                 ? 'text-orange-600 dark:text-orange-400 font-bold'
                 : 'text-slate-500 dark:text-slate-400'
             }`}

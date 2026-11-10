@@ -57,14 +57,14 @@ export const StoresPage: React.FC = () => {
       <RotatingBanner position="rotating_header" />
 
       <div className="max-w-7xl mx-auto px-3 sm:px-6 lg:px-8 py-5">
-        {/* Header with Title and "Anunciar" CTA */}
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-5 pb-4 border-b border-slate-200 dark:border-slate-800">
+        {/* Header with Title and "Anunciar" CTA (Hidden on mobile for clean native app appearance) */}
+        <div className="hidden sm:flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-5 pb-4 border-b border-slate-200 dark:border-slate-800">
           <div>
-            <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-blue-100 dark:bg-blue-950/60 text-blue-700 dark:text-blue-300 text-xs font-bold mb-1.5">
+            <div className="hidden sm:inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-blue-100 dark:bg-blue-950/60 text-blue-700 dark:text-blue-300 text-xs font-bold mb-1.5">
               <Building2 className="w-3.5 h-3.5" />
               <span>Guia Comercial de Lojas</span>
             </div>
-            <h1 className="text-2xl sm:text-3xl font-extrabold text-slate-900 dark:text-white font-display">
+            <h1 className="hidden sm:block text-2xl sm:text-3xl font-extrabold text-slate-900 dark:text-white font-display">
               Lojas e Empresas Cadastradas
             </h1>
             <p className="text-xs sm:text-sm text-slate-500 dark:text-slate-400">
@@ -72,10 +72,10 @@ export const StoresPage: React.FC = () => {
             </p>
           </div>
 
-          {/* Anunciar button -> leads to login / new store registration as requested */}
+          {/* Anunciar button -> leads to register_store on desktop, hidden on mobile */}
           <button
-            onClick={() => setCurrentView('login')}
-            className="self-start sm:self-auto flex items-center gap-2 px-4 py-2.5 rounded-xl bg-orange-600 hover:bg-orange-700 text-white text-xs sm:text-sm font-bold shadow-sm transition cursor-pointer"
+            onClick={() => setCurrentView('register_store')}
+            className="hidden sm:flex self-start sm:self-auto items-center gap-2 px-4 py-2.5 rounded-xl bg-orange-600 hover:bg-orange-700 text-white text-xs sm:text-sm font-bold shadow-sm transition cursor-pointer"
           >
             <PlusCircle className="w-4 h-4" />
             <span>Anunciar Minha Loja</span>
@@ -84,8 +84,8 @@ export const StoresPage: React.FC = () => {
 
         {/* Filters Bar: City Select + Search */}
         <div className="grid grid-cols-1 sm:grid-cols-12 gap-3 mb-4">
-          {/* City filter */}
-          <div className="sm:col-span-4 flex items-center gap-2 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 px-3 py-2 rounded-xl shadow-xs">
+          {/* City filter (Hidden on mobile to prioritize instant search, city is selected in top header) */}
+          <div className="hidden sm:flex sm:col-span-4 items-center gap-2 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 px-3 py-2 rounded-xl shadow-xs">
             <MapPin className="w-4 h-4 text-orange-600 shrink-0" />
             <select
               value={selectedCityId}
