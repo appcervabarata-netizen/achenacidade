@@ -40,8 +40,8 @@ export const Navbar: React.FC = () => {
     <header className="sticky top-0 z-40 bg-white/95 dark:bg-slate-900/95 backdrop-blur-md border-b border-slate-200 dark:border-slate-800 transition-colors safe-top">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-2.5 sm:py-0 min-h-16 sm:h-16 flex items-center justify-center sm:justify-between gap-3 md:gap-8 relative">
         
-        {/* Zone 1: Brand Wordmark & City Selector (Centered on mobile with city selector below text) */}
-        <div className="flex flex-col sm:flex-row items-center justify-center sm:justify-start gap-1 sm:gap-4 w-full sm:w-auto shrink-0">
+        {/* Zone 1: Brand Wordmark & City Selector (Side-by-side with logo on mobile; title hidden on mobile) */}
+        <div className="flex flex-row items-center justify-center sm:justify-start gap-2.5 sm:gap-4 w-full sm:w-auto shrink-0">
           <button
             onClick={() => navigateToView('home')}
             className="group flex items-center justify-center gap-2 sm:gap-2.5 whitespace-nowrap cursor-pointer text-center sm:text-left"
@@ -49,19 +49,19 @@ export const Navbar: React.FC = () => {
             <img
               src="/logo.png"
               alt="achenacidade"
-              className="w-9 h-9 sm:w-10 sm:h-10 object-contain rounded-full shadow-sm group-hover:scale-105 transition-transform bg-white"
+              className="w-[55px] h-[55px] object-contain rounded-full shadow-sm group-hover:scale-105 transition-transform bg-white shrink-0"
             />
-            <div className="flex flex-col items-center sm:items-start">
+            <div className="hidden sm:flex flex-col items-start">
               <span className="text-lg sm:text-xl font-extrabold tracking-tight text-slate-900 dark:text-white font-display">
                 achena<span className="text-orange-600">cidade</span>
               </span>
             </div>
           </button>
 
-          {/* City Selector: Centered below title text on mobile, inline on desktop */}
+          {/* City Selector: Positioned directly next to the logo on mobile and desktop */}
           {showCitySelector && (
-            <div className="relative flex items-center justify-center w-full sm:w-auto mt-0.5 sm:mt-0">
-              <div className="flex items-center justify-center gap-1.5 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200/80 px-2.5 py-1 rounded-lg border border-slate-200 dark:border-slate-700 text-xs font-semibold text-slate-800 dark:text-slate-100 transition-colors">
+            <div className="relative flex items-center shrink-0">
+              <div className="flex items-center justify-center gap-1.5 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200/80 px-2.5 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 text-xs font-semibold text-slate-800 dark:text-slate-100 transition-colors">
                 <MapPin className="w-3.5 h-3.5 text-orange-600 shrink-0" />
                 <select
                   value={selectedCityId}
