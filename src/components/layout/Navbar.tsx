@@ -129,8 +129,8 @@ export const Navbar: React.FC = () => {
           </button>
         </nav>
 
-        {/* Zone 3: Actions (Favorites, Cadastrar Loja, Login/Account) */}
-        <div className="absolute right-3 top-3.5 sm:static flex items-center gap-2 sm:gap-2.5 shrink-0">
+        {/* Zone 3: Actions (Favorites, Cadastrar Loja, Login/Account) - Hidden on mobile as requested */}
+        <div className="hidden sm:flex items-center gap-2 sm:gap-2.5 shrink-0">
           {/* Favorites Button (Hidden on mobile to preserve layout, accessible in bottom nav/bubble) */}
           <button
             onClick={() => openModal('favorites')}
@@ -148,11 +148,11 @@ export const Navbar: React.FC = () => {
 
           {/* Authenticated State vs Guest State */}
           {authSession.isAuthenticated ? (
-            <div className="flex items-center gap-2">
+            <div className="hidden sm:flex items-center gap-2">
               {authSession.role === 'admin' ? (
                 <button
                   onClick={() => setCurrentView('admin')}
-                  className={`flex items-center gap-1.5 px-2.5 sm:px-3 py-1.5 rounded-lg text-xs font-bold transition-colors cursor-pointer whitespace-nowrap shadow-xs ${
+                  className={`hidden sm:flex items-center gap-1.5 px-2.5 sm:px-3 py-1.5 rounded-lg text-xs font-bold transition-colors cursor-pointer whitespace-nowrap shadow-xs ${
                     currentView === 'admin'
                       ? 'bg-orange-600 text-white'
                       : 'bg-slate-900 hover:bg-slate-800 text-white dark:bg-slate-100 dark:hover:bg-white dark:text-slate-900'
@@ -165,7 +165,7 @@ export const Navbar: React.FC = () => {
               ) : (
                 <button
                   onClick={() => setCurrentView('business_portal')}
-                  className={`flex items-center gap-1.5 px-2.5 sm:px-3 py-1.5 rounded-lg text-xs font-bold transition-colors cursor-pointer whitespace-nowrap shadow-xs ${
+                  className={`hidden sm:flex items-center gap-1.5 px-2.5 sm:px-3 py-1.5 rounded-lg text-xs font-bold transition-colors cursor-pointer whitespace-nowrap shadow-xs ${
                     currentView === 'business_portal'
                       ? 'bg-blue-700 text-white'
                       : 'bg-blue-600 hover:bg-blue-700 text-white'
@@ -179,14 +179,14 @@ export const Navbar: React.FC = () => {
 
               <button
                 onClick={logout}
-                className="p-1.5 rounded-lg text-slate-500 hover:text-rose-600 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors cursor-pointer"
+                className="hidden sm:flex p-1.5 rounded-lg text-slate-500 hover:text-rose-600 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors cursor-pointer"
                 title="Sair da conta"
               >
                 <LogOut className="w-4 h-4" />
               </button>
             </div>
           ) : (
-            <div className="flex items-center gap-1.5 sm:gap-2">
+            <div className="hidden sm:flex items-center gap-1.5 sm:gap-2">
               {/* Cadastrar Loja Button: Hidden on mobile (< sm) so header doesn't break; mobile uses bottom nav */}
               <button
                 onClick={() => setCurrentView('register_store')}
