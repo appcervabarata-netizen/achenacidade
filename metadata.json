@@ -1,0 +1,6 @@
+{
+  "name": "achenacidade",
+  "description": "Diretório de empresas e catálogo de produtos por cidades com planos de anúncio, PWA e exportador PHP/MySQL para HostGator.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
