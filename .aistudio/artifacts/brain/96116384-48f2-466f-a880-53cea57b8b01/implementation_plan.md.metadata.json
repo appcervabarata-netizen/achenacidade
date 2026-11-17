@@ -1,6 +1,0 @@
-{
-  "summary":  "Plano de implementação para correção do fluxo de cadastro de lojas, restrição de acesso por usuário logado no painel do lojista e inclusão de limite de lojas por plano no painel administrativo.",
-  "updatedAt":  "2026-11-10T00:13:16.375568513Z",
-  "requestFeedback":  true,
-  "userFacing":  true
-}

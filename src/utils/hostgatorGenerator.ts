@@ -1,4 +1,4 @@
-import { City, Category, Plan, Business, Product, AdBanner } from '../types';
+import { City, Category, Plan, Business, Product, Service, AdBanner } from '../types';
 
 export interface HostGatorPackage {
   schemaSql: string;
@@ -15,7 +15,8 @@ export function generateHostGatorPackage(
   plans: Plan[],
   businesses: Business[],
   products: Product[],
-  banners: AdBanner[] = []
+  banners: AdBanner[] = [],
+  services: Service[] = []
 ): HostGatorPackage {
   // 1. MySQL Schema DDL
   const schemaSql = `-- ========================================================
@@ -62,6 +63,8 @@ CREATE TABLE IF NOT EXISTS \`planos\` (
   \`product_limit\` INT NOT NULL DEFAULT 3,
   \`badge\` VARCHAR(50) DEFAULT 'Gratuito',
   \`features_json\` TEXT,
+  \`use_custom_discounts\` TINYINT(1) DEFAULT 0,
+  \`cycle_discounts_json\` TEXT,
   \`highlighted\` TINYINT(1) DEFAULT 0,
   \`color\` VARCHAR(20) DEFAULT '#1D4ED8',
   PRIMARY KEY (\`id\`)
@@ -121,6 +124,29 @@ CREATE TABLE IF NOT EXISTS \`produtos\` (
   CONSTRAINT \`fk_prod_city\` FOREIGN KEY (\`city_id\`) REFERENCES \`cidades\` (\`id\`) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
+-- 5B. TABELA DE SERVIÇOS DAS EMPRESAS
+CREATE TABLE IF NOT EXISTS \`servicos\` (
+  \`id\` VARCHAR(50) NOT NULL,
+  \`business_id\` VARCHAR(50) NOT NULL,
+  \`city_id\` VARCHAR(50) NOT NULL,
+  \`name\` VARCHAR(150) NOT NULL,
+  \`price\` DECIMAL(10,2) DEFAULT NULL,
+  \`price_type\` ENUM('fixed', 'from', 'hourly', 'quote') NOT NULL DEFAULT 'fixed',
+  \`duration\` VARCHAR(80) DEFAULT '',
+  \`service_mode\` ENUM('on_site', 'home_visit', 'online', 'both') NOT NULL DEFAULT 'on_site',
+  \`description\` TEXT,
+  \`image_url\` TEXT,
+  \`category\` VARCHAR(100) DEFAULT '',
+  \`is_active\` TINYINT(1) DEFAULT 1,
+  \`featured\` TINYINT(1) DEFAULT 0,
+  \`created_at\` TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (\`id\`),
+  KEY \`idx_serv_biz\` (\`business_id\`),
+  KEY \`idx_serv_city\` (\`city_id\`),
+  CONSTRAINT \`fk_serv_biz\` FOREIGN KEY (\`business_id\`) REFERENCES \`empresas\` (\`id\`) ON DELETE CASCADE,
+  CONSTRAINT \`fk_serv_city\` FOREIGN KEY (\`city_id\`) REFERENCES \`cidades\` (\`id\`) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
 -- 6. TABELA DE BANNERS PUBLICITÁRIOS (Patrocinados)
 CREATE TABLE IF NOT EXISTS \`banners\` (
   \`id\` VARCHAR(50) NOT NULL,
@@ -137,6 +163,25 @@ CREATE TABLE IF NOT EXISTS \`banners\` (
   \`badge_text\` VARCHAR(50) DEFAULT 'Publicidade',
   \`created_at\` TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
   PRIMARY KEY (\`id\`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- 7. TABELA DE PAGAMENTOS E ASSINATURAS (MERCADO PAGO)
+CREATE TABLE IF NOT EXISTS \`pagamentos\` (
+  \`id\` VARCHAR(50) NOT NULL,
+  \`business_id\` VARCHAR(50) NOT NULL,
+  \`plan_id\` VARCHAR(50) NOT NULL,
+  \`billing_cycle\` VARCHAR(20) DEFAULT 'monthly',
+  \`discount_percent\` DECIMAL(5,2) DEFAULT 0.00,
+  \`amount\` DECIMAL(10,2) NOT NULL,
+  \`payment_method\` VARCHAR(30) NOT NULL,
+  \`status\` VARCHAR(30) DEFAULT 'approved',
+  \`mercadopago_payment_id\` VARCHAR(100),
+  \`payer_email\` VARCHAR(150),
+  \`installments\` INT DEFAULT 1,
+  \`created_at\` TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (\`id\`),
+  KEY \`idx_business\` (\`business_id\`),
+  KEY \`idx_plan\` (\`plan_id\`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- ========================================================
@@ -163,7 +208,7 @@ ${categories
 ${plans
   .map(
     (p) =>
-      `INSERT INTO \`planos\` (\`id\`, \`name\`, \`price_monthly\`, \`product_limit\`, \`badge\`, \`features_json\`, \`highlighted\`, \`color\`) VALUES (${escapeSql(p.id)}, ${escapeSql(p.name)}, ${p.priceMonthly.toFixed(2)}, ${p.productLimit}, ${escapeSql(p.badge)}, ${escapeSql(JSON.stringify(p.features))}, ${p.highlighted ? 1 : 0}, ${escapeSql(p.color)}) ON DUPLICATE KEY UPDATE \`name\`=VALUES(\`name\`);`
+      `INSERT INTO \`planos\` (\`id\`, \`name\`, \`price_monthly\`, \`product_limit\`, \`badge\`, \`features_json\`, \`use_custom_discounts\`, \`cycle_discounts_json\`, \`highlighted\`, \`color\`) VALUES (${escapeSql(p.id)}, ${escapeSql(p.name)}, ${p.priceMonthly.toFixed(2)}, ${p.productLimit}, ${escapeSql(p.badge)}, ${escapeSql(JSON.stringify(p.features))}, ${p.useCustomDiscounts ? 1 : 0}, ${escapeSql(JSON.stringify(p.cycleDiscounts || null))}, ${p.highlighted ? 1 : 0}, ${escapeSql(p.color)}) ON DUPLICATE KEY UPDATE \`name\`=VALUES(\`name\`);`
   )
   .join('\n')}
 
@@ -180,6 +225,14 @@ ${products
   .map(
     (prod) =>
       `INSERT INTO \`produtos\` (\`id\`, \`business_id\`, \`city_id\`, \`name\`, \`price\`, \`original_price\`, \`description\`, \`image_url\`, \`category\`, \`is_active\`, \`featured\`) VALUES (${escapeSql(prod.id)}, ${escapeSql(prod.businessId)}, ${escapeSql(prod.cityId)}, ${escapeSql(prod.name)}, ${prod.price.toFixed(2)}, ${prod.originalPrice ? prod.originalPrice.toFixed(2) : 'NULL'}, ${escapeSql(prod.description)}, ${escapeSql(prod.imageUrl)}, ${escapeSql(prod.category)}, ${prod.isActive ? 1 : 0}, ${prod.featured ? 1 : 0}) ON DUPLICATE KEY UPDATE \`name\`=VALUES(\`name\`);`
+  )
+  .join('\n')}
+
+-- Serviços
+${services
+  .map(
+    (serv) =>
+      `INSERT INTO \`servicos\` (\`id\`, \`business_id\`, \`city_id\`, \`name\`, \`price\`, \`price_type\`, \`duration\`, \`service_mode\`, \`description\`, \`image_url\`, \`category\`, \`is_active\`, \`featured\`) VALUES (${escapeSql(serv.id)}, ${escapeSql(serv.businessId)}, ${escapeSql(serv.cityId)}, ${escapeSql(serv.name)}, ${serv.price !== undefined && serv.price !== null ? serv.price.toFixed(2) : 'NULL'}, ${escapeSql(serv.priceType)}, ${escapeSql(serv.duration || '')}, ${escapeSql(serv.serviceMode)}, ${escapeSql(serv.description)}, ${escapeSql(serv.imageUrl)}, ${escapeSql(serv.category)}, ${serv.isActive ? 1 : 0}, ${serv.featured ? 1 : 0}) ON DUPLICATE KEY UPDATE \`name\`=VALUES(\`name\`);`
   )
   .join('\n')}
 
@@ -211,6 +264,14 @@ define('DB_NAME', 'seuusuario_achenacidade'); // Nome completo criado no cPanel
 define('DB_USER', 'seuusuario_admin');        // Usuário completo criado no cPanel
 define('DB_PASS', 'SuaSenhaSeguraAqui123!'); // Senha definida no cPanel
 define('DB_CHARSET', 'utf8mb4');
+
+// Configurações do Gateway de Pagamento Mercado Pago (Planos e Assinaturas)
+define('MP_ENABLED', true);
+define('MP_ENVIRONMENT', 'sandbox'); // 'sandbox' ou 'production'
+define('MP_PUBLIC_KEY', 'TEST-b8830182-1209-42b7-a392-192837465012');
+define('MP_ACCESS_TOKEN', 'TEST-192837465012-111005-b8830182120942b7a392192837465012-91053872');
+define('MP_STATEMENT_DESCRIPTOR', 'ACHENACIDADE');
+define('MP_PIX_KEY', 'financeiro@achenacidade.com.br');
 
 // Configuração de CORS para permitir requisições do frontend PWA
 header("Access-Control-Allow-Origin: *");
@@ -294,7 +355,7 @@ try {
     writeSqlLine(\$out, "");
 
     // Lista de tabelas a serem exportadas em ordem de integridade referencial
-    \$tables = ['cidades', 'categorias', 'planos', 'empresas', 'produtos', 'banners'];
+    \$tables = ['cidades', 'categorias', 'planos', 'empresas', 'produtos', 'servicos', 'banners', 'pagamentos'];
 
     foreach (\$tables as \$table) {
         // Verifica se a tabela existe no banco de dados
@@ -468,6 +529,40 @@ try {
             echo json_encode(['success' => true, 'data' => \$stmt->fetchAll()]);
             break;
 
+        case 'services':
+            \$cityId = isset(\$_GET['city_id']) ? trim(\$_GET['city_id']) : '';
+            \$search = isset(\$_GET['search']) ? trim(\$_GET['search']) : '';
+            \$mode = isset(\$_GET['mode']) ? trim(\$_GET['mode']) : '';
+
+            \$sql = "SELECT sv.*, e.name AS business_name, e.whatsapp AS business_whatsapp, e.phone AS business_phone, c.name AS city_name
+                    FROM servicos sv
+                    JOIN empresas e ON e.id = sv.business_id
+                    JOIN cidades c ON c.id = sv.city_id
+                    WHERE sv.is_active = 1";
+            \$params = [];
+
+            if (!empty(\$cityId) && \$cityId !== 'all') {
+                \$sql .= " AND sv.city_id = :city_id";
+                \$params[':city_id'] = \$cityId;
+            }
+
+            if (!empty(\$mode) && \$mode !== 'all') {
+                \$sql .= " AND sv.service_mode = :mode";
+                \$params[':mode'] = \$mode;
+            }
+
+            if (!empty(\$search)) {
+                \$sql .= " AND (sv.name LIKE :search OR sv.description LIKE :search OR sv.category LIKE :search)";
+                \$params[':search'] = '%' . \$search . '%';
+            }
+
+            \$sql .= " ORDER BY sv.featured DESC, sv.created_at DESC";
+
+            \$stmt = \$db->prepare(\$sql);
+            \$stmt->execute(\$params);
+            echo json_encode(['success' => true, 'data' => \$stmt->fetchAll()]);
+            break;
+
         case 'banners':
             \$position = isset(\$_GET['position']) ? trim(\$_GET['position']) : '';
             \$cityId = isset(\$_GET['city_id']) ? trim(\$_GET['city_id']) : '';
@@ -495,7 +590,7 @@ try {
             echo json_encode([
                 'success' => false,
                 'error' => 'Ação não reconhecida.',
-                'available_actions' => ['cities', 'categories', 'plans', 'businesses', 'products', 'banners']
+                'available_actions' => ['cities', 'categories', 'plans', 'businesses', 'products', 'services', 'banners']
             ]);
             break;
     }

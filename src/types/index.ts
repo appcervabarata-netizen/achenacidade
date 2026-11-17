@@ -18,6 +18,20 @@ export interface Category {
   color?: string;
 }
 
+export type BillingCycle = 'monthly' | 'annual' | 'biennial' | 'triennial';
+
+export interface PlanCycleDiscounts {
+  annual: number; // % discount for 12 months
+  biennial: number; // % discount for 24 months
+  triennial: number; // % discount for 36 months
+}
+
+export interface PlanDiscountConfig {
+  annual: number;
+  biennial: number;
+  triennial: number;
+}
+
 export interface Plan {
   id: string;
   name: string;
@@ -28,6 +42,8 @@ export interface Plan {
   features: string[];
   highlighted?: boolean;
   color: string;
+  useCustomDiscounts?: boolean;
+  cycleDiscounts?: PlanCycleDiscounts;
 }
 
 export interface DaySchedule {
@@ -61,6 +77,13 @@ export interface Business {
   website?: string;
   password?: string;
   isVerified?: boolean;
+  emailVerified?: boolean;
+  paymentStatus?: 'active' | 'pending_payment';
+  pendingPlanId?: string;
+  pendingBillingCycle?: BillingCycle;
+  billingCycle?: BillingCycle;
+  planExpiresAt?: string;
+  paymentToken?: string;
   createdAt: string;
 }
 
@@ -71,6 +94,26 @@ export interface Product {
   name: string;
   price: number; // in BRL
   originalPrice?: number;
+  description: string;
+  imageUrl: string;
+  category: string;
+  isActive: boolean;
+  featured?: boolean;
+  createdAt: string;
+}
+
+export type ServicePriceType = 'fixed' | 'from' | 'hourly' | 'quote';
+export type ServiceMode = 'on_site' | 'home_visit' | 'online' | 'both';
+
+export interface Service {
+  id: string;
+  businessId: string;
+  cityId: string;
+  name: string;
+  priceType: ServicePriceType;
+  price?: number; // in BRL when priceType !== 'quote'
+  duration: string; // e.g. '45 min', '2 horas', 'Sob consulta'
+  serviceMode: ServiceMode;
   description: string;
   imageUrl: string;
   category: string;
@@ -131,9 +174,167 @@ export type AppView =
   | 'categories'
   | 'stores'
   | 'products'
+  | 'services'
   | 'plans'
   | 'admin'
   | 'business_portal'
   | 'login'
-  | 'register_store';
+  | 'register_store'
+  | 'checkout';
+
+export interface MercadoPagoConfig {
+  enabled: boolean;
+  environment: 'sandbox' | 'production';
+  publicKey: string;
+  accessToken: string;
+  pixKey?: string;
+  statementDescriptor: string; // Ex: ACHENACIDADE
+  autoApproveInSandbox?: boolean;
+}
+
+export interface PaymentTransaction {
+  id: string;
+  businessId: string;
+  businessName: string;
+  planId: string;
+  planName: string;
+  billingCycle?: BillingCycle;
+  cycleMonths?: number;
+  baseAmount?: number;
+  discountPercent?: number;
+  discountAmount?: number;
+  amount: number;
+  paymentMethod: 'pix' | 'credit_card';
+  status: 'approved' | 'pending' | 'rejected';
+  mercadoPagoPaymentId: string;
+  qrCode?: string;
+  qrCodeText?: string;
+  installments?: number;
+  cardLastFour?: string;
+  cardBrand?: string;
+  payerEmail: string;
+  createdAt: string;
+  paidAt?: string;
+}
+
+export interface PushPreferences {
+  enabled: boolean;
+  cityScope: 'alagoinhas_only' | 'all_cities';
+  notifyNewOffers: boolean;
+  notifyNewServices: boolean;
+  favoritesOnly: boolean;
+  vapidPublicKey?: string;
+}
+
+export interface PushAlertLog {
+  id: string;
+  businessId: string;
+  businessName: string;
+  cityId: string;
+  itemType: 'product' | 'service';
+  itemId: string;
+  title: string;
+  body: string;
+  imageUrl?: string;
+  createdAt: string;
+  read: boolean;
+  deliveredViaSW: boolean;
+}
+
+export type SiteMode = 'normal' | 'launch' | 'maintenance';
+
+export interface LaunchBenefit {
+  id: string;
+  title: string;
+  description: string;
+  highlightMetric?: string;
+}
+
+export interface LaunchPageConfig {
+  targetDateIso: string;
+  eyebrow: string;
+  headline: string;
+  subheadline: string;
+  ctaText: string;
+  secondaryCtaText: string;
+  availableSpots: number;
+  benefitsTitle: string;
+  benefitsSubtitle: string;
+  benefits: LaunchBenefit[];
+  whatsappNumber: string;
+  whatsappMessage: string;
+  guaranteeNote: string;
+}
+
+export interface MaintenancePageConfig {
+  targetDateIso: string;
+  badgeLabel: string;
+  headline: string;
+  description: string;
+  ctaText: string;
+  whatsappNumber: string;
+  showWhatsappButton: boolean;
+}
+
+export interface SiteModeConfig {
+  mode: SiteMode;
+  launch: LaunchPageConfig;
+  maintenance: MaintenancePageConfig;
+}
+
+export type EmailTemplateKey =
+  | 'email_verification'
+  | 'payment_link'
+  | 'welcome'
+  | 'payment_approved';
+
+export interface EmailTemplate {
+  key: EmailTemplateKey;
+  name: string;
+  description: string;
+  enabled: boolean;
+  subject: string;
+  heading: string;
+  body: string;
+  buttonText: string;
+  footerNote: string;
+  availableVariables: string[];
+}
+
+export interface SmtpConfig {
+  enabled: boolean;
+  senderName: string;
+  senderEmail: string;
+  replyToEmail: string;
+  host: string;
+  port: number;
+  secure: boolean;
+  user: string;
+  pass: string;
+  allowLocalFallback: boolean;
+}
+
+export interface EmailLogEntry {
+  id: string;
+  to: string;
+  templateKey: EmailTemplateKey | 'test';
+  templateName: string;
+  subject: string;
+  htmlBody: string;
+  textBody: string;
+  verificationCode?: string;
+  paymentUrl?: string;
+  deliveryMode: 'smtp' | 'local_fallback';
+  status: 'sent' | 'failed';
+  errorMessage?: string;
+  createdAt: string;
+}
+
+export interface CheckoutTarget {
+  businessId: string;
+  planId: string;
+  billingCycle?: BillingCycle;
+  token?: string;
+}
+
 

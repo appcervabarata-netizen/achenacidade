@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { useDirectory } from '../../context/DirectoryContext';
+import { ConfirmModal } from '../common/ConfirmModal';
 import {
   X,
   Building2,
@@ -66,6 +67,7 @@ export const BusinessPortalModal: React.FC = () => {
   });
 
   const [notification, setNotification] = useState<{ text: string; type: 'success' | 'error' } | null>(null);
+  const [confirmDeleteProd, setConfirmDeleteProd] = useState<{ id: string; name: string } | null>(null);
 
   if (activeModal.type !== 'business_portal') {
     return null;
@@ -461,12 +463,8 @@ export const BusinessPortalModal: React.FC = () => {
                       </div>
 
                       <button
-                        onClick={() => {
-                          if (confirm(`Deseja remover o produto "${prod.name}"?`)) {
-                            deleteProduct(prod.id);
-                            setNotification({ text: 'Produto removido.', type: 'success' });
-                          }
-                        }}
+                        type="button"
+                        onClick={() => setConfirmDeleteProd({ id: prod.id, name: prod.name })}
                         className="text-red-500 hover:text-red-700 p-2 rounded-lg hover:bg-red-50 dark:hover:bg-red-950/40 transition cursor-pointer"
                         title="Excluir produto"
                       >
@@ -690,6 +688,21 @@ export const BusinessPortalModal: React.FC = () => {
         </div>
 
       </div>
+
+      <ConfirmModal
+        isOpen={!!confirmDeleteProd}
+        title="Excluir Produto"
+        message={`Deseja remover o produto "${confirmDeleteProd?.name || ''}"?`}
+        confirmLabel="Excluir Produto"
+        variant="danger"
+        onConfirm={() => {
+          if (confirmDeleteProd) {
+            deleteProduct(confirmDeleteProd.id);
+            setNotification({ text: 'Produto removido.', type: 'success' });
+          }
+        }}
+        onCancel={() => setConfirmDeleteProd(null)}
+      />
     </div>
   );
 };

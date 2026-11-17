@@ -77,17 +77,17 @@ export const PlansSection: React.FC = () => {
                     )}
                   </div>
 
-                  {/* Product Limit Highlight */}
+                  {/* Combined Quota Highlight */}
                   <div className="mt-6 p-4 rounded-2xl bg-blue-50 dark:bg-blue-950/40 border border-blue-100 dark:border-blue-900/50 flex items-center gap-3">
                     <div className="w-10 h-10 rounded-xl bg-blue-600 text-white flex items-center justify-center shrink-0 shadow-xs">
                       <Package className="w-5 h-5" />
                     </div>
                     <div>
                       <div className="text-xs text-blue-900 dark:text-blue-300 font-bold uppercase tracking-wider">
-                        Cota de Produtos
+                        Cota Unificada (Produtos + Serviços)
                       </div>
                       <div className="text-sm font-extrabold text-slate-900 dark:text-white">
-                        Até {plan.productLimit} produtos anunciados
+                        Até {plan.productLimit} produtos e/ou serviços
                       </div>
                     </div>
                   </div>

@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { useDirectory } from '../../context/DirectoryContext';
 import {
   Utensils,
@@ -15,6 +15,18 @@ import {
   Home,
   ShoppingBasket,
   PartyPopper,
+  Pill,
+  Coffee,
+  Sofa,
+  BookOpen,
+  Briefcase,
+  Sprout,
+  Dumbbell,
+  BedDouble,
+  Glasses,
+  Truck,
+  Sparkles,
+  ShoppingBag,
 } from 'lucide-react';
 
 const iconMap: Record<string, React.ElementType> = {
@@ -30,6 +42,18 @@ const iconMap: Record<string, React.ElementType> = {
   Home,
   ShoppingBasket,
   PartyPopper,
+  Pill,
+  Coffee,
+  Sofa,
+  BookOpen,
+  Briefcase,
+  Sprout,
+  Dumbbell,
+  BedDouble,
+  Glasses,
+  Truck,
+  Sparkles,
+  ShoppingBag,
   Store,
 };
 
@@ -41,6 +65,7 @@ export const CategoryGrid: React.FC = () => {
     businesses,
     selectedCityId,
   } = useDirectory();
+  const [showAllMobile, setShowAllMobile] = useState(false);
 
   // Helper count of companies per category in the current selected city
   const getCategoryCount = (catId: string) => {
@@ -50,34 +75,45 @@ export const CategoryGrid: React.FC = () => {
     }).length;
   };
 
-  // Top 12 categories for mobile 3 cols x 4 rows
-  const top12Categories = categories.slice(0, 12);
+  // Show top 12 on mobile by default, expandable to all categories
+  const mobileCategories = showAllMobile ? categories : categories.slice(0, 12);
 
   return (
     <section className="py-6 sm:py-8 bg-white dark:bg-slate-900 border-b border-slate-200 dark:border-slate-800 transition-colors">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-        <div className="flex items-center justify-between mb-3 sm:mb-4">
+        <div className="flex items-center justify-between mb-3 sm:mb-4 gap-2">
           <div>
             <h2 className="text-base sm:text-lg font-bold text-slate-900 dark:text-white font-display">
               Categorias Principais
             </h2>
             <p className="text-[11px] sm:text-xs text-slate-500 dark:text-slate-400">
-              Navegue pelos segmentos comerciais mais procurados
+              Navegue pelos segmentos comerciais mais procurados ({categories.length} segmentos)
             </p>
           </div>
-          {selectedCategoryId !== 'all' && (
-            <button
-              onClick={() => setSelectedCategoryId('all')}
-              className="text-xs font-semibold text-blue-600 dark:text-blue-400 hover:underline cursor-pointer"
-            >
-              Ver todas
-            </button>
-          )}
+          <div className="flex items-center gap-3">
+            {categories.length > 12 && (
+              <button
+                type="button"
+                onClick={() => setShowAllMobile((prev) => !prev)}
+                className="md:hidden text-xs font-semibold text-orange-600 dark:text-orange-400 hover:underline cursor-pointer"
+              >
+                {showAllMobile ? 'Mostrar menos' : `Ver todas (${categories.length})`}
+              </button>
+            )}
+            {selectedCategoryId !== 'all' && (
+              <button
+                onClick={() => setSelectedCategoryId('all')}
+                className="text-xs font-semibold text-blue-600 dark:text-blue-400 hover:underline cursor-pointer"
+              >
+                Ver todas
+              </button>
+            )}
+          </div>
         </div>
 
-        {/* MOBILE VIEW: Exactly 12 main categories in a 3-column x 4-row grid */}
+        {/* MOBILE VIEW: 3-column grid (12 by default, expandable to all) */}
         <div className="grid grid-cols-3 gap-2 sm:gap-2.5 md:hidden">
-          {top12Categories.map((cat) => {
+          {mobileCategories.map((cat) => {
             const IconComponent = iconMap[cat.iconName] || Store;
             const count = getCategoryCount(cat.id);
             const isSelected = selectedCategoryId === cat.id;
@@ -102,7 +138,7 @@ export const CategoryGrid: React.FC = () => {
                   <IconComponent className="w-4 h-4" />
                 </div>
                 <span className="text-[11px] font-bold leading-tight line-clamp-1 w-full px-0.5">
-                  {cat.name.split('&')[0].trim()}
+                  {cat.name.split('&')[0].split(',')[0].trim()}
                 </span>
                 <span
                   className={`text-[9px] mt-0.5 font-medium ${

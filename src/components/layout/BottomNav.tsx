@@ -4,6 +4,7 @@ import {
   Home,
   Building2,
   ShoppingBag,
+  Wrench,
   Grid,
   PlusCircle,
   Store,
@@ -49,7 +50,7 @@ export const BottomNav: React.FC = () => {
 
       {/* Fixed Native-like Mobile Bottom Navigation Menu */}
       <nav className="fixed bottom-0 left-0 right-0 z-50 bg-white/95 dark:bg-slate-900/95 backdrop-blur-lg border-t border-slate-200 dark:border-slate-800 md:hidden transition-colors">
-        <div className="grid grid-cols-5 h-16 items-center px-1 safe-bottom">
+        <div className="grid grid-cols-6 h-16 items-center px-0.5 safe-bottom">
           
           {/* 1. Início */}
           <button
@@ -63,8 +64,8 @@ export const BottomNav: React.FC = () => {
                 : 'text-slate-500 dark:text-slate-400'
             }`}
           >
-            <Home className="w-5 h-5" />
-            <span className="text-[10px] tracking-tight">Início</span>
+            <Home className="w-4.5 h-4.5" />
+            <span className="text-[10px] tracking-tight whitespace-nowrap">Início</span>
           </button>
 
           {/* 2. Lojas (Empresas) */}
@@ -79,8 +80,8 @@ export const BottomNav: React.FC = () => {
                 : 'text-slate-500 dark:text-slate-400'
             }`}
           >
-            <Building2 className="w-5 h-5" />
-            <span className="text-[10px] tracking-tight">Lojas</span>
+            <Building2 className="w-4.5 h-4.5" />
+            <span className="text-[10px] tracking-tight whitespace-nowrap">Lojas</span>
           </button>
 
           {/* 3. Produtos */}
@@ -95,8 +96,24 @@ export const BottomNav: React.FC = () => {
                 : 'text-slate-500 dark:text-slate-400'
             }`}
           >
-            <ShoppingBag className="w-5 h-5" />
-            <span className="text-[10px] tracking-tight">Produtos</span>
+            <ShoppingBag className="w-4.5 h-4.5" />
+            <span className="text-[10px] tracking-tight whitespace-nowrap">Produtos</span>
+          </button>
+
+          {/* 4. Serviços */}
+          <button
+            onClick={() => {
+              setCurrentView('services');
+              window.scrollTo({ top: 0, behavior: 'smooth' });
+            }}
+            className={`flex flex-col items-center justify-center gap-1 h-full cursor-pointer transition-colors ${
+              currentView === 'services'
+                ? 'text-indigo-600 dark:text-indigo-400 font-bold'
+                : 'text-slate-500 dark:text-slate-400'
+            }`}
+          >
+            <Wrench className="w-4.5 h-4.5" />
+            <span className="text-[10px] tracking-tight whitespace-nowrap">Serviços</span>
           </button>
 
           {/* 4. Categorias */}

@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { useDirectory } from '../../context/DirectoryContext';
+import { ConfirmModal } from '../common/ConfirmModal';
 import {
   X,
   ShieldCheck,
@@ -21,7 +22,8 @@ import {
   FileCode,
   ExternalLink,
 } from 'lucide-react';
-import { City, Category, Plan, AdminTheme } from '../../types';
+import { City, Category, Plan, AdminTheme, Business } from '../../types';
+import { AdminBusinessEditModal } from './AdminBusinessEditModal';
 import { generateHostGatorPackage, downloadFile } from '../../utils/hostgatorGenerator';
 
 export const AdminModal: React.FC = () => {
@@ -53,6 +55,17 @@ export const AdminModal: React.FC = () => {
   const [activeTab, setActiveTab] = useState<
     'dashboard' | 'cities' | 'categories' | 'plans' | 'businesses' | 'theme' | 'hostgator'
   >('dashboard');
+
+  const [editingBusiness, setEditingBusiness] = useState<Business | null>(null);
+  const [editingCityId, setEditingCityId] = useState<string | null>(null);
+  const [editingCategoryId, setEditingCategoryId] = useState<string | null>(null);
+  const [pendingConfirm, setPendingConfirm] = useState<{
+    title: string;
+    message: string;
+    confirmLabel?: string;
+    variant?: 'danger' | 'primary';
+    onConfirm: () => void;
+  } | null>(null);
 
   // City form
   const [cityForm, setCityForm] = useState({
@@ -114,19 +127,45 @@ export const AdminModal: React.FC = () => {
     setTimeout(() => setCopiedKey(null), 2000);
   };
 
-  // Add City
+  const toSlug = (text: string) =>
+    text
+      .toLowerCase()
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .replace(/[^a-z0-9]+/g, '-')
+      .replace(/^-|-$/g, '');
+
+  // Add/Edit City
   const handleAddCitySubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!cityForm.name) return;
-    addCity(cityForm);
+    if (!cityForm.name.trim()) return;
+    if (editingCityId) {
+      updateCity(editingCityId, {
+        ...cityForm,
+        name: cityForm.name.trim(),
+        slug: `${toSlug(cityForm.name)}-${cityForm.state.toLowerCase()}`,
+      });
+      setEditingCityId(null);
+    } else {
+      addCity(cityForm);
+    }
     setCityForm({ name: '', state: 'SP', description: '', isActive: true, isDefault: false });
   };
 
-  // Add Category
+  // Add/Edit Category
   const handleAddCatSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!catForm.name) return;
-    addCategory(catForm);
+    if (!catForm.name.trim()) return;
+    if (editingCategoryId) {
+      updateCategory(editingCategoryId, {
+        ...catForm,
+        name: catForm.name.trim(),
+        slug: toSlug(catForm.name),
+      });
+      setEditingCategoryId(null);
+    } else {
+      addCategory(catForm);
+    }
     setCatForm({ name: '', iconName: 'Store', description: '', color: '#2563EB' });
   };
 
@@ -206,6 +245,48 @@ export const AdminModal: React.FC = () => {
       primaryHover: '#155E75',
       accentColor: '#F43F5E',
       accentHover: '#E11D48',
+    },
+    {
+      themeName: 'Azul Marinho & Âmbar Executivo',
+      primaryColor: '#1E3A8A',
+      primaryHover: '#1E40AF',
+      accentColor: '#F59E0B',
+      accentHover: '#D97706',
+    },
+    {
+      themeName: 'Terracota Sertão & Verde Oliva',
+      primaryColor: '#C2410C',
+      primaryHover: '#9A3412',
+      accentColor: '#4D7C0F',
+      accentHover: '#3F6212',
+    },
+    {
+      themeName: 'Rosa Framboesa & Índigo Urbano',
+      primaryColor: '#BE185D',
+      primaryHover: '#9D174D',
+      accentColor: '#4338CA',
+      accentHover: '#3730A3',
+    },
+    {
+      themeName: 'Grafite Moderno & Ciano Elétrico',
+      primaryColor: '#1E293B',
+      primaryHover: '#0F172A',
+      accentColor: '#06B6D4',
+      accentHover: '#0891B2',
+    },
+    {
+      themeName: 'Vinho Bordô & Ouro Velho',
+      primaryColor: '#881337',
+      primaryHover: '#4C0519',
+      accentColor: '#CA8A04',
+      accentHover: '#A16207',
+    },
+    {
+      themeName: 'Verde Floresta & Laranja Solar',
+      primaryColor: '#15803D',
+      primaryHover: '#166534',
+      accentColor: '#F97316',
+      accentHover: '#EA580C',
     },
   ];
 
@@ -359,11 +440,16 @@ export const AdminModal: React.FC = () => {
                   Deseja restaurar as cidades, categorias e produtos originais?
                 </span>
                 <button
-                  onClick={() => {
-                    if (confirm('Tem certeza? Isso restaurará os dados demonstrativos padrão.')) {
-                      resetToDemoData();
-                    }
-                  }}
+                  type="button"
+                  onClick={() =>
+                    setPendingConfirm({
+                      title: 'Restaurar Dados Padrão',
+                      message: 'Tem certeza? Isso restaurará os dados demonstrativos padrão.',
+                      confirmLabel: 'Restaurar Padrão',
+                      variant: 'primary',
+                      onConfirm: () => resetToDemoData(),
+                    })
+                  }
                   className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-slate-300 dark:border-slate-700 text-xs font-medium text-slate-700 dark:text-slate-300 hover:bg-slate-100 transition cursor-pointer"
                 >
                   <RotateCcw className="w-3.5 h-3.5" />
@@ -492,6 +578,7 @@ export const AdminModal: React.FC = () => {
                           <td className="p-3 text-right space-x-2">
                             {!city.isDefault && (
                               <button
+                                type="button"
                                 onClick={() => {
                                   cities.forEach((c) => updateCity(c.id, { isDefault: c.id === city.id }));
                                 }}
@@ -501,11 +588,33 @@ export const AdminModal: React.FC = () => {
                               </button>
                             )}
                             <button
+                              type="button"
                               onClick={() => {
-                                if (confirm(`Remover cidade ${city.name}?`)) {
-                                  deleteCity(city.id);
-                                }
+                                setEditingCityId(city.id);
+                                setCityForm({
+                                  name: city.name,
+                                  state: city.state,
+                                  description: city.description || '',
+                                  isActive: city.isActive,
+                                  isDefault: !!city.isDefault,
+                                });
                               }}
+                              className="text-blue-600 hover:text-blue-800 p-1 cursor-pointer"
+                              title="Editar cidade"
+                            >
+                              <Edit2 className="w-3.5 h-3.5 inline" />
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() =>
+                                setPendingConfirm({
+                                  title: 'Excluir Cidade',
+                                  message: `Tem certeza que deseja remover a cidade "${city.name}"?`,
+                                  confirmLabel: 'Excluir Cidade',
+                                  variant: 'danger',
+                                  onConfirm: () => deleteCity(city.id),
+                                })
+                              }
                               className="text-red-500 hover:text-red-700 p-1 cursor-pointer"
                               title="Excluir cidade"
                             >
@@ -557,13 +666,24 @@ export const AdminModal: React.FC = () => {
                       className="w-full px-3 py-2 rounded-xl border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 text-xs text-slate-900 dark:text-white cursor-pointer"
                     >
                       <option value="Utensils">Utensils (Gastronomia)</option>
+                      <option value="Coffee">Coffee (Padarias, Cafés & Açaí)</option>
+                      <option value="ShoppingBasket">ShoppingBasket (Mercados)</option>
                       <option value="Shirt">Shirt (Moda)</option>
                       <option value="HeartPulse">HeartPulse (Saúde)</option>
+                      <option value="Pill">Pill (Farmácias & Drogarias)</option>
                       <option value="Smartphone">Smartphone (Tecnologia)</option>
                       <option value="Hammer">Hammer (Construção)</option>
+                      <option value="Sofa">Sofa (Móveis & Decoração)</option>
                       <option value="Dog">Dog (Pet Shop)</option>
                       <option value="Car">Car (Automotivo)</option>
                       <option value="Scissors">Scissors (Beleza)</option>
+                      <option value="BookOpen">BookOpen (Papelarias & Gráficas)</option>
+                      <option value="Briefcase">Briefcase (Contabilidade & Advocacia)</option>
+                      <option value="Sprout">Sprout (Agropecuária & Rações)</option>
+                      <option value="Dumbbell">Dumbbell (Academias & Esportes)</option>
+                      <option value="BedDouble">BedDouble (Hotéis & Pousadas)</option>
+                      <option value="Glasses">Glasses (Óticas & Joias)</option>
+                      <option value="Truck">Truck (Gás, Água & Bebidas)</option>
                       <option value="Store">Store (Comércio Geral)</option>
                     </select>
                   </div>
@@ -581,13 +701,25 @@ export const AdminModal: React.FC = () => {
                   </div>
                 </div>
 
-                <div className="flex justify-end">
+                <div className="flex justify-end gap-2">
+                  {editingCategoryId && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setEditingCategoryId(null);
+                        setCatForm({ name: '', iconName: 'Store', description: '', color: '#2563EB' });
+                      }}
+                      className="px-3 py-2 rounded-xl text-xs font-semibold text-slate-500 hover:underline cursor-pointer"
+                    >
+                      Cancelar Edição
+                    </button>
+                  )}
                   <button
                     type="submit"
                     className="px-4 py-2 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold transition flex items-center gap-1 cursor-pointer"
                   >
                     <Plus className="w-3.5 h-3.5" />
-                    <span>Salvar Categoria</span>
+                    <span>{editingCategoryId ? 'Atualizar Categoria' : 'Salvar Categoria'}</span>
                   </button>
                 </div>
               </form>
@@ -597,27 +729,51 @@ export const AdminModal: React.FC = () => {
                 {categories.map((cat) => (
                   <div
                     key={cat.id}
-                    className="p-3.5 rounded-2xl bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 flex items-center justify-between"
+                    className="p-3.5 rounded-2xl bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 flex items-center justify-between gap-2"
                   >
-                    <div>
-                      <h5 className="text-xs font-bold text-slate-900 dark:text-white">
+                    <div className="min-w-0">
+                      <h5 className="text-xs font-bold text-slate-900 dark:text-white truncate">
                         {cat.name}
                       </h5>
-                      <span className="text-[10px] text-slate-500 font-mono">
+                      <span className="text-[10px] text-slate-500 font-mono block truncate">
                         {cat.slug} · {cat.iconName}
                       </span>
                     </div>
 
-                    <button
-                      onClick={() => {
-                        if (confirm(`Excluir categoria "${cat.name}"?`)) {
-                          deleteCategory(cat.id);
+                    <div className="flex items-center gap-1 shrink-0">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setEditingCategoryId(cat.id);
+                          setCatForm({
+                            name: cat.name,
+                            iconName: cat.iconName || 'Store',
+                            description: cat.description || '',
+                            color: cat.color || '#2563EB',
+                          });
+                        }}
+                        className="text-blue-600 hover:text-blue-800 p-1.5 cursor-pointer"
+                        title="Editar categoria"
+                      >
+                        <Edit2 className="w-3.5 h-3.5" />
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setPendingConfirm({
+                            title: 'Excluir Categoria',
+                            message: `Excluir categoria "${cat.name}"?`,
+                            confirmLabel: 'Excluir Categoria',
+                            variant: 'danger',
+                            onConfirm: () => deleteCategory(cat.id),
+                          })
                         }
-                      }}
-                      className="text-red-500 hover:text-red-700 p-1.5 cursor-pointer"
-                    >
-                      <Trash2 className="w-3.5 h-3.5" />
-                    </button>
+                        className="text-red-500 hover:text-red-700 p-1.5 cursor-pointer"
+                        title="Excluir categoria"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
                   </div>
                 ))}
               </div>
@@ -819,11 +975,16 @@ export const AdminModal: React.FC = () => {
                       </button>
 
                       <button
-                        onClick={() => {
-                          if (confirm(`Remover plano ${p.name}?`)) {
-                            deletePlan(p.id);
-                          }
-                        }}
+                        type="button"
+                        onClick={() =>
+                          setPendingConfirm({
+                            title: 'Excluir Plano',
+                            message: `Remover plano "${p.name}"?`,
+                            confirmLabel: 'Excluir Plano',
+                            variant: 'danger',
+                            onConfirm: () => deletePlan(p.id),
+                          })
+                        }
                         className="p-1.5 text-red-500 hover:text-red-700 rounded-lg hover:bg-red-50 transition cursor-pointer"
                         title="Excluir plano"
                       >
@@ -904,16 +1065,32 @@ export const AdminModal: React.FC = () => {
                             </button>
                           </td>
                           <td className="p-3 text-right">
-                            <button
-                              onClick={() => {
-                                if (confirm(`Remover empresa ${biz.name}? Seus produtos também serão excluídos.`)) {
-                                  deleteBusiness(biz.id);
+                            <div className="flex items-center justify-end gap-1.5">
+                              <button
+                                onClick={() => setEditingBusiness(biz)}
+                                className="flex items-center gap-1 px-2.5 py-1 rounded-lg bg-blue-50 hover:bg-blue-100 dark:bg-blue-950/60 dark:hover:bg-blue-900 text-blue-700 dark:text-blue-300 font-bold text-xs transition cursor-pointer shadow-2xs"
+                                title="Editar dados cadastrais, contatos, mídias e senha da loja"
+                              >
+                                <Edit2 className="w-3 h-3" />
+                                <span>Editar</span>
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  setPendingConfirm({
+                                    title: 'Excluir Empresa',
+                                    message: `Remover empresa "${biz.name}"? Seus produtos também serão excluídos.`,
+                                    confirmLabel: 'Excluir Empresa',
+                                    variant: 'danger',
+                                    onConfirm: () => deleteBusiness(biz.id),
+                                  })
                                 }
-                              }}
-                              className="text-red-500 hover:text-red-700 p-1 cursor-pointer"
-                            >
-                              <Trash2 className="w-3.5 h-3.5 inline" />
-                            </button>
+                                className="p-1.5 text-red-500 hover:text-red-700 hover:bg-red-50 dark:hover:bg-red-950/40 rounded-lg transition cursor-pointer"
+                                title="Excluir empresa"
+                              >
+                                <Trash2 className="w-3.5 h-3.5 inline" />
+                              </button>
+                            </div>
                           </td>
                         </tr>
                       );
@@ -1087,6 +1264,31 @@ export const AdminModal: React.FC = () => {
         </div>
 
       </div>
+
+      {/* Modal de Edição de Loja */}
+      {editingBusiness && (
+        <AdminBusinessEditModal
+          isOpen={!!editingBusiness}
+          onClose={() => setEditingBusiness(null)}
+          business={editingBusiness}
+          onSave={(businessId, updates) => {
+            updateBusiness(businessId, updates);
+          }}
+          cities={cities}
+          categories={categories}
+          plans={plans}
+        />
+      )}
+
+      <ConfirmModal
+        isOpen={!!pendingConfirm}
+        title={pendingConfirm?.title || ''}
+        message={pendingConfirm?.message || ''}
+        confirmLabel={pendingConfirm?.confirmLabel}
+        variant={pendingConfirm?.variant || 'danger'}
+        onConfirm={() => pendingConfirm?.onConfirm()}
+        onCancel={() => setPendingConfirm(null)}
+      />
     </div>
   );
 };

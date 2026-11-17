@@ -1,15 +1,20 @@
 import React, { useState } from 'react';
 import { useDirectory } from '../../context/DirectoryContext';
+import { formatServicePrice, getServiceModeLabel } from '../../utils/serviceFormatters';
+import { ConfirmModal } from '../common/ConfirmModal';
 import {
   X,
   Heart,
   Building2,
   ShoppingBag,
+  Wrench,
   Trash2,
   MessageCircle,
   ExternalLink,
-  MapPin,
   ArrowRight,
+  Clock,
+  BellRing,
+  Bell,
 } from 'lucide-react';
 
 export const FavoritesModal: React.FC = () => {
@@ -18,14 +23,20 @@ export const FavoritesModal: React.FC = () => {
     closeModal,
     favoriteBusinesses,
     favoriteProducts,
+    favoriteServices,
     toggleFavoriteBusiness,
     toggleFavoriteProduct,
+    toggleFavoriteService,
     clearAllFavorites,
     openModal,
     cities,
+    setCurrentView,
+    pushPreferences,
+    enablePushNotifications,
   } = useDirectory();
 
-  const [activeTab, setActiveTab] = useState<'businesses' | 'products'>('businesses');
+  const [activeTab, setActiveTab] = useState<'businesses' | 'products' | 'services'>('businesses');
+  const [confirmClearOpen, setConfirmClearOpen] = useState(false);
 
   if (activeModal.type !== 'favorites') {
     return null;
@@ -43,7 +54,7 @@ export const FavoritesModal: React.FC = () => {
     return c ? `${c.name} - ${c.state}` : '';
   };
 
-  const totalCount = favoriteBusinesses.length + favoriteProducts.length;
+  const totalCount = favoriteBusinesses.length + favoriteProducts.length + favoriteServices.length;
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-xs p-3 sm:p-6 overflow-y-auto">
@@ -73,11 +84,8 @@ export const FavoritesModal: React.FC = () => {
           <div className="flex items-center gap-2">
             {totalCount > 0 && (
               <button
-                onClick={() => {
-                  if (confirm('Tem certeza que deseja limpar todos os favoritos salvos?')) {
-                    clearAllFavorites();
-                  }
-                }}
+                type="button"
+                onClick={() => setConfirmClearOpen(true)}
                 className="text-xs text-rose-400 hover:text-rose-300 flex items-center gap-1 px-2.5 py-1 rounded-lg hover:bg-slate-800 transition cursor-pointer"
                 title="Limpar todos os favoritos"
               >
@@ -97,35 +105,86 @@ export const FavoritesModal: React.FC = () => {
         </div>
 
         {/* Subtabs */}
-        <div className="px-6 py-2.5 bg-slate-100 dark:bg-slate-800/80 border-b border-slate-200 dark:border-slate-700 flex items-center gap-2 shrink-0">
+        <div className="px-6 py-2.5 bg-slate-100 dark:bg-slate-800/80 border-b border-slate-200 dark:border-slate-700 flex items-center gap-2 overflow-x-auto shrink-0">
           <button
             onClick={() => setActiveTab('businesses')}
-            className={`flex items-center gap-2 px-3.5 py-1.5 rounded-xl text-xs font-semibold transition cursor-pointer ${
+            className={`flex items-center gap-2 px-3.5 py-1.5 rounded-xl text-xs font-semibold whitespace-nowrap transition cursor-pointer ${
               activeTab === 'businesses'
                 ? 'bg-rose-600 text-white shadow-xs'
                 : 'text-slate-600 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-700'
             }`}
           >
             <Building2 className="w-4 h-4" />
-            <span>Empresas Salvas ({favoriteBusinesses.length})</span>
+            <span>Empresas ({favoriteBusinesses.length})</span>
           </button>
 
           <button
             onClick={() => setActiveTab('products')}
-            className={`flex items-center gap-2 px-3.5 py-1.5 rounded-xl text-xs font-semibold transition cursor-pointer ${
+            className={`flex items-center gap-2 px-3.5 py-1.5 rounded-xl text-xs font-semibold whitespace-nowrap transition cursor-pointer ${
               activeTab === 'products'
                 ? 'bg-rose-600 text-white shadow-xs'
                 : 'text-slate-600 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-700'
             }`}
           >
             <ShoppingBag className="w-4 h-4" />
-            <span>Produtos Salvos ({favoriteProducts.length})</span>
+            <span>Produtos ({favoriteProducts.length})</span>
+          </button>
+
+          <button
+            onClick={() => setActiveTab('services')}
+            className={`flex items-center gap-2 px-3.5 py-1.5 rounded-xl text-xs font-semibold whitespace-nowrap transition cursor-pointer ${
+              activeTab === 'services'
+                ? 'bg-rose-600 text-white shadow-xs'
+                : 'text-slate-600 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-700'
+            }`}
+          >
+            <Wrench className="w-4 h-4" />
+            <span>Serviços ({favoriteServices.length})</span>
           </button>
         </div>
 
         {/* Content Body */}
         <div className="p-6 overflow-y-auto flex-1 space-y-4">
-          
+          {/* Push Notifications Quick Status Bar */}
+          <div className="p-3.5 rounded-2xl bg-blue-50 dark:bg-blue-950/30 border border-blue-200 dark:border-blue-800/80 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+            <div className="flex items-center gap-2.5">
+              {pushPreferences.enabled ? (
+                <BellRing className="w-4 h-4 text-blue-600 dark:text-blue-400 shrink-0" />
+              ) : (
+                <Bell className="w-4 h-4 text-slate-500 shrink-0" />
+              )}
+              <div className="text-xs">
+                <span className="font-bold text-slate-900 dark:text-white block">
+                  {pushPreferences.enabled
+                    ? 'Alertas Push ativos para suas empresas favoritas'
+                    : 'Receba avisos de novas ofertas e serviços em Alagoinhas'}
+                </span>
+                <span className="text-[11px] text-slate-600 dark:text-slate-300">
+                  {pushPreferences.enabled
+                    ? 'Notificações enviadas via Service Worker quando houver novidades.'
+                    : 'Ative as notificações push para não perder promoções das lojas salvas.'}
+                </span>
+              </div>
+            </div>
+
+            <div className="flex items-center gap-2 shrink-0">
+              {!pushPreferences.enabled ? (
+                <button
+                  onClick={() => void enablePushNotifications()}
+                  className="px-3.5 py-1.5 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold transition cursor-pointer"
+                >
+                  Ativar Push
+                </button>
+              ) : null}
+              <button
+                onClick={() => openModal('notifications')}
+                className="px-3 py-1.5 rounded-xl bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-200 hover:border-blue-400 text-xs font-semibold transition cursor-pointer"
+              >
+                Configurar Alertas
+              </button>
+            </div>
+          </div>
+
           {/* TAB: BUSINESSES */}
           {activeTab === 'businesses' && (
             <div>
@@ -303,6 +362,99 @@ export const FavoritesModal: React.FC = () => {
             </div>
           )}
 
+          {/* TAB: SERVICES */}
+          {activeTab === 'services' && (
+            <div>
+              {favoriteServices.length > 0 ? (
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  {favoriteServices.map((serv) => (
+                    <div
+                      key={serv.id}
+                      className="p-4 rounded-2xl bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 shadow-xs flex flex-col justify-between"
+                    >
+                      <div className="flex items-start gap-3">
+                        <img
+                          src={serv.imageUrl}
+                          alt={serv.name}
+                          className="w-14 h-14 rounded-xl object-cover shrink-0 bg-slate-100"
+                        />
+                        <div className="min-w-0 flex-1">
+                          <h4
+                            onClick={() => openModal('service_detail', serv.id)}
+                            className="text-xs sm:text-sm font-bold text-slate-900 dark:text-white line-clamp-1 hover:text-indigo-600 cursor-pointer"
+                          >
+                            {serv.name}
+                          </h4>
+                          <div className="mt-0.5 text-[11px] text-slate-500 dark:text-slate-400 flex items-center gap-1.5">
+                            <span>{getServiceModeLabel(serv.serviceMode)}</span>
+                            <span aria-hidden="true">·</span>
+                            <span className="inline-flex items-center gap-1 font-mono tabular-nums">
+                              <Clock className="w-3 h-3" />
+                              {serv.duration}
+                            </span>
+                          </div>
+                          <div className="mt-1 font-mono font-extrabold text-sm text-slate-900 dark:text-white">
+                            {formatServicePrice(serv)}
+                          </div>
+                        </div>
+
+                        <button
+                          onClick={() => toggleFavoriteService(serv.id)}
+                          className="p-1.5 text-rose-600 hover:text-rose-700 hover:bg-rose-50 dark:hover:bg-rose-950/40 rounded-lg transition cursor-pointer"
+                          title="Remover dos favoritos"
+                        >
+                          <Heart className="w-4 h-4 fill-rose-600" />
+                        </button>
+                      </div>
+
+                      <p className="mt-2 text-xs text-slate-500 dark:text-slate-400 line-clamp-2">
+                        {serv.description}
+                      </p>
+
+                      <div className="mt-4 pt-3 border-t border-slate-100 dark:border-slate-700 flex items-center justify-between gap-2">
+                        <button
+                          onClick={() => openModal('service_detail', serv.id)}
+                          className="text-xs font-semibold text-blue-600 dark:text-blue-400 hover:underline cursor-pointer"
+                        >
+                          Ver Detalhes
+                        </button>
+
+                        <button
+                          onClick={() => openModal('service_detail', serv.id)}
+                          className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold transition shadow-xs cursor-pointer"
+                        >
+                          <MessageCircle className="w-3.5 h-3.5" />
+                          <span>Solicitar</span>
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <div className="text-center py-12 bg-slate-50 dark:bg-slate-800/40 rounded-2xl border border-slate-200 dark:border-slate-800 p-8">
+                  <Wrench className="w-12 h-12 text-slate-300 dark:text-slate-600 mx-auto mb-3" />
+                  <h3 className="text-base font-bold text-slate-800 dark:text-slate-200">
+                    Nenhum serviço salvo nos favoritos
+                  </h3>
+                  <p className="text-xs text-slate-500 dark:text-slate-400 max-w-sm mx-auto mt-1">
+                    Encontrou um serviço ou profissional interessante? Clique no coração para guardá-lo aqui.
+                  </p>
+                  <button
+                    onClick={() => {
+                      closeModal();
+                      setCurrentView('services');
+                      window.scrollTo({ top: 0, behavior: 'smooth' });
+                    }}
+                    className="mt-4 inline-flex items-center gap-1.5 px-4 py-2 bg-indigo-600 text-white text-xs font-semibold rounded-xl hover:bg-indigo-700 transition cursor-pointer"
+                  >
+                    <span>Explorar Catálogo de Serviços</span>
+                    <ArrowRight className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+              )}
+            </div>
+          )}
+
         </div>
 
         {/* Footer */}
@@ -319,6 +471,16 @@ export const FavoritesModal: React.FC = () => {
         </div>
 
       </div>
+
+      <ConfirmModal
+        isOpen={confirmClearOpen}
+        title="Limpar Favoritos"
+        message="Tem certeza que deseja limpar todos os favoritos salvos (empresas, produtos e serviços)?"
+        confirmLabel="Limpar Favoritos"
+        variant="danger"
+        onConfirm={() => clearAllFavorites()}
+        onCancel={() => setConfirmClearOpen(false)}
+      />
     </div>
   );
 };

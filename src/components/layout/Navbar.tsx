@@ -4,6 +4,7 @@ import {
   MapPin,
   Building2,
   ShoppingBag,
+  Wrench,
   ShieldCheck,
   PlusCircle,
   Heart,
@@ -12,6 +13,8 @@ import {
   Store,
   Grid,
   Zap,
+  Bell,
+  BellRing,
 } from 'lucide-react';
 
 export const Navbar: React.FC = () => {
@@ -26,6 +29,8 @@ export const Navbar: React.FC = () => {
     logout,
     currentBusinessAuth,
     totalFavoritesCount,
+    unreadAlertsCount,
+    pushPreferences,
   } = useDirectory();
 
   const activeCities = cities.filter((c) => c.isActive);
@@ -49,7 +54,7 @@ export const Navbar: React.FC = () => {
             <img
               src="/logo.png"
               alt="achenacidade"
-              className="w-[55px] h-[55px] object-contain rounded-full shadow-sm group-hover:scale-105 transition-transform bg-white shrink-0"
+              className="w-[58px] h-[55px] object-contain rounded-full shadow-sm group-hover:scale-105 transition-transform bg-white shrink-0"
             />
             <div className="hidden sm:flex flex-col items-start">
               <span className="text-lg sm:text-xl font-extrabold tracking-tight text-slate-900 dark:text-white font-display">
@@ -110,6 +115,15 @@ export const Navbar: React.FC = () => {
             Produtos
           </button>
           <button
+            onClick={() => navigateToView('services')}
+            className={`hover:text-indigo-600 dark:hover:text-indigo-400 transition-colors whitespace-nowrap shrink-0 flex items-center gap-1.5 cursor-pointer ${
+              currentView === 'services' ? 'text-indigo-600 dark:text-indigo-400 font-bold' : ''
+            }`}
+          >
+            <Wrench className="w-4 h-4 text-slate-400" />
+            Serviços
+          </button>
+          <button
             onClick={() => navigateToView('categories')}
             className={`hover:text-emerald-600 dark:hover:text-emerald-400 transition-colors whitespace-nowrap shrink-0 flex items-center gap-1.5 cursor-pointer ${
               currentView === 'categories' ? 'text-emerald-600 dark:text-emerald-400 font-bold' : ''
@@ -129,18 +143,63 @@ export const Navbar: React.FC = () => {
           </button>
         </nav>
 
-        {/* Zone 3: Actions (Favorites, Cadastrar Loja, Login/Account) - Hidden on mobile as requested */}
+        {/* Mobile Quick Bell Trigger (top-right on mobile only) */}
+        <button
+          onClick={() => openModal('notifications')}
+          className="sm:hidden absolute right-4 top-1/2 -translate-y-1/2 w-9 h-9 rounded-full border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-200 flex items-center justify-center shadow-xs cursor-pointer"
+          title="Alertas Push de Favoritos"
+        >
+          {pushPreferences.enabled ? (
+            <BellRing className="w-4 h-4 text-blue-600 dark:text-blue-400" />
+          ) : (
+            <Bell className="w-4 h-4 text-slate-500" />
+          )}
+          {unreadAlertsCount > 0 && (
+            <span className="absolute -top-1 -right-1 min-w-4 h-4 px-1 rounded-full bg-orange-600 text-white text-[9px] font-black flex items-center justify-center tabular-nums">
+              {unreadAlertsCount}
+            </span>
+          )}
+        </button>
+
+        {/* Zone 3: Actions (Alertas, Favorites, Cadastrar Loja, Login/Account) - Hidden on mobile as requested */}
         <div className="hidden sm:flex items-center gap-2 sm:gap-2.5 shrink-0">
+          {/* Push Notifications Bell Button */}
+          <button
+            onClick={() => openModal('notifications')}
+            className={`hidden sm:flex relative items-center gap-1.5 px-2.5 sm:px-3 py-1.5 rounded-lg border text-xs font-semibold transition-colors cursor-pointer whitespace-nowrap shadow-xs ${
+              pushPreferences.enabled
+                ? 'border-blue-200 dark:border-blue-800 bg-blue-50 dark:bg-blue-950/40 text-blue-700 dark:text-blue-300 hover:bg-blue-100'
+                : 'border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-200 hover:text-blue-600 dark:hover:text-blue-400 hover:border-blue-200'
+            }`}
+            title="Configurar alertas push para empresas favoritas em Alagoinhas"
+          >
+            {pushPreferences.enabled ? (
+              <BellRing className="w-3.5 h-3.5 text-blue-600 dark:text-blue-400" />
+            ) : (
+              <Bell className="w-3.5 h-3.5 text-slate-400" />
+            )}
+            <span className="hidden md:inline">Alertas</span>
+            {unreadAlertsCount > 0 ? (
+              <span className="flex items-center justify-center min-w-4.5 h-4 px-1 rounded-full bg-orange-600 text-white text-[10px] font-black tabular-nums">
+                {unreadAlertsCount}
+              </span>
+            ) : (
+              pushPreferences.enabled && (
+                <span className="w-2 h-2 rounded-full bg-emerald-500" />
+              )
+            )}
+          </button>
+
           {/* Favorites Button (Hidden on mobile to preserve layout, accessible in bottom nav/bubble) */}
           <button
             onClick={() => openModal('favorites')}
             className="hidden sm:flex relative items-center gap-1.5 px-2.5 sm:px-3 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-200 hover:text-rose-600 dark:hover:text-rose-400 hover:border-rose-200 dark:hover:border-rose-800 text-xs font-semibold transition-colors cursor-pointer whitespace-nowrap shadow-xs"
-            title="Ver empresas e produtos favoritados"
+            title="Ver empresas, produtos e serviços favoritados"
           >
             <Heart className={`w-3.5 h-3.5 ${totalFavoritesCount > 0 ? 'text-rose-500 fill-rose-500' : 'text-slate-400'}`} />
             <span className="hidden md:inline">Favoritos</span>
             {totalFavoritesCount > 0 && (
-              <span className="flex items-center justify-center min-w-4.5 h-4 px-1 rounded-full bg-rose-600 text-white text-[10px] font-black">
+              <span className="flex items-center justify-center min-w-4.5 h-4 px-1 rounded-full bg-rose-600 text-white text-[10px] font-black tabular-nums">
                 {totalFavoritesCount}
               </span>
             )}

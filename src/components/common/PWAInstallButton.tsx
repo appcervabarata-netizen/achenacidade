@@ -5,6 +5,7 @@ import { Download, Smartphone, X } from 'lucide-react';
 export const PWAInstallButton: React.FC<{ compact?: boolean }> = ({ compact = false }) => {
   const { isInstallable, isInstalled, isIOS, install } = usePWAInstall();
   const [showIOSGuide, setShowIOSGuide] = useState(false);
+  const [showFallbackGuide, setShowFallbackGuide] = useState(false);
 
   // If already running inside installed standalone PWA, hide
   if (isInstalled) {
@@ -96,17 +97,56 @@ export const PWAInstallButton: React.FC<{ compact?: boolean }> = ({ compact = fa
     );
   }
 
-  // Fallback demo button to simulate PWA install guide if neither prompted
+  // Fallback guide modal without browser alert()
   return (
-    <button
-      onClick={() => {
-        alert('Para instalar o achenacidade como aplicativo PWA: acesse pelo Chrome no Android ou Safari no iPhone e selecione "Instalar App" ou "Adicionar à Tela Inicial".');
-      }}
-      className="hidden sm:flex items-center gap-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 px-2.5 py-1 text-xs font-medium text-slate-600 dark:text-slate-300 hover:bg-slate-50 transition-colors whitespace-nowrap shrink-0 cursor-pointer"
-      title="App PWA Pronto"
-    >
-      <Download className="w-3.5 h-3.5 text-blue-600" />
-      <span>PWA Pronto</span>
-    </button>
+    <>
+      <button
+        type="button"
+        onClick={() => setShowFallbackGuide(true)}
+        className="hidden sm:flex items-center gap-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 px-2.5 py-1 text-xs font-medium text-slate-600 dark:text-slate-300 hover:bg-slate-50 transition-colors whitespace-nowrap shrink-0 cursor-pointer"
+        title="App PWA Pronto"
+      >
+        <Download className="w-3.5 h-3.5 text-blue-600" />
+        <span>PWA Pronto</span>
+      </button>
+
+      {showFallbackGuide && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-xs p-4"
+          onClick={() => setShowFallbackGuide(false)}
+        >
+          <div
+            className="w-full max-w-sm rounded-2xl bg-white p-6 shadow-2xl dark:bg-slate-900 border border-slate-200 dark:border-slate-800 space-y-4"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between border-b border-slate-100 dark:border-slate-800 pb-3">
+              <div className="flex items-center gap-2">
+                <Smartphone className="w-5 h-5 text-blue-600" />
+                <h3 className="text-sm font-bold text-slate-900 dark:text-white">
+                  Instalar App achenacidade (PWA)
+                </h3>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowFallbackGuide(false)}
+                className="text-slate-400 hover:text-slate-600 p-1 cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+            <p className="text-xs text-slate-600 dark:text-slate-300 leading-relaxed">
+              Para instalar o <strong>achenacidade</strong> como aplicativo no seu dispositivo, abra o site no <strong>Chrome</strong> (Android/Desktop) ou <strong>Safari</strong> (iPhone/iPad) e selecione <strong>&quot;Instalar App&quot;</strong> ou <strong>&quot;Adicionar à Tela Inicial&quot;</strong>.
+            </p>
+            <button
+              type="button"
+              onClick={() => setShowFallbackGuide(false)}
+              className="w-full rounded-xl bg-blue-600 hover:bg-blue-700 py-2 text-xs font-bold text-white transition cursor-pointer"
+            >
+              Entendi
+            </button>
+          </div>
+        </div>
+      )}
+    </>
   );
 };

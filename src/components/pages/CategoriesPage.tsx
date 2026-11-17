@@ -18,6 +18,17 @@ import {
   Search,
   ArrowRight,
   Store,
+  ShoppingBasket,
+  PartyPopper,
+  Pill,
+  Coffee,
+  Sofa,
+  BookOpen,
+  Sprout,
+  Dumbbell,
+  BedDouble,
+  Glasses,
+  Truck,
 } from 'lucide-react';
 
 const iconMap: Record<string, React.ElementType> = {
@@ -34,6 +45,18 @@ const iconMap: Record<string, React.ElementType> = {
   Sparkles,
   ShoppingBag,
   Briefcase,
+  ShoppingBasket,
+  PartyPopper,
+  Pill,
+  Coffee,
+  Sofa,
+  BookOpen,
+  Sprout,
+  Dumbbell,
+  BedDouble,
+  Glasses,
+  Truck,
+  Store,
 };
 
 export const CategoriesPage: React.FC = () => {

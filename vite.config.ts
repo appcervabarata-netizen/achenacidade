@@ -11,12 +11,12 @@ export default defineConfig(() => {
       tailwindcss(),
       VitePWA({
         registerType: 'autoUpdate',
-        includeAssets: ['logo.png', 'apple-touch-icon.png', 'pwa-192x192.png', 'pwa-512x512.png'],
+        includeAssets: ['logo.png', 'apple-touch-icon.png', 'pwa-192x192.png', 'pwa-512x512.png', 'sw-push.js'],
         manifest: {
           id: '/',
           name: 'achenacidade — Diretório de Empresas',
           short_name: 'achenacidade',
-          description: 'Diretório de empresas e catálogo de produtos por cidades com planos de divulgação.',
+          description: 'Diretório de empresas, produtos e serviços em Alagoinhas - BA com alertas push.',
           theme_color: '#1D4ED8',
           display: 'fullscreen',
           display_override: ['fullscreen', 'standalone', 'minimal-ui'],
@@ -46,6 +46,7 @@ export default defineConfig(() => {
         },
         workbox: {
           globPatterns: ['**/*.{js,css,html,ico,png,svg,jpg,jpeg,woff,woff2}'],
+          importScripts: ['/sw-push.js'],
         },
         devOptions: {
           enabled: true,

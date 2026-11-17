@@ -12,8 +12,12 @@ import {
   CheckCircle2,
   Package,
   ShoppingBag,
+  Wrench,
   Heart,
+  Bell,
+  BellRing,
 } from 'lucide-react';
+import { formatServicePrice, getServiceModeLabel, getServiceWhatsAppMessage } from '../../utils/serviceFormatters';
 
 export const BusinessDetailModal: React.FC = () => {
   const {
@@ -24,11 +28,16 @@ export const BusinessDetailModal: React.FC = () => {
     categories,
     plans,
     products,
+    services,
     openModal,
     toggleFavoriteBusiness,
     isBusinessFavorite,
     toggleFavoriteProduct,
     isProductFavorite,
+    toggleFavoriteService,
+    isServiceFavorite,
+    pushPreferences,
+    enablePushNotifications,
   } = useDirectory();
 
   if (activeModal.type !== 'business_detail' || !activeModal.id) {
@@ -43,6 +52,9 @@ export const BusinessDetailModal: React.FC = () => {
   const plan = plans.find((p) => p.id === business.planId);
   const storeProducts = products.filter(
     (p) => p.businessId === business.id && p.isActive
+  );
+  const storeServices = services.filter(
+    (s) => s.businessId === business.id && s.isActive
   );
 
   const formatPrice = (value: number) => {
@@ -71,6 +83,35 @@ export const BusinessDetailModal: React.FC = () => {
 
           {/* Top action buttons */}
           <div className="absolute top-4 right-4 z-10 flex items-center gap-2">
+            <button
+              onClick={async () => {
+                if (!isBusinessFavorite(business.id)) {
+                  toggleFavoriteBusiness(business.id);
+                }
+                if (!pushPreferences.enabled) {
+                  await enablePushNotifications();
+                } else {
+                  openModal('notifications');
+                }
+              }}
+              className={`w-9 h-9 rounded-full flex items-center justify-center transition cursor-pointer shadow-md ${
+                pushPreferences.enabled && isBusinessFavorite(business.id)
+                  ? 'bg-blue-600 text-white'
+                  : 'bg-black/50 hover:bg-black/80 text-white'
+              }`}
+              title={
+                pushPreferences.enabled && isBusinessFavorite(business.id)
+                  ? 'Alertas push ativos para esta empresa'
+                  : 'Receber alertas push de ofertas e serviços desta loja'
+              }
+            >
+              {pushPreferences.enabled && isBusinessFavorite(business.id) ? (
+                <BellRing className="w-4 h-4" />
+              ) : (
+                <Bell className="w-4 h-4" />
+              )}
+            </button>
+
             <button
               onClick={() => toggleFavoriteBusiness(business.id)}
               className={`w-9 h-9 rounded-full flex items-center justify-center transition cursor-pointer shadow-md ${
@@ -236,7 +277,7 @@ export const BusinessDetailModal: React.FC = () => {
                 <div className="pt-2 border-t border-slate-200 dark:border-slate-700">
                   <span className="text-slate-500 dark:text-slate-400">Plano Anunciante:</span>
                   <span className="ml-1.5 font-bold text-blue-600 dark:text-blue-400">
-                    {plan.name} ({plan.productLimit} produtos)
+                    {plan.name} ({plan.productLimit} produtos/serviços)
                   </span>
                 </div>
               )}
@@ -317,6 +358,94 @@ export const BusinessDetailModal: React.FC = () => {
                 <ShoppingBag className="w-8 h-8 text-slate-400 mx-auto mb-2" />
                 <p className="text-xs text-slate-500 dark:text-slate-400">
                   Esta empresa ainda não cadastrou produtos em sua vitrine.
+                </p>
+              </div>
+            )}
+          </div>
+
+          {/* Store Services Showcase */}
+          <div>
+            <div className="flex items-center justify-between mb-4">
+              <div className="flex items-center gap-2">
+                <Wrench className="w-5 h-5 text-indigo-600" />
+                <h3 className="text-lg font-bold text-slate-900 dark:text-white font-display">
+                  Serviços Oferecidos ({storeServices.length})
+                </h3>
+              </div>
+            </div>
+
+            {storeServices.length > 0 ? (
+              <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4">
+                {storeServices.map((serv) => (
+                  <div
+                    key={serv.id}
+                    className="group bg-white dark:bg-slate-800/80 rounded-2xl border border-slate-200 dark:border-slate-700/80 overflow-hidden flex flex-col justify-between shadow-xs hover:shadow-md transition"
+                  >
+                    <div
+                      className="relative aspect-4/3 overflow-hidden bg-slate-100 dark:bg-slate-700 cursor-pointer"
+                      onClick={() => openModal('service_detail', serv.id)}
+                    >
+                      <img
+                        src={serv.imageUrl}
+                        alt={serv.name}
+                        className="w-full h-full object-cover group-hover:scale-105 transition-transform"
+                        referrerPolicy="no-referrer"
+                      />
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          toggleFavoriteService(serv.id);
+                        }}
+                        className={`absolute top-2 right-2 w-7 h-7 rounded-full flex items-center justify-center transition shadow-xs cursor-pointer ${
+                          isServiceFavorite(serv.id)
+                            ? 'bg-white text-rose-600 shadow-sm'
+                            : 'bg-black/40 hover:bg-black/60 text-white'
+                        }`}
+                        title={isServiceFavorite(serv.id) ? 'Remover dos favoritos' : 'Salvar serviço nos favoritos'}
+                      >
+                        <Heart className={`w-3.5 h-3.5 ${isServiceFavorite(serv.id) ? 'fill-rose-600' : ''}`} />
+                      </button>
+                    </div>
+                    <div className="p-3.5">
+                      <h4
+                        onClick={() => openModal('service_detail', serv.id)}
+                        className="text-xs sm:text-sm font-bold text-slate-900 dark:text-white line-clamp-1 hover:text-indigo-600 cursor-pointer"
+                      >
+                        {serv.name}
+                      </h4>
+                      <div className="mt-1 flex items-center gap-1.5 text-[11px] text-slate-500 dark:text-slate-400">
+                        <span>{getServiceModeLabel(serv.serviceMode)}</span>
+                        <span aria-hidden="true">·</span>
+                        <span className="inline-flex items-center gap-1 font-mono tabular-nums">
+                          <Clock className="w-3 h-3" />
+                          {serv.duration}
+                        </span>
+                      </div>
+                      <div className="mt-1.5 flex items-baseline justify-between gap-2">
+                        <span className="text-xs sm:text-sm font-extrabold text-slate-900 dark:text-white font-mono tabular-nums">
+                          {formatServicePrice(serv)}
+                        </span>
+                        <a
+                          href={`https://wa.me/${business.whatsapp.replace(/\D/g, '')}?text=${encodeURIComponent(
+                            getServiceWhatsAppMessage(serv, business.name)
+                          )}`}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="text-[11px] font-bold text-emerald-600 hover:text-emerald-700 flex items-center gap-1 shrink-0"
+                        >
+                          <MessageCircle className="w-3 h-3" />
+                          <span>Orçar</span>
+                        </a>
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <div className="text-center py-8 bg-slate-50 dark:bg-slate-800/40 rounded-2xl border border-slate-200 dark:border-slate-700 p-6">
+                <Wrench className="w-8 h-8 text-slate-400 mx-auto mb-2" />
+                <p className="text-xs text-slate-500 dark:text-slate-400">
+                  Esta empresa ainda não cadastrou serviços em sua vitrine.
                 </p>
               </div>
             )}

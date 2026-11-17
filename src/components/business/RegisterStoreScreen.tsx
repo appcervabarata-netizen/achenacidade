@@ -1,7 +1,9 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useDirectory } from '../../context/DirectoryContext';
-import { DaySchedule } from '../../types';
+import { DaySchedule, BillingCycle } from '../../types';
 import { ImageUploadField } from '../common/ImageUploadField';
+import { BillingCycleSelector } from '../common/BillingCycleSelector';
+import { calculatePlanPricing, formatBRL } from '../../utils/planPricing';
 import {
   ArrowLeft,
   Building2,
@@ -24,6 +26,7 @@ import {
   ShieldCheck,
   Check,
   Sparkles,
+  Send,
 } from 'lucide-react';
 
 const initialWeeklySchedule: DaySchedule[] = [
@@ -45,6 +48,15 @@ export const RegisterStoreScreen: React.FC = () => {
     loginAsBusiness,
     setCurrentView,
     sessionConfig,
+    preselectedPlanId,
+    preselectedBillingCycle,
+    setPreselectedBillingCycle,
+    planDiscountConfig,
+    siteModeConfig,
+    sendVerificationCodeEmail,
+    verifyEmailCode,
+    sendTemplatedEmail,
+    openCheckoutPage,
   } = useDirectory();
 
   const activeCities = cities.filter((c) => c.isActive);
@@ -53,7 +65,7 @@ export const RegisterStoreScreen: React.FC = () => {
     name: '',
     cityId: activeCities[0]?.id || cities[0]?.id || '',
     categoryId: categories[0]?.id || '',
-    planId: plans[0]?.id || '',
+    planId: preselectedPlanId || plans[0]?.id || '',
     description: '',
     phone: '',
     whatsapp: '',
@@ -74,6 +86,29 @@ export const RegisterStoreScreen: React.FC = () => {
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
+  // 6-digit Email Verification State
+  const [verificationCodeSentTo, setVerificationCodeSentTo] = useState<string | null>(null);
+  const [verificationInput, setVerificationInput] = useState('');
+  const [verifiedEmail, setVerifiedEmail] = useState<string | null>(null);
+  const [isSendingCode, setIsSendingCode] = useState(false);
+  const [emailStatusMsg, setEmailStatusMsg] = useState<{
+    type: 'info' | 'success' | 'error';
+    text: string;
+    testCodeHint?: string;
+  } | null>(null);
+
+  const [billingCycle, setBillingCycle] = useState<BillingCycle>(preselectedBillingCycle || 'monthly');
+
+  useEffect(() => {
+    if (preselectedPlanId && plans.some((p) => p.id === preselectedPlanId)) {
+      setForm((prev) => ({ ...prev, planId: preselectedPlanId }));
+    }
+  }, [preselectedPlanId, plans]);
+
+  useEffect(() => {
+    setBillingCycle(preselectedBillingCycle);
+  }, [preselectedBillingCycle]);
+
   const logoPresetSamples = [
     { label: 'Gastronomia', url: 'https://images.unsplash.com/photo-1555396273-367ea4eb4db5?w=300&h=300&fit=crop&q=80' },
     { label: 'Boutique & Moda', url: 'https://images.unsplash.com/photo-1441986300917-64674bd600d8?w=300&h=300&fit=crop&q=80' },
@@ -93,7 +128,67 @@ export const RegisterStoreScreen: React.FC = () => {
     );
   };
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const normalizedFormEmail = form.email.trim().toLowerCase();
+  const isEmailValidFormat = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalizedFormEmail);
+  const isCurrentEmailVerified = Boolean(verifiedEmail && verifiedEmail === normalizedFormEmail);
+
+  const handleSendVerificationCode = async () => {
+    setErrorMsg(null);
+    if (!isEmailValidFormat) {
+      setEmailStatusMsg({
+        type: 'error',
+        text: 'Informe um endereço de e-mail válido antes de solicitar o código de validação.',
+      });
+      return;
+    }
+
+    setIsSendingCode(true);
+    try {
+      const cityName = cities.find((c) => c.id === form.cityId)?.name || 'Alagoinhas';
+      const result = await sendVerificationCodeEmail({
+        to: form.email.trim(),
+        businessName: form.name.trim(),
+        cityName,
+      });
+
+      setVerificationCodeSentTo(normalizedFormEmail);
+      setVerificationInput('');
+      setEmailStatusMsg({
+        type: 'info',
+        text: result.deliveredViaSmtp
+          ? `Enviamos um código de 6 dígitos para ${form.email.trim()}. Confira sua caixa de entrada.`
+          : `Código de 6 dígitos registrado na Caixa de Saída local para ${form.email.trim()} (SMTP não configurado para envio externo).`,
+        testCodeHint: result.deliveredViaSmtp ? undefined : result.code,
+      });
+    } catch {
+      setEmailStatusMsg({
+        type: 'error',
+        text: 'Não foi possível gerar o código de validação. Tente novamente.',
+      });
+    } finally {
+      setIsSendingCode(false);
+    }
+  };
+
+  const handleConfirmVerificationCode = () => {
+    setErrorMsg(null);
+    const check = verifyEmailCode(form.email, verificationInput);
+    if (!check.valid) {
+      setEmailStatusMsg({
+        type: 'error',
+        text: check.error || 'Código inválido.',
+      });
+      return;
+    }
+
+    setVerifiedEmail(normalizedFormEmail);
+    setEmailStatusMsg({
+      type: 'success',
+      text: 'E-mail validado com sucesso! Você já pode concluir o cadastro da sua empresa.',
+    });
+  };
+
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setErrorMsg(null);
 
@@ -105,8 +200,12 @@ export const RegisterStoreScreen: React.FC = () => {
       setErrorMsg('Por favor, informe o WhatsApp comercial para contato dos clientes.');
       return;
     }
-    if (!form.email.trim()) {
+    if (!isEmailValidFormat) {
       setErrorMsg('Por favor, informe um e-mail válido para login e contato.');
+      return;
+    }
+    if (!isCurrentEmailVerified) {
+      setErrorMsg('Valide seu e-mail com o código de 6 dígitos antes de finalizar o cadastro.');
       return;
     }
     if (!form.password) {
@@ -131,11 +230,19 @@ export const RegisterStoreScreen: React.FC = () => {
         .slice(0, 3)
         .join(' | ');
 
+      const chosenPlan = plans.find((p) => p.id === form.planId) || plans[0];
+      const freeFallbackPlan = plans.find((p) => p.priceMonthly === 0) || plans[0];
+      const isPaidPlan = (chosenPlan?.priceMonthly || 0) > 0;
+      const chosenPricing = calculatePlanPricing(chosenPlan, billingCycle, planDiscountConfig);
+      const paymentToken = isPaidPlan
+        ? `pay-${Math.random().toString(36).slice(2, 10)}${Date.now().toString(36)}`
+        : undefined;
+
       const newBizData = {
         name: form.name.trim(),
         cityId: form.cityId,
         categoryId: form.categoryId,
-        planId: form.planId,
+        planId: isPaidPlan ? (freeFallbackPlan?.id || chosenPlan.id) : chosenPlan.id,
         description: form.description.trim() || 'Empresa cadastrada no achenacidade.',
         phone: form.phone.trim(),
         whatsapp: form.whatsapp.trim(),
@@ -152,6 +259,12 @@ export const RegisterStoreScreen: React.FC = () => {
         website: form.website.trim(),
         password: form.password,
         isVerified: false,
+        emailVerified: true,
+        paymentStatus: isPaidPlan ? ('pending_payment' as const) : ('active' as const),
+        pendingPlanId: isPaidPlan ? chosenPlan.id : undefined,
+        pendingBillingCycle: isPaidPlan ? billingCycle : undefined,
+        billingCycle: isPaidPlan ? 'monthly' : billingCycle,
+        paymentToken,
       };
 
       const newId = addBusiness(newBizData);
@@ -162,10 +275,57 @@ export const RegisterStoreScreen: React.FC = () => {
         createdAt: new Date().toISOString().split('T')[0],
       };
 
-      // Log immediately into the newly created store
       loginAsBusiness(newId, createdBizObj);
-      setCurrentView('business_portal');
-      window.scrollTo({ top: 0, behavior: 'smooth' });
+
+      const cityName = cities.find((c) => c.id === form.cityId)?.name || 'Alagoinhas';
+      const origin = typeof window !== 'undefined' ? window.location.origin : '';
+
+      if (isPaidPlan && chosenPlan) {
+        const paymentLink = `${origin}/?checkout=1&businessId=${encodeURIComponent(
+          newId
+        )}&planId=${encodeURIComponent(chosenPlan.id)}&cycle=${encodeURIComponent(
+          billingCycle
+        )}&token=${encodeURIComponent(paymentToken || '')}`;
+
+        const planLabel =
+          chosenPricing.months > 1
+            ? `${chosenPlan.name} (${chosenPricing.shortLabel}${
+                chosenPricing.discountPercent > 0 ? ` · ${chosenPricing.discountPercent}% OFF` : ''
+              })`
+            : chosenPlan.name;
+
+        await sendTemplatedEmail({
+          key: 'payment_link',
+          to: form.email.trim(),
+          variables: {
+            nome_empresa: newBizData.name,
+            nome_plano: planLabel,
+            valor_plano: formatBRL(chosenPricing.totalAmount),
+            link_pagamento: paymentLink,
+            cidade: cityName,
+          },
+          actionUrl: paymentLink,
+        });
+
+        openCheckoutPage(newId, chosenPlan.id, paymentToken, billingCycle);
+      } else {
+        const portalLink = `${origin}/?painel=1&businessId=${encodeURIComponent(newId)}`;
+        await sendTemplatedEmail({
+          key: 'welcome',
+          to: form.email.trim(),
+          variables: {
+            nome_empresa: newBizData.name,
+            nome_plano: chosenPlan?.name || 'Plano Gratuito',
+            email_login: form.email.trim(),
+            link_painel: portalLink,
+            cidade: cityName,
+          },
+          actionUrl: portalLink,
+        });
+
+        setCurrentView('business_portal');
+        window.scrollTo({ top: 0, behavior: 'smooth' });
+      }
     } catch (err) {
       console.error(err);
       setErrorMsg('Ocorreu um erro ao cadastrar a empresa. Tente novamente.');
@@ -174,17 +334,19 @@ export const RegisterStoreScreen: React.FC = () => {
   };
 
   const selectedPlan = plans.find((p) => p.id === form.planId) || plans[0];
+  const selectedPricing = calculatePlanPricing(selectedPlan, billingCycle, planDiscountConfig);
+  const isPaidSelectedPlan = !selectedPricing.isFree;
 
   return (
     <div className="min-h-screen bg-slate-50 dark:bg-slate-950 flex flex-col transition-colors pb-24 md:pb-16">
       {/* Top Header */}
       <header className="sticky top-0 z-30 bg-white/95 dark:bg-slate-900/95 backdrop-blur-md border-b border-slate-200 dark:border-slate-800 px-4 sm:px-8 h-16 flex items-center justify-between">
         <button
-          onClick={() => setCurrentView('home')}
+          onClick={() => setCurrentView(siteModeConfig.mode !== 'normal' ? 'plans' : 'home')}
           className="flex items-center gap-2 text-xs sm:text-sm font-semibold text-slate-700 dark:text-slate-200 hover:text-blue-600 transition cursor-pointer"
         >
           <ArrowLeft className="w-4 h-4" />
-          <span>Voltar ao Início</span>
+          <span>{siteModeConfig.mode !== 'normal' ? 'Voltar aos Planos' : 'Voltar ao Início'}</span>
         </button>
 
         <div className="flex items-center gap-2">
@@ -229,21 +391,37 @@ export const RegisterStoreScreen: React.FC = () => {
         )}
 
         <form onSubmit={handleSubmit} className="space-y-8">
-          {/* 1. Escolha do Plano */}
+          {/* 1. Escolha do Plano e Ciclo */}
           <div className="p-6 rounded-3xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-sm space-y-4">
             <div className="flex items-center justify-between border-b border-slate-100 dark:border-slate-800 pb-3">
               <div className="flex items-center gap-2">
                 <CreditCard className="w-5 h-5 text-blue-600" />
                 <h2 className="text-sm sm:text-base font-bold text-slate-900 dark:text-white">
-                  1. Escolha seu Plano de Divulgação
+                  1. Escolha seu Plano & Ciclo de Pagamento
                 </h2>
               </div>
-              <span className="text-[11px] text-slate-500">Altere quando quiser</span>
+              <span className="text-[11px] text-slate-500">Descontos automáticos multi-anuais</span>
+            </div>
+
+            <div className="space-y-2">
+              <p className="text-xs font-semibold text-slate-600 dark:text-slate-300">
+                Periodicidade do Plano:
+              </p>
+              <BillingCycleSelector
+                value={billingCycle}
+                onChange={(cycle) => {
+                  setBillingCycle(cycle);
+                  setPreselectedBillingCycle(cycle);
+                }}
+                globalDiscounts={planDiscountConfig}
+                compact
+              />
             </div>
 
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
               {plans.map((p) => {
                 const isSelected = form.planId === p.id;
+                const pricing = calculatePlanPricing(p, billingCycle, planDiscountConfig);
                 return (
                   <div
                     key={p.id}
@@ -259,13 +437,39 @@ export const RegisterStoreScreen: React.FC = () => {
                         <span className="font-bold text-xs sm:text-sm text-slate-900 dark:text-white">{p.name}</span>
                         {isSelected && <CheckCircle className="w-4 h-4 text-blue-600" />}
                       </div>
-                      <div className="mt-2 text-lg font-black text-slate-900 dark:text-white font-mono">
-                        {p.priceMonthly === 0 ? 'Grátis' : `R$ ${p.priceMonthly.toFixed(2)}/mês`}
+
+                      {pricing.isFree ? (
+                        <div className="mt-2 text-lg font-black text-slate-900 dark:text-white font-mono">
+                          Grátis
+                        </div>
+                      ) : (
+                        <div className="mt-2 space-y-0.5">
+                          {pricing.discountPercent > 0 && (
+                            <div className="flex items-center gap-1.5 text-[11px]">
+                              <span className="line-through text-slate-400 font-mono tabular-nums">
+                                {formatBRL(pricing.baseMonthly)}
+                              </span>
+                              <span className="font-extrabold text-emerald-700 dark:text-emerald-400 font-mono tabular-nums">
+                                -{pricing.discountPercent}% OFF
+                              </span>
+                            </div>
+                          )}
+                          <div className="text-lg font-black text-slate-900 dark:text-white font-mono tabular-nums">
+                            {formatBRL(pricing.effectiveMonthly)}
+                            <span className="text-xs font-medium text-slate-500">/mês</span>
+                          </div>
+                          {pricing.months > 1 && (
+                            <p className="text-[11px] font-bold text-blue-700 dark:text-blue-300 tabular-nums">
+                              Total {pricing.shortLabel}: {formatBRL(pricing.totalAmount)}
+                            </p>
+                          )}
+                        </div>
+                      )}
+
+                      <div className="mt-2 text-xs font-semibold text-orange-600 dark:text-orange-400 tabular-nums">
+                        Até {p.productLimit} produtos/serviços
                       </div>
-                      <div className="mt-2 text-xs font-semibold text-orange-600 dark:text-orange-400">
-                        Até {p.productLimit} produtos
-                      </div>
-                      <div className="text-[11px] text-slate-500">
+                      <div className="text-[11px] text-slate-500 tabular-nums">
                         Até {p.businessLimit || 1} {p.businessLimit === 1 ? 'loja' : 'lojas'}
                       </div>
                     </div>
@@ -439,7 +643,13 @@ export const RegisterStoreScreen: React.FC = () => {
                     type="email"
                     required
                     value={form.email}
-                    onChange={(e) => setForm({ ...form, email: e.target.value })}
+                    onChange={(e) => {
+                      const val = e.target.value;
+                      setForm({ ...form, email: val });
+                      if (verifiedEmail && verifiedEmail !== val.trim().toLowerCase()) {
+                        setVerifiedEmail(null);
+                      }
+                    }}
                     placeholder="contato@minhaloja.com.br"
                     className="w-full pl-9 pr-3 py-2.5 rounded-xl border border-slate-300 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-xs sm:text-sm text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
                   />
@@ -493,6 +703,87 @@ export const RegisterStoreScreen: React.FC = () => {
                   </button>
                 </div>
               </div>
+            </div>
+
+            {/* Verificação Obrigatória de E-mail com Código de 6 Dígitos */}
+            <div className="p-4 rounded-2xl bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 space-y-3">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                <div>
+                  <p className="text-xs font-bold text-slate-900 dark:text-white">
+                    Validação do E-mail (Código de 6 Dígitos)
+                  </p>
+                  <p className="text-[11px] text-slate-500 dark:text-slate-400">
+                    {isCurrentEmailVerified
+                      ? `E-mail ${form.email} validado com sucesso.`
+                      : 'Confirme que o e-mail é seu antes de concluir o cadastro.'}
+                  </p>
+                </div>
+
+                {isCurrentEmailVerified ? (
+                  <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-emerald-100 dark:bg-emerald-950/60 text-emerald-700 dark:text-emerald-300 text-xs font-bold self-start sm:self-auto">
+                    <Check className="w-4 h-4" />
+                    <span>E-mail Validado</span>
+                  </span>
+                ) : (
+                  <button
+                    type="button"
+                    disabled={isSendingCode}
+                    onClick={handleSendVerificationCode}
+                    className="px-4 py-2 rounded-xl bg-blue-700 hover:bg-blue-800 text-white text-xs font-bold flex items-center gap-1.5 cursor-pointer shrink-0 self-start sm:self-auto disabled:opacity-50"
+                  >
+                    <Send className="w-3.5 h-3.5" />
+                    <span>
+                      {isSendingCode
+                        ? 'Enviando...'
+                        : verificationCodeSentTo === form.email.trim().toLowerCase()
+                        ? 'Reenviar Código'
+                        : 'Enviar Código de Validação'}
+                    </span>
+                  </button>
+                )}
+              </div>
+
+              {!isCurrentEmailVerified && verificationCodeSentTo && (
+                <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2.5 pt-1">
+                  <input
+                    type="text"
+                    maxLength={6}
+                    value={verificationInput}
+                    onChange={(e) => setVerificationInput(e.target.value.replace(/\D/g, ''))}
+                    placeholder="Digite o código de 6 dígitos"
+                    className="flex-1 px-3.5 py-2 rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 text-sm font-mono tracking-widest text-slate-900 dark:text-white"
+                  />
+                  <button
+                    type="button"
+                    onClick={handleConfirmVerificationCode}
+                    className="px-4 py-2 rounded-xl bg-orange-600 hover:bg-orange-700 text-white text-xs font-extrabold cursor-pointer shrink-0"
+                  >
+                    Validar Código
+                  </button>
+                </div>
+              )}
+
+              {emailStatusMsg && (
+                <div
+                  className={`p-3 rounded-xl text-xs font-medium ${
+                    emailStatusMsg.type === 'success'
+                      ? 'bg-emerald-50 text-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-300'
+                      : emailStatusMsg.type === 'error'
+                      ? 'bg-rose-50 text-rose-700 dark:bg-rose-950/40 dark:text-rose-300'
+                      : 'bg-blue-50 text-blue-800 dark:bg-blue-950/40 dark:text-blue-300'
+                  }`}
+                >
+                  <p>{emailStatusMsg.text}</p>
+                  {emailStatusMsg.testCodeHint && (
+                    <p className="mt-1 text-[11px] font-semibold">
+                      Código gerado em modo de teste local:{' '}
+                      <span className="font-mono font-extrabold text-orange-600">
+                        {emailStatusMsg.testCodeHint}
+                      </span>
+                    </p>
+                  )}
+                </div>
+              )}
             </div>
           </div>
 
@@ -616,28 +907,70 @@ export const RegisterStoreScreen: React.FC = () => {
             </div>
           </div>
 
-          {/* Submit Button */}
-          <div className="p-6 rounded-3xl bg-gradient-to-r from-orange-600 to-amber-600 text-white shadow-xl flex flex-col sm:flex-row items-center justify-between gap-4">
+          {/* Dynamic Submit Banner (Free Immediate vs Paid Pending + Payment Link) */}
+          <div
+            className={`p-6 rounded-3xl text-white shadow-xl flex flex-col sm:flex-row items-center justify-between gap-4 ${
+              isPaidSelectedPlan
+                ? 'bg-gradient-to-r from-blue-900 via-blue-800 to-slate-900 border border-blue-700'
+                : 'bg-gradient-to-r from-orange-600 to-amber-600'
+            }`}
+          >
             <div>
-              <div className="flex items-center gap-2 text-xs font-bold uppercase tracking-wider text-orange-200 mb-1">
+              <div
+                className={`flex items-center gap-2 text-xs font-bold uppercase tracking-wider mb-1 ${
+                  isPaidSelectedPlan ? 'text-orange-300' : 'text-orange-200'
+                }`}
+              >
                 <Sparkles className="w-4 h-4" />
-                <span>Ativação Imediata</span>
+                <span>
+                  {isPaidSelectedPlan
+                    ? `${selectedPlan?.name} · ${selectedPricing.label} · ${formatBRL(
+                        selectedPricing.totalAmount
+                      )}${
+                        selectedPricing.discountPercent > 0
+                          ? ` (${selectedPricing.discountPercent}% OFF)`
+                          : ''
+                      }`
+                    : 'Ativação Imediata · Plano Gratuito'}
+                </span>
               </div>
               <h3 className="text-base sm:text-lg font-bold">
-                Tudo pronto para publicar sua vitrine?
+                {isPaidSelectedPlan
+                  ? 'Pronto para concluir e seguir para o pagamento?'
+                  : 'Tudo pronto para publicar sua vitrine?'}
               </h3>
-              <p className="text-xs text-orange-100 max-w-lg mt-0.5">
-                Ao clicar abaixo, sua empresa será cadastrada e você será direcionado imediatamente para o painel da sua loja para cadastrar seus produtos.
+              <p className="text-xs text-white/90 max-w-xl mt-0.5 leading-relaxed">
+                {isPaidSelectedPlan
+                  ? `Após validar seu e-mail, sua empresa será cadastrada como Pendente de Pagamento. Você será direcionado para pagar ${formatBRL(
+                      selectedPricing.totalAmount
+                    )} (PIX ou Cartão${
+                      selectedPricing.months > 1 ? ' em até 12x' : ''
+                    }) e receberá o link por e-mail.`
+                  : 'Ao clicar abaixo após validar seu e-mail, sua empresa será cadastrada, enviaremos o e-mail de boas-vindas e você será direcionado imediatamente para o painel da sua loja para cadastrar seus produtos e serviços.'}
               </p>
             </div>
 
             <button
               type="submit"
               disabled={isSubmitting}
-              className="w-full sm:w-auto px-8 py-3.5 rounded-2xl bg-white text-orange-700 font-extrabold text-xs sm:text-sm hover:bg-orange-50 transition shadow-md flex items-center justify-center gap-2 cursor-pointer shrink-0 disabled:opacity-50"
+              className={`w-full sm:w-auto px-7 py-3.5 rounded-2xl font-extrabold text-xs sm:text-sm transition shadow-md flex items-center justify-center gap-2 cursor-pointer shrink-0 disabled:opacity-50 ${
+                isPaidSelectedPlan
+                  ? 'bg-orange-600 hover:bg-orange-500 text-white'
+                  : 'bg-white text-orange-700 hover:bg-orange-50'
+              }`}
             >
-              <Plus className="w-4 h-4 text-orange-600" />
-              <span>{isSubmitting ? 'Cadastrando Loja...' : 'Finalizar Cadastro e Acessar Minha Loja'}</span>
+              {isPaidSelectedPlan ? (
+                <CreditCard className="w-4 h-4" />
+              ) : (
+                <Plus className="w-4 h-4 text-orange-600" />
+              )}
+              <span>
+                {isSubmitting
+                  ? 'Processando Cadastro...'
+                  : isPaidSelectedPlan
+                  ? 'Finalizar Cadastro e Ir para Pagamento'
+                  : 'Finalizar Cadastro e Acessar Minha Loja'}
+              </span>
             </button>
           </div>
         </form>

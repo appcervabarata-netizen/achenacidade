@@ -1,7 +1,19 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { useDirectory } from '../../context/DirectoryContext';
-import { DaySchedule } from '../../types';
+import { BillingCycle, DaySchedule, ServicePriceType, ServiceMode } from '../../types';
 import { ImageUploadField } from '../common/ImageUploadField';
+import { BillingCycleSelector } from '../common/BillingCycleSelector';
+import { ConfirmModal } from '../common/ConfirmModal';
+import {
+  BILLING_CYCLE_META,
+  calculatePlanPricing,
+  formatBRL,
+} from '../../utils/planPricing';
+import { formatServicePrice, getServiceModeLabel } from '../../utils/serviceFormatters';
+import serviceTechRepairImg from '../../assets/images/service_tech_repair_1794881238745.jpg';
+import servicePetGroomingImg from '../../assets/images/service_pet_grooming_1794881240613.jpg';
+import serviceCoffeeCateringImg from '../../assets/images/service_coffee_catering_1794881242678.jpg';
+import serviceFashionTailoringImg from '../../assets/images/service_fashion_tailoring_1794881240460.jpg';
 import {
   ArrowLeft,
   Building2,
@@ -41,6 +53,7 @@ import {
   FolderPlus,
   Folder,
   Layers,
+  Wrench,
 } from 'lucide-react';
 
 const defaultWeeklySchedule: DaySchedule[] = [
@@ -62,10 +75,14 @@ export const BusinessPortalScreen: React.FC = () => {
     plans,
     businesses,
     products,
+    services,
     addBusiness,
     updateBusiness,
     addProduct,
     deleteProduct,
+    addService,
+    deleteService,
+    getBusinessQuotaUsage,
     storeProductCategories,
     addStoreProductCategory,
     updateStoreProductCategory,
@@ -73,12 +90,19 @@ export const BusinessPortalScreen: React.FC = () => {
     currentBusinessAuth,
     loginAsBusiness,
     authSession,
+    openPaymentModal,
+    openCheckoutPage,
+    sendTemplatedEmail,
+    paymentTransactions,
+    planDiscountConfig,
+    preselectedBillingCycle,
   } = useDirectory();
 
   // Active business session or default to first business if in demo mode
   const activeBusiness = currentBusinessAuth || businesses[0];
   const activePlan = activeBusiness ? plans.find((p) => p.id === activeBusiness.planId) || plans[0] : null;
   const businessProducts = activeBusiness ? products.filter((p) => p.businessId === activeBusiness.id) : [];
+  const businessServices = activeBusiness ? services.filter((s) => s.businessId === activeBusiness.id) : [];
   const activeStoreCategories = activeBusiness ? storeProductCategories.filter((c) => c.businessId === activeBusiness.id) : [];
 
   // User's owned businesses (restricted strictly to the authenticated user's account)
@@ -93,13 +117,18 @@ export const BusinessPortalScreen: React.FC = () => {
   const storeLimit = activePlan ? (activePlan.businessLimit || 1) : 1;
   const isStoreQuotaFull = myBusinesses.length >= storeLimit;
 
-  const productLimit = activePlan ? activePlan.productLimit : 3;
-  const currentProductCount = businessProducts.length;
-  const isQuotaFull = currentProductCount >= productLimit;
+  const quota = activeBusiness
+    ? getBusinessQuotaUsage(activeBusiness.id)
+    : { productsCount: 0, servicesCount: 0, totalUsed: 0, limit: 3, remaining: 3, isFull: false };
+  const productLimit = quota.limit;
+  const isQuotaFull = quota.isFull;
 
   // Active Tab state for lojista
-  const [activeTab, setActiveTab] = useState<'dashboard' | 'products' | 'prod_categories' | 'edit_profile' | 'plans' | 'register_new'>(
-    'dashboard'
+  const [activeTab, setActiveTab] = useState<
+    'dashboard' | 'products' | 'services' | 'prod_categories' | 'edit_profile' | 'plans' | 'register_new'
+  >('dashboard');
+  const [upgradeCycle, setUpgradeCycle] = useState<BillingCycle>(
+    activeBusiness?.billingCycle || preselectedBillingCycle || 'monthly'
   );
 
   // Store Product Category creation form
@@ -107,6 +136,12 @@ export const BusinessPortalScreen: React.FC = () => {
     name: '',
     description: '',
   });
+  const [pendingConfirm, setPendingConfirm] = useState<{
+    title: string;
+    message: string;
+    confirmLabel?: string;
+    onConfirm: () => void;
+  } | null>(null);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -117,6 +152,13 @@ export const BusinessPortalScreen: React.FC = () => {
     { label: 'Fone Bluetooth', url: 'https://images.unsplash.com/photo-1505740420928-5e560c06d30e?w=500&h=400&fit=crop&q=80' },
     { label: 'Tênis Esportivo', url: 'https://images.unsplash.com/photo-1542291026-7eec264c27ff?w=500&h=400&fit=crop&q=80' },
     { label: 'Café Especial', url: 'https://images.unsplash.com/photo-1509042239860-f550ce710b93?w=500&h=400&fit=crop&q=80' },
+  ];
+
+  const servicePresetSamples = [
+    { label: 'Assistência Técnica', url: serviceTechRepairImg },
+    { label: 'Banho & Tosa', url: servicePetGroomingImg },
+    { label: 'Coffee Break & Eventos', url: serviceCoffeeCateringImg },
+    { label: 'Ajustes & Costura', url: serviceFashionTailoringImg },
   ];
 
   const logoPresetSamples = [
@@ -184,6 +226,18 @@ export const BusinessPortalScreen: React.FC = () => {
     category: '',
   });
 
+  // New Service Form State
+  const [servForm, setServForm] = useState({
+    name: '',
+    priceType: 'fixed' as ServicePriceType,
+    price: '',
+    duration: '',
+    serviceMode: 'on_site' as ServiceMode,
+    category: '',
+    imageUrl: serviceTechRepairImg,
+    description: '',
+  });
+
   const [notification, setNotification] = useState<{ text: string; type: 'success' | 'error' } | null>(null);
 
   // Populate edit form when activeBusiness changes
@@ -215,8 +269,10 @@ export const BusinessPortalScreen: React.FC = () => {
   const metrics = {
     viewsTotal: activeBusiness ? (activeBusiness.name.length * 47) + 320 : 480,
     whatsappClicks: activeBusiness ? (activeBusiness.name.length * 12) + 85 : 98,
-    productClicks: businessProducts.reduce((acc, p) => acc + (p.name.length * 3) + 14, 0),
-    activeProducts: currentProductCount,
+    productClicks:
+      businessProducts.reduce((acc, p) => acc + (p.name.length * 3) + 14, 0) +
+      businessServices.reduce((acc, s) => acc + (s.name.length * 3) + 12, 0),
+    activeProducts: quota.totalUsed,
     productLimit,
     conversionRate: '18.4%',
   };
@@ -378,7 +434,7 @@ export const BusinessPortalScreen: React.FC = () => {
     });
 
     if (!result.success) {
-      setNotification({ text: result.error || 'Cota de produtos excedida.', type: 'error' });
+      setNotification({ text: result.error || 'Cota combinada do plano excedida.', type: 'error' });
     } else {
       setNotification({ text: 'Produto cadastrado e publicado na vitrine!', type: 'success' });
       setProdForm({
@@ -392,11 +448,74 @@ export const BusinessPortalScreen: React.FC = () => {
     }
   };
 
-  // Plan Upgrade Handler
-  const handleUpgradePlan = (newPlanId: string) => {
+  // Add Service Handler
+  const handleAddService = (e: React.FormEvent) => {
+    e.preventDefault();
     if (!activeBusiness) return;
-    updateBusiness(activeBusiness.id, { planId: newPlanId });
-    setNotification({ text: 'Plano atualizado! Nova cota de produtos disponível imediatamente.', type: 'success' });
+
+    if (!servForm.name.trim()) {
+      setNotification({ text: 'Informe o nome do serviço.', type: 'error' });
+      return;
+    }
+
+    let numericPrice: number | undefined;
+    if (servForm.priceType !== 'quote') {
+      const parsed = parseFloat(servForm.price.replace(',', '.'));
+      if (isNaN(parsed) || parsed <= 0) {
+        setNotification({ text: 'Informe um valor numérico válido ou selecione "Sob orçamento".', type: 'error' });
+        return;
+      }
+      numericPrice = parsed;
+    }
+
+    const result = addService({
+      businessId: activeBusiness.id,
+      cityId: activeBusiness.cityId,
+      name: servForm.name.trim(),
+      price: numericPrice,
+      priceType: servForm.priceType,
+      duration: servForm.duration.trim() || 'Sob consulta',
+      serviceMode: servForm.serviceMode,
+      description: servForm.description.trim() || 'Serviço disponível para agendamento e orçamento via WhatsApp.',
+      imageUrl: servForm.imageUrl || serviceTechRepairImg,
+      category: servForm.category.trim() || 'Serviços Gerais',
+      isActive: true,
+      featured: false,
+    });
+
+    if (!result.success) {
+      setNotification({ text: result.error || 'Cota combinada do plano excedida.', type: 'error' });
+    } else {
+      setNotification({ text: 'Serviço cadastrado e publicado na vitrine!', type: 'success' });
+      setServForm({
+        name: '',
+        priceType: 'fixed',
+        price: '',
+        duration: '',
+        serviceMode: 'on_site',
+        category: '',
+        imageUrl: serviceTechRepairImg,
+        description: '',
+      });
+    }
+  };
+
+  // Plan Upgrade Handler with Mercado Pago Checkout
+  const handleUpgradePlan = (newPlanId: string, cycle: BillingCycle = upgradeCycle) => {
+    if (!activeBusiness) return;
+    const targetPlan = plans.find((p) => p.id === newPlanId);
+    if (!targetPlan) return;
+
+    if (targetPlan.priceMonthly > 0) {
+      openPaymentModal(newPlanId, activeBusiness.id, cycle);
+    } else {
+      updateBusiness(activeBusiness.id, {
+        planId: newPlanId,
+        billingCycle: 'monthly',
+        planExpiresAt: undefined,
+      });
+      setNotification({ text: 'Plano gratuito ativado! Cota combinada de produtos e serviços atualizada.', type: 'success' });
+    }
   };
 
   return (
@@ -487,7 +606,19 @@ export const BusinessPortalScreen: React.FC = () => {
           }`}
         >
           <Package className="w-4 h-4" />
-          <span>Meus Produtos ({currentProductCount}/{productLimit})</span>
+          <span>Meus Produtos ({businessProducts.length})</span>
+        </button>
+
+        <button
+          onClick={() => setActiveTab('services')}
+          className={`flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-xs font-bold whitespace-nowrap transition cursor-pointer ${
+            activeTab === 'services'
+              ? 'bg-orange-600 text-white shadow-xs'
+              : 'text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800'
+          }`}
+        >
+          <Wrench className="w-4 h-4" />
+          <span>Meus Serviços ({businessServices.length})</span>
         </button>
 
         <button
@@ -567,6 +698,93 @@ export const BusinessPortalScreen: React.FC = () => {
         </div>
       )}
 
+      {/* Pending Payment Alert Banner */}
+      {activeBusiness?.paymentStatus === 'pending_payment' && activeBusiness?.pendingPlanId && (() => {
+        const pendingPlan = plans.find((p) => p.id === activeBusiness.pendingPlanId);
+        if (!pendingPlan) return null;
+        const pendingCycle = activeBusiness.pendingBillingCycle || 'monthly';
+        const pendingPricing = calculatePlanPricing(pendingPlan, pendingCycle, planDiscountConfig);
+        const cityName = cities.find((c) => c.id === activeBusiness.cityId)?.name || 'Alagoinhas';
+        const origin = typeof window !== 'undefined' ? window.location.origin : '';
+        const paymentLink = `${origin}/?checkout=1&businessId=${encodeURIComponent(
+          activeBusiness.id
+        )}&planId=${encodeURIComponent(pendingPlan.id)}&cycle=${encodeURIComponent(
+          pendingCycle
+        )}&token=${encodeURIComponent(activeBusiness.paymentToken || '')}`;
+
+        return (
+          <div className="max-w-7xl mx-auto w-full px-4 sm:px-6 pt-4">
+            <div className="p-4 sm:p-5 rounded-2xl bg-amber-50 dark:bg-amber-950/40 border border-amber-300 dark:border-amber-800 flex flex-col md:flex-row md:items-center justify-between gap-4 shadow-xs">
+              <div className="flex items-start gap-3">
+                <div className="p-2 rounded-xl bg-amber-100 dark:bg-amber-900/60 text-amber-700 dark:text-amber-300 shrink-0">
+                  <Clock className="w-5 h-5" />
+                </div>
+                <div>
+                  <p className="text-xs sm:text-sm font-extrabold text-amber-900 dark:text-amber-200">
+                    Pagamento pendente para liberar o {pendingPlan.name} ({pendingPricing.label})
+                  </p>
+                  <p className="text-xs text-amber-800 dark:text-amber-300/90 mt-0.5">
+                    Sua loja está ativa temporariamente com limites gratuitos. Conclua o pagamento de{' '}
+                    <span className="font-bold font-mono tabular-nums">
+                      {formatBRL(pendingPricing.totalAmount)}
+                    </span>{' '}
+                    {pendingPricing.discountPercent > 0 ? `(já com ${pendingPricing.discountPercent}% OFF) ` : ''}
+                    para liberar até {pendingPlan.productLimit} produtos e serviços.
+                  </p>
+                </div>
+              </div>
+
+              <div className="flex flex-wrap items-center gap-2 shrink-0">
+                <button
+                  type="button"
+                  onClick={async () => {
+                    const recipient = activeBusiness.ownerEmail || activeBusiness.email || '';
+                    if (!recipient) return;
+                    const res = await sendTemplatedEmail({
+                      key: 'payment_link',
+                      to: recipient,
+                      variables: {
+                        nome_empresa: activeBusiness.name,
+                        nome_plano: `${pendingPlan.name} (${pendingPricing.label})`,
+                        valor_plano: formatBRL(pendingPricing.totalAmount),
+                        link_pagamento: paymentLink,
+                        cidade: cityName,
+                      },
+                      actionUrl: paymentLink,
+                    });
+                    setNotification({
+                      type: 'success',
+                      text: res.deliveredViaSmtp
+                        ? `Link de pagamento reenviado para ${recipient}.`
+                        : `Link de pagamento registrado na Caixa de Saída para ${recipient}.`,
+                    });
+                  }}
+                  className="px-3.5 py-2 rounded-xl bg-white dark:bg-slate-900 border border-amber-300 dark:border-amber-700 text-xs font-bold text-amber-800 dark:text-amber-200 hover:bg-amber-100/70 transition flex items-center gap-1.5 cursor-pointer"
+                >
+                  <Mail className="w-3.5 h-3.5" />
+                  <span>Reenviar Link por E-mail</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() =>
+                    openCheckoutPage(
+                      activeBusiness.id,
+                      pendingPlan.id,
+                      activeBusiness.paymentToken,
+                      pendingCycle
+                    )
+                  }
+                  className="px-4 py-2 rounded-xl bg-orange-600 hover:bg-orange-700 text-white text-xs font-extrabold shadow-xs transition flex items-center gap-1.5 cursor-pointer"
+                >
+                  <Zap className="w-3.5 h-3.5" />
+                  <span>Ir para Página de Pagamento</span>
+                </button>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
+
       {/* Main Body per Tab */}
       <main className="max-w-7xl mx-auto w-full p-4 sm:p-6 lg:p-8 flex-1 space-y-6">
 
@@ -599,11 +817,11 @@ export const BusinessPortalScreen: React.FC = () => {
               </div>
 
               {/* Quick Quota Gauge */}
-              <div className="bg-white/10 backdrop-blur-md p-4 rounded-2xl border border-white/10 md:min-w-72">
+              <div className="bg-white/10 backdrop-blur-md p-4 rounded-2xl border border-white/10 md:min-w-80">
                 <div className="flex items-center justify-between text-xs mb-1.5">
-                  <span className="text-slate-200 font-medium">Uso da Cota de Produtos:</span>
-                  <span className="font-extrabold text-orange-400">
-                    {currentProductCount} de {productLimit} cadastrados
+                  <span className="text-slate-200 font-medium">Cota (Produtos + Serviços):</span>
+                  <span className="font-extrabold text-orange-400 font-mono tabular-nums">
+                    {quota.totalUsed} de {quota.limit}
                   </span>
                 </div>
                 
@@ -613,13 +831,15 @@ export const BusinessPortalScreen: React.FC = () => {
                       isQuotaFull ? 'bg-red-500' : 'bg-emerald-400'
                     }`}
                     style={{
-                      width: `${Math.min(100, (currentProductCount / productLimit) * 100)}%`,
+                      width: `${Math.min(100, quota.limit > 0 ? (quota.totalUsed / quota.limit) * 100 : 0)}%`,
                     }}
                   />
                 </div>
 
                 <div className="mt-2 flex items-center justify-between text-[11px]">
-                  <span className="text-slate-300">Plano: <strong>{activePlan?.name}</strong></span>
+                  <span className="text-slate-300 tabular-nums">
+                    {quota.productsCount} prod. · {quota.servicesCount} serv.
+                  </span>
                   {isQuotaFull ? (
                     <button
                       onClick={() => setActiveTab('plans')}
@@ -628,8 +848,8 @@ export const BusinessPortalScreen: React.FC = () => {
                       <Zap className="w-3 h-3" /> Fazer Upgrade
                     </button>
                   ) : (
-                    <span className="text-emerald-300 font-medium">
-                      {productLimit - currentProductCount} vagas disponíveis
+                    <span className="text-emerald-300 font-medium tabular-nums">
+                      {quota.remaining} vagas disponíveis
                     </span>
                   )}
                 </div>
@@ -674,21 +894,21 @@ export const BusinessPortalScreen: React.FC = () => {
                 </span>
               </div>
 
-              {/* Card 3: Cliques nos Produtos */}
+              {/* Card 3: Cliques nos Produtos & Serviços */}
               <div className="p-4 sm:p-5 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-xs">
                 <div className="flex items-center justify-between mb-2">
                   <span className="text-xs font-bold text-slate-500 uppercase tracking-wider">
-                    Cliques nos Produtos
+                    Cliques na Vitrine
                   </span>
                   <div className="p-2 rounded-xl bg-orange-50 dark:bg-orange-950/40 text-orange-600">
                     <MousePointerClick className="w-4 h-4" />
                   </div>
                 </div>
-                <div className="text-2xl sm:text-3xl font-black text-orange-600 font-mono">
+                <div className="text-2xl sm:text-3xl font-black text-orange-600 font-mono tabular-nums">
                   {metrics.productClicks}
                 </div>
                 <span className="text-[11px] text-slate-500 mt-1 block">
-                  Interações com a vitrine
+                  Produtos e serviços visualizados
                 </span>
               </div>
 
@@ -756,12 +976,18 @@ export const BusinessPortalScreen: React.FC = () => {
               <span className="text-slate-600 dark:text-slate-300 font-medium">
                 Sua loja está visível para clientes em <strong>{cities.find(c => c.id === activeBusiness.cityId)?.name || 'sua cidade'}</strong>.
               </span>
-              <div className="flex items-center gap-2">
+              <div className="flex flex-wrap items-center gap-2">
                 <button
                   onClick={() => setActiveTab('products')}
                   className="px-3.5 py-2 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-bold cursor-pointer transition shadow-xs"
                 >
                   + Cadastrar Produto
+                </button>
+                <button
+                  onClick={() => setActiveTab('services')}
+                  className="px-3.5 py-2 rounded-xl bg-orange-600 hover:bg-orange-700 text-white font-bold cursor-pointer transition shadow-xs"
+                >
+                  + Cadastrar Serviço
                 </button>
                 <button
                   onClick={() => setActiveTab('edit_profile')}
@@ -786,13 +1012,13 @@ export const BusinessPortalScreen: React.FC = () => {
                   Gestão da Vitrine de Produtos
                 </h3>
                 <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
-                  Cadastre produtos com foto, nome e preço. Eles aparecerão na vitrine da sua cidade com botão direto para seu WhatsApp.
+                  Cadastre produtos com foto, nome e preço. A cota do plano soma produtos e serviços publicados pela sua empresa.
                 </p>
               </div>
 
               <div className="flex items-center gap-3 shrink-0">
-                <span className="text-xs font-bold px-3 py-1.5 rounded-xl bg-blue-50 dark:bg-blue-950/40 text-blue-700 dark:text-blue-300 border border-blue-200 dark:border-blue-900">
-                  {currentProductCount} de {productLimit} cadastrados
+                <span className="text-xs font-bold px-3 py-1.5 rounded-xl bg-blue-50 dark:bg-blue-950/40 text-blue-700 dark:text-blue-300 border border-blue-200 dark:border-blue-900 tabular-nums">
+                  {quota.totalUsed} de {quota.limit} itens ({quota.productsCount} prod. + {quota.servicesCount} serv.)
                 </span>
                 {isQuotaFull && (
                   <button
@@ -968,12 +1194,18 @@ export const BusinessPortalScreen: React.FC = () => {
                       </div>
 
                       <button
-                        onClick={() => {
-                          if (confirm(`Remover o produto "${prod.name}" da vitrine?`)) {
-                            deleteProduct(prod.id);
-                            setNotification({ text: 'Produto removido.', type: 'success' });
-                          }
-                        }}
+                        type="button"
+                        onClick={() =>
+                          setPendingConfirm({
+                            title: 'Excluir Produto',
+                            message: `Remover o produto "${prod.name}" da vitrine?`,
+                            confirmLabel: 'Excluir Produto',
+                            onConfirm: () => {
+                              deleteProduct(prod.id);
+                              setNotification({ text: 'Produto removido.', type: 'success' });
+                            },
+                          })
+                        }
                         className="text-red-500 hover:text-red-700 p-2 rounded-xl hover:bg-red-50 dark:hover:bg-red-950/40 transition cursor-pointer"
                         title="Excluir produto"
                       >
@@ -985,6 +1217,234 @@ export const BusinessPortalScreen: React.FC = () => {
               )}
             </div>
 
+          </div>
+        )}
+
+        {/* TAB 2B: GERENCIAR SERVIÇOS */}
+        {activeTab === 'services' && activeBusiness && (
+          <div className="space-y-6">
+            {/* Header info & combined quota indicator */}
+            <div className="p-5 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-xs flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+              <div>
+                <h3 className="text-base font-bold text-slate-900 dark:text-white font-display">
+                  Gestão do Catálogo de Serviços
+                </h3>
+                <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
+                  Divulgue serviços com cobrança fixa, por hora, a partir de ou sob orçamento, informando duração e modalidade de atendimento.
+                </p>
+              </div>
+
+              <div className="flex items-center gap-3 shrink-0">
+                <span className="text-xs font-bold px-3 py-1.5 rounded-xl bg-orange-50 dark:bg-orange-950/40 text-orange-700 dark:text-orange-300 border border-orange-200 dark:border-orange-900 tabular-nums">
+                  {quota.totalUsed} de {quota.limit} itens ({quota.productsCount} prod. + {quota.servicesCount} serv.)
+                </span>
+                {isQuotaFull && (
+                  <button
+                    onClick={() => setActiveTab('plans')}
+                    className="px-3 py-1.5 rounded-xl bg-orange-600 hover:bg-orange-700 text-white text-xs font-bold transition shadow-xs cursor-pointer"
+                  >
+                    Aumentar Cota
+                  </button>
+                )}
+              </div>
+            </div>
+
+            {/* Form Cadastrar Serviço */}
+            <form onSubmit={handleAddService} className="p-6 rounded-3xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-xs space-y-4">
+              <h4 className="text-sm font-bold text-slate-900 dark:text-white flex items-center gap-2">
+                <Wrench className="w-4 h-4 text-orange-600" />
+                Cadastrar Novo Serviço no Catálogo
+              </h4>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+                <div className="sm:col-span-2">
+                  <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">
+                    Nome do Serviço *
+                  </label>
+                  <input
+                    type="text"
+                    required
+                    value={servForm.name}
+                    onChange={(e) => setServForm({ ...servForm, name: e.target.value })}
+                    placeholder="Ex: Formatação e Limpeza Preventiva de Notebook"
+                    className="w-full px-3 py-2.5 rounded-xl border border-slate-300 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-xs text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-orange-500"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">
+                    Tipo de Cobrança *
+                  </label>
+                  <select
+                    value={servForm.priceType}
+                    onChange={(e) => setServForm({ ...servForm, priceType: e.target.value as ServicePriceType })}
+                    className="w-full px-3 py-2.5 rounded-xl border border-slate-300 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-xs text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-orange-500 cursor-pointer"
+                  >
+                    <option value="fixed">Preço Fixo</option>
+                    <option value="from">A partir de</option>
+                    <option value="hourly">Por hora</option>
+                    <option value="quote">Sob orçamento</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">
+                    {servForm.priceType === 'quote' ? 'Valor (não obrigatório sob orçamento)' : 'Valor (R$) *'}
+                  </label>
+                  <input
+                    type="text"
+                    disabled={servForm.priceType === 'quote'}
+                    required={servForm.priceType !== 'quote'}
+                    value={servForm.priceType === 'quote' ? '' : servForm.price}
+                    onChange={(e) => setServForm({ ...servForm, price: e.target.value })}
+                    placeholder={servForm.priceType === 'quote' ? 'Definido no orçamento via WhatsApp' : 'Ex: 120.00'}
+                    className="w-full px-3 py-2.5 rounded-xl border border-slate-300 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-xs text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-orange-500 font-bold disabled:opacity-50"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">
+                    Duração Estimada *
+                  </label>
+                  <input
+                    type="text"
+                    value={servForm.duration}
+                    onChange={(e) => setServForm({ ...servForm, duration: e.target.value })}
+                    placeholder="Ex: 1h30, No mesmo dia, 45 min"
+                    className="w-full px-3 py-2.5 rounded-xl border border-slate-300 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-xs text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-orange-500"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">
+                    Modalidade de Atendimento *
+                  </label>
+                  <select
+                    value={servForm.serviceMode}
+                    onChange={(e) => setServForm({ ...servForm, serviceMode: e.target.value as ServiceMode })}
+                    className="w-full px-3 py-2.5 rounded-xl border border-slate-300 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-xs text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-orange-500 cursor-pointer"
+                  >
+                    <option value="on_site">Atendimento no local</option>
+                    <option value="home_visit">Atendimento em domicílio</option>
+                    <option value="online">Online / Remoto</option>
+                    <option value="both">No local e em domicílio</option>
+                  </select>
+                </div>
+
+                <div className="sm:col-span-2 lg:col-span-1">
+                  <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">
+                    Categoria do Serviço
+                  </label>
+                  <input
+                    type="text"
+                    value={servForm.category}
+                    onChange={(e) => setServForm({ ...servForm, category: e.target.value })}
+                    placeholder="Ex: Manutenção, Estética Pet, Costura"
+                    className="w-full px-3 py-2.5 rounded-xl border border-slate-300 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-xs text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-orange-500"
+                  />
+                </div>
+
+                <div className="sm:col-span-3">
+                  <ImageUploadField
+                    value={servForm.imageUrl}
+                    onChange={(url) => setServForm({ ...servForm, imageUrl: url })}
+                    label="Foto de Capa do Serviço"
+                    helpText="Envie uma foto ilustrativa do serviço prestado ou escolha uma imagem demonstrativa pronta."
+                    presetSamples={servicePresetSamples}
+                    aspectRatio="square"
+                  />
+                </div>
+
+                <div className="sm:col-span-3">
+                  <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">
+                    Descrição do Serviço & O que está incluso
+                  </label>
+                  <textarea
+                    rows={2}
+                    value={servForm.description}
+                    onChange={(e) => setServForm({ ...servForm, description: e.target.value })}
+                    placeholder="Explique etapas, garantia, materiais inclusos ou requisitos de agendamento..."
+                    className="w-full px-3 py-2.5 rounded-xl border border-slate-300 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-xs text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-orange-500"
+                  />
+                </div>
+              </div>
+
+              <div className="flex items-center justify-end gap-3 pt-2">
+                <button
+                  type="submit"
+                  disabled={isQuotaFull}
+                  className={`px-6 py-2.5 rounded-xl font-bold text-xs shadow-xs transition flex items-center gap-1.5 cursor-pointer ${
+                    isQuotaFull
+                      ? 'bg-slate-300 text-slate-500 cursor-not-allowed'
+                      : 'bg-orange-600 hover:bg-orange-700 text-white'
+                  }`}
+                >
+                  <Plus className="w-4 h-4" />
+                  <span>Publicar Serviço</span>
+                </button>
+              </div>
+            </form>
+
+            {/* List of Registered Services */}
+            <div className="space-y-3">
+              <h4 className="text-sm font-bold text-slate-900 dark:text-white">
+                Serviços Publicados ({businessServices.length})
+              </h4>
+
+              {businessServices.length === 0 ? (
+                <div className="p-8 text-center bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800">
+                  <Wrench className="w-10 h-10 text-slate-300 mx-auto mb-2" />
+                  <p className="text-xs text-slate-500">Nenhum serviço cadastrado ainda. Use o formulário acima para divulgar seus serviços!</p>
+                </div>
+              ) : (
+                <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4">
+                  {businessServices.map((serv) => (
+                    <div
+                      key={serv.id}
+                      className="p-3.5 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-xs flex items-center justify-between gap-3"
+                    >
+                      <div className="flex items-center gap-3 min-w-0">
+                        <img
+                          src={serv.imageUrl}
+                          alt={serv.name}
+                          className="w-14 h-14 rounded-xl object-cover shrink-0 bg-slate-100"
+                        />
+                        <div className="min-w-0">
+                          <h4 className="text-xs font-bold text-slate-900 dark:text-white truncate">
+                            {serv.name}
+                          </h4>
+                          <div className="text-xs font-mono font-bold text-orange-600 dark:text-orange-400 mt-0.5 tabular-nums">
+                            {formatServicePrice(serv)}
+                          </div>
+                          <span className="text-[10px] text-slate-500 dark:text-slate-400 block truncate">
+                            {getServiceModeLabel(serv.serviceMode)}{serv.duration ? ` · ${serv.duration}` : ''}
+                          </span>
+                        </div>
+                      </div>
+
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setPendingConfirm({
+                            title: 'Excluir Serviço',
+                            message: `Remover o serviço "${serv.name}" do catálogo?`,
+                            confirmLabel: 'Excluir Serviço',
+                            onConfirm: () => {
+                              deleteService(serv.id);
+                              setNotification({ text: 'Serviço removido.', type: 'success' });
+                            },
+                          })
+                        }
+                        className="text-red-500 hover:text-red-700 p-2 rounded-xl hover:bg-red-50 dark:hover:bg-red-950/40 transition cursor-pointer shrink-0"
+                        title="Excluir serviço"
+                      >
+                        <Trash2 className="w-4 h-4" />
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
           </div>
         )}
 
@@ -1106,12 +1566,18 @@ export const BusinessPortalScreen: React.FC = () => {
                         </div>
 
                         <button
-                          onClick={() => {
-                            if (confirm(`Excluir a categoria "${cat.name}"?`)) {
-                              deleteStoreProductCategory(cat.id);
-                              setNotification({ text: 'Categoria removida.', type: 'success' });
-                            }
-                          }}
+                          type="button"
+                          onClick={() =>
+                            setPendingConfirm({
+                              title: 'Excluir Categoria da Loja',
+                              message: `Excluir a categoria "${cat.name}"?`,
+                              confirmLabel: 'Excluir Categoria',
+                              onConfirm: () => {
+                                deleteStoreProductCategory(cat.id);
+                                setNotification({ text: 'Categoria removida.', type: 'success' });
+                              },
+                            })
+                          }
                           className="text-red-500 hover:text-red-700 p-1.5 rounded-lg hover:bg-red-50 dark:hover:bg-red-950/40 transition cursor-pointer shrink-0"
                           title="Excluir categoria"
                         >
@@ -1407,41 +1873,92 @@ export const BusinessPortalScreen: React.FC = () => {
         {/* TAB 4: MEU PLANO & UPGRADE */}
         {activeTab === 'plans' && activeBusiness && (
           <div className="space-y-6">
-            <div className="p-6 rounded-3xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-xs flex flex-col md:flex-row md:items-center justify-between gap-6">
+            {(() => {
+              const currentCycle = activeBusiness.billingCycle || 'monthly';
+              const currentCyclePricing = calculatePlanPricing(
+                activePlan || undefined,
+                currentCycle,
+                planDiscountConfig
+              );
+
+              return (
+                <div className="p-6 rounded-3xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-xs flex flex-col md:flex-row md:items-center justify-between gap-6">
+                  <div>
+                    <span className="text-xs font-bold text-orange-600 uppercase tracking-wider">
+                      Plano Atual Contratado
+                    </span>
+                    <div className="flex flex-wrap items-center gap-2 mt-0.5">
+                      <h3 className="text-2xl font-extrabold text-slate-900 dark:text-white font-display">
+                        {activePlan?.name}
+                      </h3>
+                      {activePlan && activePlan.priceMonthly > 0 && (
+                        <span className="text-xs font-bold px-2.5 py-0.5 rounded-lg bg-blue-100 dark:bg-blue-950/60 text-blue-700 dark:text-blue-300">
+                          Ciclo {BILLING_CYCLE_META[currentCycle].label}
+                        </span>
+                      )}
+                    </div>
+                    <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
+                      Sua empresa possui limite para cadastrar até <strong>{activePlan?.productLimit} produtos e/ou serviços somados</strong> na vitrine comercial (uso atual: {quota.totalUsed}/{quota.limit}).
+                    </p>
+                    {activeBusiness.planExpiresAt && (
+                      <p className="text-xs font-semibold text-emerald-700 dark:text-emerald-400 mt-1 font-mono tabular-nums">
+                        Válido até: {activeBusiness.planExpiresAt}
+                      </p>
+                    )}
+                  </div>
+
+                  <div className="px-5 py-3 rounded-2xl bg-blue-50 dark:bg-blue-950/40 border border-blue-200 dark:border-blue-900 text-right shrink-0">
+                    <span className="text-xs font-semibold text-slate-500">
+                      {activePlan?.priceMonthly === 0 ? 'Valor do Plano:' : `Valor (${BILLING_CYCLE_META[currentCycle].shortLabel}):`}
+                    </span>
+                    <div className="text-2xl font-black text-blue-700 dark:text-blue-300 font-mono tabular-nums">
+                      {activePlan?.priceMonthly === 0
+                        ? 'Grátis'
+                        : formatBRL(currentCyclePricing.totalAmount)}
+                    </div>
+                    {activePlan && activePlan.priceMonthly > 0 && currentCycle !== 'monthly' && (
+                      <span className="text-[11px] font-bold text-emerald-600 dark:text-emerald-400 font-mono tabular-nums">
+                        {formatBRL(currentCyclePricing.effectiveMonthly)}/mês (-{currentCyclePricing.discountPercent}%)
+                      </span>
+                    )}
+                  </div>
+                </div>
+              );
+            })()}
+
+            {/* List of Available Plans for Upgrade + Cycle Selector */}
+            <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
               <div>
-                <span className="text-xs font-bold text-orange-600 uppercase tracking-wider">
-                  Plano Atual Contratado
-                </span>
-                <h3 className="text-2xl font-extrabold text-slate-900 dark:text-white font-display mt-0.5">
-                  {activePlan?.name}
-                </h3>
-                <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
-                  Sua empresa possui limite para cadastrar até <strong>{activePlan?.productLimit} produtos</strong> na vitrine comercial.
+                <h4 className="text-sm font-bold text-slate-900 dark:text-white">
+                  Planos de Anúncio Disponíveis para Upgrade ou Renovação
+                </h4>
+                <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
+                  Escolha ciclos Anual, Bienal ou Trienal para ganhar descontos automáticos e parcelar em até 12x.
                 </p>
               </div>
-
-              <div className="px-5 py-3 rounded-2xl bg-blue-50 dark:bg-blue-950/40 border border-blue-200 dark:border-blue-900 text-right">
-                <span className="text-xs font-semibold text-slate-500">Valor do Plano:</span>
-                <div className="text-2xl font-black text-blue-700 dark:text-blue-300 font-mono">
-                  {activePlan?.priceMonthly === 0 ? 'Grátis' : `R$ ${activePlan?.priceMonthly.toFixed(2).replace('.', ',')}/mês`}
-                </div>
-              </div>
+              <BillingCycleSelector
+                value={upgradeCycle}
+                onChange={setUpgradeCycle}
+                globalDiscounts={planDiscountConfig}
+                compact
+              />
             </div>
-
-            {/* List of Available Plans for Upgrade */}
-            <h4 className="text-sm font-bold text-slate-900 dark:text-white">
-              Planos de Anúncio Disponíveis para Upgrade
-            </h4>
 
             <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
               {plans.map((p) => {
-                const isCurrent = activeBusiness.planId === p.id;
+                const isCurrentPlan = activeBusiness.planId === p.id;
+                const currentCycle = activeBusiness.billingCycle || 'monthly';
+                const isSamePlanAndCycle =
+                  isCurrentPlan &&
+                  (p.priceMonthly === 0 || currentCycle === upgradeCycle) &&
+                  activeBusiness.paymentStatus !== 'pending_payment';
+                const pricing = calculatePlanPricing(p, upgradeCycle, planDiscountConfig);
 
                 return (
                   <div
                     key={p.id}
                     className={`p-6 rounded-3xl bg-white dark:bg-slate-900 border flex flex-col justify-between shadow-xs transition ${
-                      isCurrent
+                      isCurrentPlan
                         ? 'border-2 border-blue-600 shadow-md ring-2 ring-blue-500/20'
                         : 'border-slate-200 dark:border-slate-800 hover:border-slate-300'
                     }`}
@@ -1451,7 +1968,7 @@ export const BusinessPortalScreen: React.FC = () => {
                         <span className="text-xs font-bold px-2.5 py-0.5 rounded-full bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300">
                           {p.badge}
                         </span>
-                        {isCurrent && (
+                        {isCurrentPlan && (
                           <span className="text-[10px] font-black uppercase tracking-wider px-2 py-0.5 rounded-md bg-blue-600 text-white">
                             Plano Atual
                           </span>
@@ -1460,12 +1977,48 @@ export const BusinessPortalScreen: React.FC = () => {
 
                       <h5 className="text-lg font-bold text-slate-900 dark:text-white font-display">{p.name}</h5>
 
-                      <div className="mt-3 mb-4 text-2xl font-black text-slate-900 dark:text-white font-mono">
-                        {p.priceMonthly === 0 ? 'Grátis' : `R$ ${p.priceMonthly.toFixed(2).replace('.', ',')}/mês`}
+                      <div className="mt-3 mb-4 space-y-1">
+                        {p.priceMonthly === 0 ? (
+                          <div className="text-2xl font-black text-slate-900 dark:text-white font-mono">
+                            Grátis
+                          </div>
+                        ) : (
+                          <>
+                            <div className="flex items-baseline gap-2">
+                              <span className="text-2xl font-black text-slate-900 dark:text-white font-mono tabular-nums">
+                                {formatBRL(pricing.effectiveMonthly)}
+                              </span>
+                              <span className="text-xs text-slate-500 font-semibold">/mês</span>
+                              {pricing.discountPercent > 0 && (
+                                <span className="text-[11px] font-mono font-extrabold text-emerald-600 dark:text-emerald-400">
+                                  -{pricing.discountPercent}%
+                                </span>
+                              )}
+                            </div>
+
+                            {upgradeCycle !== 'monthly' ? (
+                              <div className="text-xs text-slate-600 dark:text-slate-300 space-y-0.5">
+                                <div className="flex items-center gap-1.5 font-mono tabular-nums">
+                                  <span className="line-through text-slate-400">
+                                    {formatBRL(pricing.baseTotal)}
+                                  </span>
+                                  <span className="font-extrabold text-blue-700 dark:text-blue-300">
+                                    {formatBRL(pricing.totalAmount)} ({pricing.shortLabel})
+                                  </span>
+                                </div>
+                                <p className="text-[11px] font-bold text-emerald-600 dark:text-emerald-400 font-mono tabular-nums">
+                                  Economia de {formatBRL(pricing.discountAmount)} · até 12x no cartão ou PIX
+                                </p>
+                              </div>
+                            ) : (
+                              <p className="text-[11px] text-slate-500">Cobrança mensal recorrente</p>
+                            )}
+                          </>
+                        )}
                       </div>
 
-                      <div className="text-xs font-bold text-orange-600 dark:text-orange-400 mb-4">
-                        Cota: {p.productLimit} produtos na vitrine
+                      <div className="text-xs font-bold text-orange-600 dark:text-orange-400 mb-4 tabular-nums">
+                        Cota: até {p.productLimit} produtos/serviços somados
                       </div>
 
                       <ul className="space-y-2 text-xs text-slate-600 dark:text-slate-300 mb-6">
@@ -1479,19 +2032,90 @@ export const BusinessPortalScreen: React.FC = () => {
                     </div>
 
                     <button
-                      onClick={() => handleUpgradePlan(p.id)}
-                      disabled={isCurrent}
+                      onClick={() => handleUpgradePlan(p.id, upgradeCycle)}
+                      disabled={isSamePlanAndCycle}
                       className={`w-full py-2.5 rounded-xl font-bold text-xs shadow-xs transition cursor-pointer ${
-                        isCurrent
+                        isSamePlanAndCycle
                           ? 'bg-slate-100 dark:bg-slate-800 text-slate-400 cursor-default'
                           : 'bg-orange-600 hover:bg-orange-700 text-white'
                       }`}
                     >
-                      {isCurrent ? 'Plano em Uso' : 'Alterar para este Plano'}
+                      {isSamePlanAndCycle
+                        ? 'Plano e Ciclo em Uso'
+                        : isCurrentPlan
+                        ? `Mudar para Ciclo ${pricing.shortLabel}`
+                        : p.priceMonthly === 0
+                        ? 'Alterar para Plano Gratuito'
+                        : `Contratar ${pricing.shortLabel} · ${formatBRL(pricing.totalAmount)}`}
                     </button>
                   </div>
                 );
               })}
+            </div>
+
+            {/* Histórico de Faturas & Pagamentos da Loja */}
+            <div className="p-6 rounded-3xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-xs space-y-4">
+              <div className="flex items-center justify-between border-b border-slate-200 dark:border-slate-800 pb-3">
+                <div>
+                  <h4 className="text-sm font-bold text-slate-900 dark:text-white">
+                    Histórico de Pagamentos & Faturas da Loja
+                  </h4>
+                  <p className="text-xs text-slate-500">
+                    Comprovantes de pagamentos processados pelo Mercado Pago para a sua empresa.
+                  </p>
+                </div>
+                <span className="text-xs font-bold text-slate-500">
+                  {paymentTransactions.filter((t) => t.businessId === activeBusiness.id).length} fatura(s)
+                </span>
+              </div>
+
+              {paymentTransactions.filter((t) => t.businessId === activeBusiness.id).length > 0 ? (
+                <div className="divide-y divide-slate-100 dark:divide-slate-800">
+                  {paymentTransactions
+                    .filter((t) => t.businessId === activeBusiness.id)
+                    .map((tx) => {
+                      const cycleLabel = BILLING_CYCLE_META[tx.billingCycle || 'monthly'].shortLabel;
+                      return (
+                        <div key={tx.id} className="py-3 flex items-center justify-between gap-4 text-xs">
+                          <div className="space-y-0.5">
+                            <div className="flex flex-wrap items-center gap-2">
+                              <span className="font-bold text-slate-900 dark:text-white">
+                                {tx.planName} · {cycleLabel}
+                              </span>
+                              {tx.discountPercent && tx.discountPercent > 0 ? (
+                                <span className="text-[10px] font-mono font-bold text-emerald-700 dark:text-emerald-400">
+                                  (-{tx.discountPercent}%)
+                                </span>
+                              ) : null}
+                              <span className="text-[10px] font-black uppercase px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800 dark:bg-emerald-950/60 dark:text-emerald-300">
+                                Aprovado
+                              </span>
+                            </div>
+                            <span className="text-slate-500 text-[11px] block">
+                              {tx.createdAt} ·{' '}
+                              {tx.paymentMethod === 'pix'
+                                ? 'PIX'
+                                : `Cartão final ${tx.cardLastFour || '****'}${
+                                    tx.installments && tx.installments > 1 ? ` (${tx.installments}x)` : ''
+                                  }`}{' '}
+                              · Ref: {tx.mercadoPagoPaymentId}
+                            </span>
+                          </div>
+                          <div className="text-right shrink-0">
+                            <span className="font-mono font-bold tabular-nums text-slate-900 dark:text-white block">
+                              {formatBRL(tx.amount)}
+                            </span>
+                            <span className="text-[10px] text-emerald-600 font-bold">Pago via Mercado Pago</span>
+                          </div>
+                        </div>
+                      );
+                    })}
+                </div>
+              ) : (
+                <div className="py-4 text-center text-xs text-slate-500">
+                  Nenhuma fatura anterior registrada para esta loja.
+                </div>
+              )}
             </div>
           </div>
         )}
@@ -1646,7 +2270,7 @@ export const BusinessPortalScreen: React.FC = () => {
                 >
                   {plans.map((p) => (
                     <option key={p.id} value={p.id}>
-                      {p.name} — até {p.productLimit} produtos
+                      {p.name} — até {p.productLimit} produtos/serviços
                     </option>
                   ))}
                 </select>
@@ -1706,6 +2330,16 @@ export const BusinessPortalScreen: React.FC = () => {
         )}
 
       </main>
+
+      <ConfirmModal
+        isOpen={!!pendingConfirm}
+        title={pendingConfirm?.title || ''}
+        message={pendingConfirm?.message || ''}
+        confirmLabel={pendingConfirm?.confirmLabel}
+        variant="danger"
+        onConfirm={() => pendingConfirm?.onConfirm()}
+        onCancel={() => setPendingConfirm(null)}
+      />
     </div>
   );
 };
