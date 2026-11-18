@@ -34,6 +34,7 @@ import { OfflineIndicator } from './components/common/OfflineIndicator';
 function AppContent() {
   const {
     currentView,
+    authSession,
     paymentModalData,
     closePaymentModal,
     siteModeConfig,
@@ -63,6 +64,10 @@ function AppContent() {
   const allowedRestrictedViews = ['login', 'admin', 'business_portal', 'plans', 'register_store', 'checkout'];
   const showRestrictedLanding = isRestrictedMode && !allowedRestrictedViews.includes(currentView);
   const hideChrome = isRestrictedMode || currentView === 'checkout';
+  const showStoreOwnerBottomMenu =
+    authSession.isAuthenticated &&
+    authSession.role === 'business' &&
+    currentView !== 'checkout';
 
   if (showRestrictedLanding) {
     return (
@@ -76,7 +81,7 @@ function AppContent() {
   return (
     <div
       className={`min-h-screen flex flex-col bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-slate-100 transition-colors ${
-        hideChrome ? '' : 'pb-16 md:pb-0'
+        hideChrome && !showStoreOwnerBottomMenu ? '' : 'pb-16 md:pb-0'
       }`}
     >
       {/* Top Navigation Bar (hidden when Launch/Maintenance funnel or dedicated Checkout is active) */}
@@ -109,8 +114,8 @@ function AppContent() {
       {/* Footer: Hidden on mobile and during Launch/Maintenance/Checkout funnel */}
       {!hideChrome && <Footer />}
 
-      {/* Mobile-Only Bottom App Navigation Dock */}
-      {!hideChrome && <BottomNav />}
+      {/* Mobile-Only Bottom App Navigation Dock (Public menu OR Store Owner menu when logged in) */}
+      {(!hideChrome || showStoreOwnerBottomMenu) && <BottomNav />}
 
       {/* Detail, Favorites & Push Notifications Modals */}
       <BusinessDetailModal />

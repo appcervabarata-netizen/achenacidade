@@ -10,6 +10,7 @@ import {
   formatBRL,
 } from '../../utils/planPricing';
 import { formatServicePrice, getServiceModeLabel } from '../../utils/serviceFormatters';
+import { cloneWeeklySchedule } from '../../utils/scheduleHelpers';
 import serviceTechRepairImg from '../../assets/images/service_tech_repair_1794881238745.jpg';
 import servicePetGroomingImg from '../../assets/images/service_pet_grooming_1794881240613.jpg';
 import serviceCoffeeCateringImg from '../../assets/images/service_coffee_catering_1794881242678.jpg';
@@ -69,6 +70,8 @@ const defaultWeeklySchedule: DaySchedule[] = [
 export const BusinessPortalScreen: React.FC = () => {
   const {
     setCurrentView,
+    businessPortalTab: activeTab,
+    setBusinessPortalTab: setActiveTab,
     logout,
     cities,
     categories,
@@ -123,10 +126,7 @@ export const BusinessPortalScreen: React.FC = () => {
   const productLimit = quota.limit;
   const isQuotaFull = quota.isFull;
 
-  // Active Tab state for lojista
-  const [activeTab, setActiveTab] = useState<
-    'dashboard' | 'products' | 'services' | 'prod_categories' | 'edit_profile' | 'plans' | 'register_new'
-  >('dashboard');
+  // Active Tab state synced via DirectoryContext for Mobile Bottom Menu
   const [upgradeCycle, setUpgradeCycle] = useState<BillingCycle>(
     activeBusiness?.billingCycle || preselectedBillingCycle || 'monthly'
   );
@@ -193,7 +193,7 @@ export const BusinessPortalScreen: React.FC = () => {
 
   // Day-by-day customized schedule state
   const [schedule, setSchedule] = useState<DaySchedule[]>(
-    activeBusiness?.weeklySchedule || defaultWeeklySchedule
+    () => cloneWeeklySchedule(activeBusiness?.weeklySchedule)
   );
 
   // New Business Form State
@@ -259,9 +259,7 @@ export const BusinessPortalScreen: React.FC = () => {
         facebook: activeBusiness.facebook || '',
         website: activeBusiness.website || '',
       });
-      if (activeBusiness.weeklySchedule && activeBusiness.weeklySchedule.length > 0) {
-        setSchedule(activeBusiness.weeklySchedule);
-      }
+      setSchedule(cloneWeeklySchedule(activeBusiness.weeklySchedule));
     }
   }, [activeBusiness, cities, categories, plans]);
 
@@ -583,8 +581,8 @@ export const BusinessPortalScreen: React.FC = () => {
         </div>
       </header>
 
-      {/* Main Tab Navigation Header */}
-      <div className="bg-white dark:bg-slate-900 border-b border-slate-200 dark:border-slate-800 px-4 sm:px-6 py-2 flex items-center gap-2 overflow-x-auto sticky top-16 z-20 scrollbar-none shadow-xs">
+      {/* Main Tab Navigation Header (Desktop/Tablet - Mobile uses dedicated Merchant Bottom Menu) */}
+      <div className="hidden md:flex bg-white dark:bg-slate-900 border-b border-slate-200 dark:border-slate-800 px-4 sm:px-6 py-2 items-center gap-2 overflow-x-auto sticky top-16 z-20 scrollbar-none shadow-xs">
         <button
           onClick={() => setActiveTab('dashboard')}
           className={`flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-xs font-bold whitespace-nowrap transition cursor-pointer ${
@@ -1594,7 +1592,7 @@ export const BusinessPortalScreen: React.FC = () => {
 
         {/* TAB 3: EDITAR PERFIL & DADOS DA EMPRESA */}
         {activeTab === 'edit_profile' && activeBusiness && (
-          <form onSubmit={handleSaveProfile} className="p-6 sm:p-8 rounded-3xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-sm space-y-6">
+          <form onSubmit={handleSaveProfile} className="p-4 sm:p-8 rounded-3xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-sm space-y-6">
             <div className="border-b border-slate-200 dark:border-slate-800 pb-3">
               <h3 className="text-base sm:text-lg font-bold text-slate-900 dark:text-white font-display">
                 Editar Dados & Perfil da Empresa
@@ -1767,43 +1765,81 @@ export const BusinessPortalScreen: React.FC = () => {
               </div>
             </div>
 
-            {/* Horário por dia */}
-            <div className="p-4 rounded-2xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700 space-y-3">
-              <h4 className="text-xs font-bold text-slate-800 dark:text-slate-200 uppercase tracking-wider flex items-center gap-1.5">
-                <Clock className="w-4 h-4 text-orange-600" /> Horários de Funcionamento por Dia
-              </h4>
+            {/* Horário de Funcionamento por Dia e Horário (layout responsivo mobile igual ao cadastro) */}
+            <div className="p-3.5 sm:p-5 rounded-2xl sm:rounded-3xl bg-slate-50/70 dark:bg-slate-800/40 border border-slate-200 dark:border-slate-700 space-y-4">
+              <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-200 dark:border-slate-700/80 pb-3">
+                <div className="flex items-center gap-2">
+                  <Clock className="w-5 h-5 text-amber-600 shrink-0" />
+                  <div>
+                    <h4 className="text-sm sm:text-base font-bold text-slate-900 dark:text-white">
+                      Horário de Funcionamento por Dia e Horário
+                    </h4>
+                    <span className="text-[11px] text-slate-500 dark:text-slate-400">
+                      Defina os horários de abertura
+                    </span>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => handleCopyDayToAll(0)}
+                  className="px-2.5 py-1.5 rounded-lg bg-blue-50 dark:bg-blue-950/60 text-blue-700 dark:text-blue-300 border border-blue-200 dark:border-blue-800 text-[11px] font-bold hover:bg-blue-100 dark:hover:bg-blue-900/60 transition cursor-pointer"
+                >
+                  Copiar Seg para todos
+                </button>
+              </div>
 
-              <div className="space-y-2">
+              <div className="space-y-2.5">
                 {schedule.map((dayItem, idx) => (
-                  <div key={dayItem.day} className="flex items-center justify-between gap-2 p-2 bg-white dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-700 text-xs">
-                    <div className="flex items-center gap-2">
+                  <div
+                    key={dayItem.day}
+                    className={`p-3 rounded-2xl border transition flex flex-col sm:flex-row sm:items-center justify-between gap-3 ${
+                      dayItem.isOpen
+                        ? 'bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-700'
+                        : 'bg-slate-100/50 dark:bg-slate-900/40 border-slate-200/50 dark:border-slate-800 opacity-65'
+                    }`}
+                  >
+                    <label className="flex items-center gap-2.5 sm:gap-3 cursor-pointer flex-wrap">
                       <input
                         type="checkbox"
                         checked={dayItem.isOpen}
                         onChange={() => handleDayToggle(idx)}
-                        className="w-3.5 h-3.5 text-blue-600 rounded cursor-pointer"
+                        className="w-4 h-4 rounded text-blue-600 focus:ring-blue-500 cursor-pointer shrink-0"
                       />
-                      <span className="font-bold text-slate-900 dark:text-white w-28">{dayItem.day}</span>
-                    </div>
+                      <span className="text-xs sm:text-sm font-bold text-slate-900 dark:text-white flex-1 sm:flex-none sm:min-w-32">
+                        {dayItem.day}
+                      </span>
+                      <span
+                        className={`text-[10px] font-bold px-2 py-0.5 rounded-full shrink-0 ${
+                          dayItem.isOpen
+                            ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300'
+                            : 'bg-slate-200 text-slate-600 dark:bg-slate-800 dark:text-slate-400'
+                        }`}
+                      >
+                        {dayItem.isOpen ? 'Aberto' : 'Fechado'}
+                      </span>
+                    </label>
 
                     {dayItem.isOpen ? (
-                      <div className="flex items-center gap-1">
+                      <div className="flex flex-wrap items-center gap-2 text-xs pl-6 sm:pl-0">
+                        <span className="text-slate-500">Das</span>
                         <input
                           type="time"
                           value={dayItem.openTime}
                           onChange={(e) => handleTimeChange(idx, 'openTime', e.target.value)}
-                          className="px-2 py-0.5 rounded border border-slate-300 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 font-mono text-[11px]"
+                          className="min-w-0 px-2.5 py-1.5 rounded-lg border border-slate-300 dark:border-slate-600 bg-slate-50 dark:bg-slate-800 text-slate-900 dark:text-white font-mono text-xs"
                         />
-                        <span className="text-slate-400">às</span>
+                        <span className="text-slate-500">às</span>
                         <input
                           type="time"
                           value={dayItem.closeTime}
                           onChange={(e) => handleTimeChange(idx, 'closeTime', e.target.value)}
-                          className="px-2 py-0.5 rounded border border-slate-300 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 font-mono text-[11px]"
+                          className="min-w-0 px-2.5 py-1.5 rounded-lg border border-slate-300 dark:border-slate-600 bg-slate-50 dark:bg-slate-800 text-slate-900 dark:text-white font-mono text-xs"
                         />
                       </div>
                     ) : (
-                      <span className="text-slate-400 italic">Fechado</span>
+                      <span className="text-xs text-slate-400 italic pl-6 sm:pl-0">
+                        Estabelecimento fechado neste dia
+                      </span>
                     )}
                   </div>
                 ))}

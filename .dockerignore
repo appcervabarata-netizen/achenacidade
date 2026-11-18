@@ -1,0 +1,12 @@
+node_modules
+dist
+build
+coverage
+.git
+.gitignore
+.aistudio
+.env
+.env.*
+!.env.example
+*.log
+.DS_Store

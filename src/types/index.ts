@@ -182,6 +182,15 @@ export type AppView =
   | 'register_store'
   | 'checkout';
 
+export type BusinessPortalTab =
+  | 'dashboard'
+  | 'products'
+  | 'services'
+  | 'prod_categories'
+  | 'edit_profile'
+  | 'plans'
+  | 'register_new';
+
 export interface MercadoPagoConfig {
   enabled: boolean;
   environment: 'sandbox' | 'production';

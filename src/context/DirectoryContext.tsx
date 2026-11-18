@@ -1,5 +1,5 @@
 import React, { createContext, useContext, useState, useEffect, useRef } from 'react';
-import { City, Category, Plan, Business, Product, Service, AdminTheme, AdBanner, AppView, StoreProductCategory, SessionConfig, AuthSession, MercadoPagoConfig, PaymentTransaction, PushPreferences, PushAlertLog, SiteMode, SiteModeConfig, LaunchPageConfig, MaintenancePageConfig, SmtpConfig, EmailTemplate, EmailTemplateKey, EmailLogEntry, CheckoutTarget, BillingCycle, PlanDiscountConfig } from '../types';
+import { City, Category, Plan, Business, Product, Service, AdminTheme, AdBanner, AppView, BusinessPortalTab, StoreProductCategory, SessionConfig, AuthSession, MercadoPagoConfig, PaymentTransaction, PushPreferences, PushAlertLog, SiteMode, SiteModeConfig, LaunchPageConfig, MaintenancePageConfig, SmtpConfig, EmailTemplate, EmailTemplateKey, EmailLogEntry, CheckoutTarget, BillingCycle, PlanDiscountConfig } from '../types';
 import {
   initialCities,
   initialCategories,
@@ -114,6 +114,8 @@ interface DirectoryContextType {
   // Navigation View (Full screen screens)
   currentView: AppView;
   setCurrentView: (view: AppView) => void;
+  businessPortalTab: BusinessPortalTab;
+  setBusinessPortalTab: (tab: BusinessPortalTab) => void;
 
   // Banners System (Admin exclusive & separate billing)
   banners: AdBanner[];
@@ -492,6 +494,7 @@ export const DirectoryProvider: React.FC<{ children: React.ReactNode }> = ({ chi
 
   // Full Screen Navigation State with History Support for Mobile Back Button
   const [currentView, setCurrentViewState] = useState<AppView>('home');
+  const [businessPortalTab, setBusinessPortalTab] = useState<BusinessPortalTab>('dashboard');
 
   const setCurrentView = (view: AppView, replace: boolean = false) => {
     setCurrentViewState((prev) => {
@@ -1787,6 +1790,7 @@ export const DirectoryProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         expiresAt: now + durationMs,
       });
       setCurrentView('business_portal');
+      setBusinessPortalTab('dashboard');
     }
   };
 
@@ -1866,6 +1870,7 @@ export const DirectoryProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       };
       setAuthSession(session);
       setCurrentView('business_portal');
+      setBusinessPortalTab('dashboard');
     }
   };
 
@@ -1885,6 +1890,7 @@ export const DirectoryProvider: React.FC<{ children: React.ReactNode }> = ({ chi
   const logout = () => {
     setAuthSession({ isAuthenticated: false, role: null, name: '', email: '' });
     setCurrentBusinessAuth(null);
+    setBusinessPortalTab('dashboard');
     setCurrentView('home');
   };
 
@@ -2059,6 +2065,8 @@ export const DirectoryProvider: React.FC<{ children: React.ReactNode }> = ({ chi
 
         currentView,
         setCurrentView,
+        businessPortalTab,
+        setBusinessPortalTab,
         authSession,
         sessionConfig,
         updateSessionConfig,
