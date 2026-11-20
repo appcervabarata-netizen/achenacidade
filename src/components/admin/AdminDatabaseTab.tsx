@@ -10,9 +10,11 @@ import {
   Table2,
   Activity,
   ShieldAlert,
+  Download,
+  Wrench,
 } from 'lucide-react';
 import { useDirectory } from '../../context/DirectoryContext';
-import { fetchDbDiagnostics, type DatabaseDiagnostics } from '../../utils/apiSync';
+import { fetchDbDiagnostics, migrateDatabaseInDb, type DatabaseDiagnostics } from '../../utils/apiSync';
 
 interface AdminDatabaseTabProps {
   onNotify?: (message: string, variant?: 'success' | 'error' | 'info') => void;
@@ -48,6 +50,7 @@ export const AdminDatabaseTab: React.FC<AdminDatabaseTabProps> = ({ onNotify }) 
     detail: string;
   }>({ checked: false, ok: false, detail: '' });
   const [isTesting, setIsTesting] = useState(false);
+  const [isMigrating, setIsMigrating] = useState(false);
   const [isReloading, setIsReloading] = useState(false);
   const [isPushing, setIsPushing] = useState(false);
   const [confirmPush, setConfirmPush] = useState(false);
@@ -146,6 +149,27 @@ export const AdminDatabaseTab: React.FC<AdminDatabaseTabProps> = ({ onNotify }) 
       onNotify?.(msg, 'success');
     } else {
       const msg = res.error || 'Falha ao enviar dados atuais para o MySQL.';
+      setActionMessage({ type: 'error', text: msg });
+      onNotify?.(msg, 'error');
+    }
+  };
+
+  const handleRepairSchema = async () => {
+    setIsMigrating(true);
+    setActionMessage(null);
+    const res = await migrateDatabaseInDb();
+    await runDiagnostics(false);
+    setIsMigrating(false);
+
+    if (res.success) {
+      const msg =
+        res.addedColumns.length > 0
+          ? `Esquema reparado! Colunas adicionadas: ${res.addedColumns.join(', ')}`
+          : 'Todas as tabelas e colunas SQL (incluindo sort_order) já estão atualizadas!';
+      setActionMessage({ type: 'success', text: msg });
+      onNotify?.(msg, 'success');
+    } else {
+      const msg = res.error || 'Falha ao verificar/reparar colunas SQL.';
       setActionMessage({ type: 'error', text: msg });
       onNotify?.(msg, 'error');
     }
@@ -342,18 +366,46 @@ export const AdminDatabaseTab: React.FC<AdminDatabaseTabProps> = ({ onNotify }) 
         </div>
       )}
 
+      {diagnostics?.migratedColumns && diagnostics.migratedColumns.length > 0 && (
+        <div className="p-4 rounded-2xl bg-emerald-50 dark:bg-emerald-950/30 border border-emerald-200 dark:border-emerald-800 text-xs text-emerald-800 dark:text-emerald-200 space-y-1">
+          <p className="font-bold">
+            Migração automática aplicada com sucesso! Colunas adicionadas às tabelas existentes:
+          </p>
+          <p className="font-mono break-all">{diagnostics.migratedColumns.join(', ')}</p>
+        </div>
+      )}
+
       {/* Action Buttons */}
       <div className="p-5 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-xs flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
           <h4 className="text-sm font-bold text-slate-900 dark:text-white">
-            Ações Manuais de Sincronização
+            Ações Manuais de Sincronização e Esquema SQL
           </h4>
           <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
-            Use para puxar os dados do MySQL ou enviar o estado atual do navegador caso tenha acabado de conectar o banco.
+            Repare colunas faltantes (como <code className="font-mono">sort_order</code>), recarregue do MySQL ou baixe o <code className="font-mono">schema.sql</code> atualizado.
           </p>
         </div>
 
         <div className="flex flex-wrap items-center gap-2.5">
+          <button
+            type="button"
+            onClick={() => void handleRepairSchema()}
+            disabled={isMigrating || isReloading || isPushing}
+            className="px-4 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold transition flex items-center gap-2 cursor-pointer disabled:opacity-50"
+          >
+            <Wrench className={`w-4 h-4 ${isMigrating ? 'animate-spin' : ''}`} />
+            <span>{isMigrating ? 'Verificando...' : 'Reparar Colunas SQL'}</span>
+          </button>
+
+          <a
+            href="/api/db/schema.sql"
+            download="schema.sql"
+            className="px-4 py-2.5 rounded-xl bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-800 dark:text-slate-100 text-xs font-bold transition flex items-center gap-2"
+          >
+            <Download className="w-4 h-4 text-blue-600" />
+            <span>Baixar schema.sql</span>
+          </a>
+
           <button
             type="button"
             onClick={() => void handleReloadFromDb()}

@@ -20,6 +20,7 @@ import {
   updateEntityById,
   deleteEntityById,
   getDatabaseDiagnostics,
+  migrateDatabaseSchema,
 } from './server/db.ts';
 
 dotenv.config();
@@ -431,6 +432,34 @@ app.get('/api/db/diagnostics', async (_req, res) => {
       seeded: false,
       error: message,
     });
+  }
+});
+
+app.post('/api/db/migrate', async (_req, res) => {
+  if (!isDatabaseConfigured()) {
+    res.json({ success: false, databaseEnabled: false, addedColumns: [], error: 'Banco não configurado.' });
+    return;
+  }
+
+  try {
+    const result = await migrateDatabaseSchema();
+    res.json({ success: true, databaseEnabled: true, addedColumns: result.addedColumns });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : 'Schema migration error.';
+    res.status(500).json({ success: false, databaseEnabled: true, addedColumns: [], error: message });
+  }
+});
+
+app.get('/api/db/schema.sql', async (_req, res) => {
+  try {
+    const schemaPath = path.resolve(__dirname, 'schema.sql');
+    const sqlContent = await fs.promises.readFile(schemaPath, 'utf-8');
+    res.setHeader('Content-Type', 'application/sql; charset=utf-8');
+    res.setHeader('Content-Disposition', 'attachment; filename="schema.sql"');
+    res.send(sqlContent);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : 'schema.sql não encontrado.';
+    res.status(404).json({ success: false, error: message });
   }
 });
 

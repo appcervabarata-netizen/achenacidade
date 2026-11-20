@@ -37,6 +37,7 @@ RUN npm install --omit=dev --legacy-peer-deps --no-audit --no-fund && npm cache 
 COPY --from=builder /app/dist ./dist
 COPY --from=builder /app/server.ts ./server.ts
 COPY --from=builder /app/server ./server
+COPY --from=builder /app/schema.sql ./schema.sql
 
 # Prepara pasta padrão para Volume Persistente de imagens no CapRover
 RUN mkdir -p /app/uploads

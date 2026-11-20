@@ -78,6 +78,7 @@ export const AdminScreen: React.FC = () => {
     deleteBusiness,
     products,
     services,
+    storeProductCategories,
     getBusinessQuotaUsage,
     banners,
     addBanner,
@@ -267,7 +268,16 @@ export const AdminScreen: React.FC = () => {
   const [copiedKey, setCopiedKey] = useState<string | null>(null);
 
   // Package for HostGator
-  const hgPackage = generateHostGatorPackage(cities, categories, plans, businesses, products, banners, services);
+  const hgPackage = generateHostGatorPackage(
+    cities,
+    categories,
+    plans,
+    businesses,
+    products,
+    banners,
+    services,
+    storeProductCategories
+  );
 
   // Metrics
   const totalCities = cities.length;

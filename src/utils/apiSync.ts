@@ -64,6 +64,7 @@ export interface DatabaseDiagnostics {
   database?: string;
   user?: string;
   counts?: Record<string, number>;
+  migratedColumns?: string[];
   error?: string;
 }
 
@@ -182,6 +183,36 @@ export async function fetchDbDiagnostics(): Promise<DatabaseDiagnostics> {
       connected: false,
       seeded: false,
       error: err instanceof Error ? err.message : 'Não foi possível alcançar a API do servidor.',
+    };
+  }
+}
+
+export async function migrateDatabaseInDb(): Promise<{
+  success: boolean;
+  addedColumns: string[];
+  error?: string;
+}> {
+  try {
+    const res = await fetch('/api/db/migrate', {
+      method: 'POST',
+      cache: 'no-store',
+      headers: { Accept: 'application/json' },
+    });
+    const data = (await res.json()) as {
+      success?: boolean;
+      addedColumns?: string[];
+      error?: string;
+    };
+    return {
+      success: Boolean(res.ok && data.success),
+      addedColumns: Array.isArray(data.addedColumns) ? data.addedColumns : [],
+      error: data.error,
+    };
+  } catch (err) {
+    return {
+      success: false,
+      addedColumns: [],
+      error: err instanceof Error ? err.message : 'Erro ao executar migração SQL.',
     };
   }
 }

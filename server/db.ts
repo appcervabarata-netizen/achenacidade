@@ -121,10 +121,230 @@ function toOptionalNumber(value: unknown): number | undefined {
   return Number.isFinite(parsed) ? parsed : undefined;
 }
 
-export async function ensureDatabaseSchema(): Promise<boolean> {
+let lastMigratedColumns: string[] = [];
+
+const EXPECTED_TABLE_COLUMNS: Record<string, Array<{ name: string; definition: string }>> = {
+  app_meta: [
+    { name: 'meta_value', definition: "VARCHAR(500) NOT NULL DEFAULT ''" },
+    { name: 'updated_at', definition: 'TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP' },
+  ],
+  cities: [
+    { name: 'name', definition: "VARCHAR(255) NOT NULL DEFAULT ''" },
+    { name: 'state', definition: "VARCHAR(32) NOT NULL DEFAULT ''" },
+    { name: 'slug', definition: "VARCHAR(255) NOT NULL DEFAULT ''" },
+    { name: 'is_active', definition: 'TINYINT(1) NOT NULL DEFAULT 1' },
+    { name: 'is_default', definition: 'TINYINT(1) NOT NULL DEFAULT 0' },
+    { name: 'banner_url', definition: 'LONGTEXT NULL' },
+    { name: 'description', definition: 'TEXT NULL' },
+    { name: 'sort_order', definition: 'INT NOT NULL DEFAULT 0' },
+    { name: 'updated_at', definition: 'TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP' },
+  ],
+  categories: [
+    { name: 'name', definition: "VARCHAR(255) NOT NULL DEFAULT ''" },
+    { name: 'slug', definition: "VARCHAR(255) NOT NULL DEFAULT ''" },
+    { name: 'icon_name', definition: "VARCHAR(120) NOT NULL DEFAULT 'Tag'" },
+    { name: 'description', definition: 'TEXT NULL' },
+    { name: 'color', definition: 'VARCHAR(32) NULL' },
+    { name: 'sort_order', definition: 'INT NOT NULL DEFAULT 0' },
+    { name: 'updated_at', definition: 'TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP' },
+  ],
+  plans: [
+    { name: 'name', definition: "VARCHAR(255) NOT NULL DEFAULT ''" },
+    { name: 'price_monthly', definition: 'DECIMAL(10,2) NOT NULL DEFAULT 0' },
+    { name: 'product_limit', definition: 'INT NOT NULL DEFAULT 3' },
+    { name: 'business_limit', definition: 'INT NOT NULL DEFAULT 1' },
+    { name: 'badge', definition: "VARCHAR(120) NOT NULL DEFAULT ''" },
+    { name: 'features', definition: 'JSON NULL' },
+    { name: 'highlighted', definition: 'TINYINT(1) NOT NULL DEFAULT 0' },
+    { name: 'color', definition: "VARCHAR(32) NOT NULL DEFAULT '#1D4ED8'" },
+    { name: 'use_custom_discounts', definition: 'TINYINT(1) NOT NULL DEFAULT 0' },
+    { name: 'cycle_discounts', definition: 'JSON NULL' },
+    { name: 'sort_order', definition: 'INT NOT NULL DEFAULT 0' },
+    { name: 'updated_at', definition: 'TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP' },
+  ],
+  businesses: [
+    { name: 'name', definition: "VARCHAR(255) NOT NULL DEFAULT ''" },
+    { name: 'slug', definition: "VARCHAR(255) NOT NULL DEFAULT ''" },
+    { name: 'city_id', definition: "VARCHAR(120) NOT NULL DEFAULT ''" },
+    { name: 'category_id', definition: "VARCHAR(120) NOT NULL DEFAULT ''" },
+    { name: 'plan_id', definition: "VARCHAR(120) NOT NULL DEFAULT ''" },
+    { name: 'description', definition: 'LONGTEXT NULL' },
+    { name: 'phone', definition: "VARCHAR(80) NOT NULL DEFAULT ''" },
+    { name: 'whatsapp', definition: "VARCHAR(80) NOT NULL DEFAULT ''" },
+    { name: 'email', definition: 'VARCHAR(255) NULL' },
+    { name: 'owner_email', definition: 'VARCHAR(255) NULL' },
+    { name: 'address', definition: "VARCHAR(255) NOT NULL DEFAULT ''" },
+    { name: 'neighborhood', definition: "VARCHAR(255) NOT NULL DEFAULT ''" },
+    { name: 'opening_hours', definition: 'TEXT NULL' },
+    { name: 'weekly_schedule', definition: 'JSON NULL' },
+    { name: 'logo_url', definition: 'LONGTEXT NULL' },
+    { name: 'cover_url', definition: 'LONGTEXT NULL' },
+    { name: 'instagram', definition: 'VARCHAR(255) NULL' },
+    { name: 'facebook', definition: 'VARCHAR(255) NULL' },
+    { name: 'website', definition: 'VARCHAR(255) NULL' },
+    { name: 'password', definition: 'VARCHAR(255) NULL' },
+    { name: 'is_verified', definition: 'TINYINT(1) NOT NULL DEFAULT 0' },
+    { name: 'email_verified', definition: 'TINYINT(1) NOT NULL DEFAULT 0' },
+    { name: 'payment_status', definition: "VARCHAR(40) NOT NULL DEFAULT 'active'" },
+    { name: 'pending_plan_id', definition: 'VARCHAR(120) NULL' },
+    { name: 'pending_billing_cycle', definition: 'VARCHAR(32) NULL' },
+    { name: 'billing_cycle', definition: 'VARCHAR(32) NULL' },
+    { name: 'plan_expires_at', definition: 'VARCHAR(64) NULL' },
+    { name: 'payment_token', definition: 'VARCHAR(255) NULL' },
+    { name: 'created_at', definition: "VARCHAR(64) NOT NULL DEFAULT ''" },
+    { name: 'sort_order', definition: 'INT NOT NULL DEFAULT 0' },
+    { name: 'updated_at', definition: 'TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP' },
+  ],
+  products: [
+    { name: 'business_id', definition: "VARCHAR(120) NOT NULL DEFAULT ''" },
+    { name: 'city_id', definition: "VARCHAR(120) NOT NULL DEFAULT ''" },
+    { name: 'name', definition: "VARCHAR(255) NOT NULL DEFAULT ''" },
+    { name: 'price', definition: 'DECIMAL(10,2) NOT NULL DEFAULT 0' },
+    { name: 'original_price', definition: 'DECIMAL(10,2) NULL' },
+    { name: 'description', definition: 'LONGTEXT NULL' },
+    { name: 'image_url', definition: 'LONGTEXT NULL' },
+    { name: 'category', definition: "VARCHAR(255) NOT NULL DEFAULT ''" },
+    { name: 'is_active', definition: 'TINYINT(1) NOT NULL DEFAULT 1' },
+    { name: 'featured', definition: 'TINYINT(1) NOT NULL DEFAULT 0' },
+    { name: 'created_at', definition: "VARCHAR(64) NOT NULL DEFAULT ''" },
+    { name: 'sort_order', definition: 'INT NOT NULL DEFAULT 0' },
+    { name: 'updated_at', definition: 'TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP' },
+  ],
+  services: [
+    { name: 'business_id', definition: "VARCHAR(120) NOT NULL DEFAULT ''" },
+    { name: 'city_id', definition: "VARCHAR(120) NOT NULL DEFAULT ''" },
+    { name: 'name', definition: "VARCHAR(255) NOT NULL DEFAULT ''" },
+    { name: 'price_type', definition: "VARCHAR(32) NOT NULL DEFAULT 'fixed'" },
+    { name: 'price', definition: 'DECIMAL(10,2) NULL' },
+    { name: 'duration', definition: "VARCHAR(120) NOT NULL DEFAULT ''" },
+    { name: 'service_mode', definition: "VARCHAR(32) NOT NULL DEFAULT 'on_site'" },
+    { name: 'description', definition: 'LONGTEXT NULL' },
+    { name: 'image_url', definition: 'LONGTEXT NULL' },
+    { name: 'category', definition: "VARCHAR(255) NOT NULL DEFAULT ''" },
+    { name: 'is_active', definition: 'TINYINT(1) NOT NULL DEFAULT 1' },
+    { name: 'featured', definition: 'TINYINT(1) NOT NULL DEFAULT 0' },
+    { name: 'created_at', definition: "VARCHAR(64) NOT NULL DEFAULT ''" },
+    { name: 'sort_order', definition: 'INT NOT NULL DEFAULT 0' },
+    { name: 'updated_at', definition: 'TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP' },
+  ],
+  store_product_categories: [
+    { name: 'business_id', definition: "VARCHAR(120) NOT NULL DEFAULT ''" },
+    { name: 'name', definition: "VARCHAR(255) NOT NULL DEFAULT ''" },
+    { name: 'description', definition: 'TEXT NULL' },
+    { name: 'sort_order', definition: 'INT NOT NULL DEFAULT 0' },
+    { name: 'updated_at', definition: 'TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP' },
+  ],
+  banners: [
+    { name: 'title', definition: "VARCHAR(255) NOT NULL DEFAULT ''" },
+    { name: 'position', definition: "VARCHAR(40) NOT NULL DEFAULT 'top'" },
+    { name: 'image_url', definition: 'LONGTEXT NULL' },
+    { name: 'link_url', definition: 'VARCHAR(500) NULL' },
+    { name: 'advertiser_name', definition: "VARCHAR(255) NOT NULL DEFAULT ''" },
+    { name: 'city_id', definition: "VARCHAR(120) NOT NULL DEFAULT 'all'" },
+    { name: 'price_monthly', definition: 'DECIMAL(10,2) NOT NULL DEFAULT 0' },
+    { name: 'is_active', definition: 'TINYINT(1) NOT NULL DEFAULT 1' },
+    { name: 'clicks_count', definition: 'INT NOT NULL DEFAULT 0' },
+    { name: 'badge_text', definition: 'VARCHAR(120) NULL' },
+    { name: 'tagline', definition: 'TEXT NULL' },
+    { name: 'sort_order', definition: 'INT NOT NULL DEFAULT 0' },
+    { name: 'updated_at', definition: 'TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP' },
+  ],
+  payment_transactions: [
+    { name: 'business_id', definition: "VARCHAR(120) NOT NULL DEFAULT ''" },
+    { name: 'business_name', definition: "VARCHAR(255) NOT NULL DEFAULT ''" },
+    { name: 'plan_id', definition: "VARCHAR(120) NOT NULL DEFAULT ''" },
+    { name: 'plan_name', definition: "VARCHAR(255) NOT NULL DEFAULT ''" },
+    { name: 'billing_cycle', definition: 'VARCHAR(32) NULL' },
+    { name: 'cycle_months', definition: 'INT NULL' },
+    { name: 'base_amount', definition: 'DECIMAL(10,2) NULL' },
+    { name: 'discount_percent', definition: 'DECIMAL(5,2) NULL' },
+    { name: 'discount_amount', definition: 'DECIMAL(10,2) NULL' },
+    { name: 'amount', definition: 'DECIMAL(10,2) NOT NULL DEFAULT 0' },
+    { name: 'payment_method', definition: "VARCHAR(32) NOT NULL DEFAULT 'pix'" },
+    { name: 'status', definition: "VARCHAR(32) NOT NULL DEFAULT 'approved'" },
+    { name: 'mercado_pago_payment_id', definition: "VARCHAR(255) NOT NULL DEFAULT ''" },
+    { name: 'qr_code', definition: 'LONGTEXT NULL' },
+    { name: 'qr_code_text', definition: 'LONGTEXT NULL' },
+    { name: 'installments', definition: 'INT NULL' },
+    { name: 'card_last_four', definition: 'VARCHAR(16) NULL' },
+    { name: 'card_brand', definition: 'VARCHAR(64) NULL' },
+    { name: 'payer_email', definition: "VARCHAR(255) NOT NULL DEFAULT ''" },
+    { name: 'created_at', definition: "VARCHAR(64) NOT NULL DEFAULT ''" },
+    { name: 'paid_at', definition: 'VARCHAR(64) NULL' },
+    { name: 'sort_order', definition: 'INT NOT NULL DEFAULT 0' },
+    { name: 'updated_at', definition: 'TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP' },
+  ],
+  email_logs: [
+    { name: 'recipient_to', definition: "VARCHAR(255) NOT NULL DEFAULT ''" },
+    { name: 'template_key', definition: "VARCHAR(64) NOT NULL DEFAULT 'test'" },
+    { name: 'template_name', definition: "VARCHAR(255) NOT NULL DEFAULT ''" },
+    { name: 'subject', definition: "VARCHAR(500) NOT NULL DEFAULT ''" },
+    { name: 'html_body', definition: 'LONGTEXT NULL' },
+    { name: 'text_body', definition: 'LONGTEXT NULL' },
+    { name: 'verification_code', definition: 'VARCHAR(32) NULL' },
+    { name: 'payment_url', definition: 'VARCHAR(500) NULL' },
+    { name: 'delivery_mode', definition: "VARCHAR(32) NOT NULL DEFAULT 'local_fallback'" },
+    { name: 'status', definition: "VARCHAR(32) NOT NULL DEFAULT 'sent'" },
+    { name: 'error_message', definition: 'TEXT NULL' },
+    { name: 'created_at', definition: "VARCHAR(64) NOT NULL DEFAULT ''" },
+    { name: 'sort_order', definition: 'INT NOT NULL DEFAULT 0' },
+    { name: 'updated_at', definition: 'TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP' },
+  ],
+  app_settings: [
+    { name: 'setting_value', definition: 'JSON NULL' },
+    { name: 'updated_at', definition: 'TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP' },
+  ],
+};
+
+async function ensureMissingColumns(conn: PoolConnection): Promise<string[]> {
+  const added: string[] = [];
+  const [colRows] = await conn.query<RowDataPacket[]>(
+    `SELECT TABLE_NAME AS tableName, COLUMN_NAME AS columnName
+     FROM INFORMATION_SCHEMA.COLUMNS
+     WHERE TABLE_SCHEMA = DATABASE()`
+  );
+
+  const existingByTable = new Map<string, Set<string>>();
+  for (const row of colRows) {
+    const tbl = String(row.tableName || '').toLowerCase();
+    const col = String(row.columnName || '').toLowerCase();
+    if (!existingByTable.has(tbl)) {
+      existingByTable.set(tbl, new Set());
+    }
+    existingByTable.get(tbl)!.add(col);
+  }
+
+  for (const [tableName, columns] of Object.entries(EXPECTED_TABLE_COLUMNS)) {
+    const existingCols = existingByTable.get(tableName.toLowerCase());
+    if (!existingCols) continue;
+
+    for (const col of columns) {
+      if (!existingCols.has(col.name.toLowerCase())) {
+        try {
+          await conn.query(`ALTER TABLE \`${tableName}\` ADD COLUMN \`${col.name}\` ${col.definition}`);
+        } catch (err) {
+          if (col.definition.startsWith('JSON')) {
+            await conn.query(`ALTER TABLE \`${tableName}\` ADD COLUMN \`${col.name}\` LONGTEXT NULL`);
+          } else {
+            throw err;
+          }
+        }
+        added.push(`${tableName}.${col.name}`);
+      }
+    }
+  }
+
+  if (added.length > 0) {
+    console.log('MySQL schema auto-migrated missing columns:', added.join(', '));
+  }
+
+  return added;
+}
+
+export async function ensureDatabaseSchema(forceMigrate = false): Promise<boolean> {
   const activePool = getPool();
   if (!activePool) return false;
-  if (schemaInitialized) return true;
+  if (schemaInitialized && !forceMigrate) return true;
 
   if (schemaPromise) return schemaPromise;
 
@@ -348,6 +568,11 @@ export async function ensureDatabaseSchema(): Promise<boolean> {
           updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
       `);
+
+      const addedColumns = await ensureMissingColumns(conn);
+      if (addedColumns.length > 0) {
+        lastMigratedColumns = addedColumns;
+      }
 
       schemaInitialized = true;
       return true;
@@ -1572,7 +1797,14 @@ export interface DatabaseDiagnostics {
   database?: string;
   user?: string;
   counts?: Record<string, number>;
+  migratedColumns?: string[];
   error?: string;
+}
+
+export async function migrateDatabaseSchema(): Promise<{ addedColumns: string[] }> {
+  lastMigratedColumns = [];
+  await ensureDatabaseSchema(true);
+  return { addedColumns: lastMigratedColumns };
 }
 
 export async function getDatabaseDiagnostics(): Promise<DatabaseDiagnostics> {
@@ -1599,7 +1831,8 @@ export async function getDatabaseDiagnostics(): Promise<DatabaseDiagnostics> {
       };
     }
 
-    await ensureDatabaseSchema();
+    lastMigratedColumns = [];
+    await ensureDatabaseSchema(true);
     const [verRows] = await activePool.query<RowDataPacket[]>(`SELECT VERSION() AS version`);
     const version = verRows[0]?.version ? String(verRows[0].version) : undefined;
     const seeded = await isSeedCompleted(activePool);
@@ -1630,6 +1863,7 @@ export async function getDatabaseDiagnostics(): Promise<DatabaseDiagnostics> {
       version,
       ...safeTarget,
       counts,
+      migratedColumns: lastMigratedColumns,
     };
   } catch (err) {
     return {

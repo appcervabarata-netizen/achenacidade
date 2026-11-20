@@ -1,4 +1,4 @@
-import { City, Category, Plan, Business, Product, Service, AdBanner } from '../types';
+import { City, Category, Plan, Business, Product, Service, AdBanner, StoreProductCategory } from '../types';
 
 export interface HostGatorPackage {
   schemaSql: string;
@@ -16,7 +16,8 @@ export function generateHostGatorPackage(
   businesses: Business[],
   products: Product[],
   banners: AdBanner[] = [],
-  services: Service[] = []
+  services: Service[] = [],
+  storeProductCategories: StoreProductCategory[] = []
 ): HostGatorPackage {
   // 1. MySQL Schema DDL
   const schemaSql = `-- ========================================================
@@ -31,69 +32,87 @@ SET FOREIGN_KEY_CHECKS = 0;
 
 -- 1. TABELA DE CIDADES
 CREATE TABLE IF NOT EXISTS \`cidades\` (
-  \`id\` VARCHAR(50) NOT NULL,
-  \`name\` VARCHAR(100) NOT NULL,
-  \`state\` VARCHAR(2) NOT NULL,
-  \`slug\` VARCHAR(120) NOT NULL,
-  \`is_active\` TINYINT(1) DEFAULT 1,
-  \`is_default\` TINYINT(1) DEFAULT 0,
-  \`description\` TEXT,
+  \`id\` VARCHAR(120) NOT NULL,
+  \`name\` VARCHAR(150) NOT NULL,
+  \`state\` VARCHAR(32) NOT NULL,
+  \`slug\` VARCHAR(180) NOT NULL,
+  \`is_active\` TINYINT(1) NOT NULL DEFAULT 1,
+  \`is_default\` TINYINT(1) NOT NULL DEFAULT 0,
+  \`banner_url\` LONGTEXT NULL,
+  \`description\` TEXT NULL,
+  \`sort_order\` INT NOT NULL DEFAULT 0,
   \`created_at\` TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  \`updated_at\` TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   PRIMARY KEY (\`id\`),
   UNIQUE KEY \`idx_slug\` (\`slug\`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- 2. TABELA DE CATEGORIAS
 CREATE TABLE IF NOT EXISTS \`categorias\` (
-  \`id\` VARCHAR(50) NOT NULL,
-  \`name\` VARCHAR(100) NOT NULL,
-  \`slug\` VARCHAR(120) NOT NULL,
-  \`icon_name\` VARCHAR(50) DEFAULT 'Store',
-  \`description\` TEXT,
-  \`color\` VARCHAR(20) DEFAULT '#2563EB',
+  \`id\` VARCHAR(120) NOT NULL,
+  \`name\` VARCHAR(150) NOT NULL,
+  \`slug\` VARCHAR(180) NOT NULL,
+  \`icon_name\` VARCHAR(80) DEFAULT 'Store',
+  \`description\` TEXT NULL,
+  \`color\` VARCHAR(32) DEFAULT '#2563EB',
+  \`sort_order\` INT NOT NULL DEFAULT 0,
+  \`updated_at\` TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   PRIMARY KEY (\`id\`),
   UNIQUE KEY \`idx_cat_slug\` (\`slug\`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- 3. TABELA DE PLANOS DE ANÚNCIO
 CREATE TABLE IF NOT EXISTS \`planos\` (
-  \`id\` VARCHAR(50) NOT NULL,
-  \`name\` VARCHAR(100) NOT NULL,
+  \`id\` VARCHAR(120) NOT NULL,
+  \`name\` VARCHAR(150) NOT NULL,
   \`price_monthly\` DECIMAL(10,2) NOT NULL DEFAULT 0.00,
   \`product_limit\` INT NOT NULL DEFAULT 3,
-  \`badge\` VARCHAR(50) DEFAULT 'Gratuito',
-  \`features_json\` TEXT,
+  \`business_limit\` INT NOT NULL DEFAULT 1,
+  \`badge\` VARCHAR(80) DEFAULT 'Gratuito',
+  \`features_json\` LONGTEXT,
   \`use_custom_discounts\` TINYINT(1) DEFAULT 0,
-  \`cycle_discounts_json\` TEXT,
+  \`cycle_discounts_json\` LONGTEXT,
   \`highlighted\` TINYINT(1) DEFAULT 0,
-  \`color\` VARCHAR(20) DEFAULT '#1D4ED8',
+  \`color\` VARCHAR(32) DEFAULT '#1D4ED8',
+  \`sort_order\` INT NOT NULL DEFAULT 0,
+  \`updated_at\` TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   PRIMARY KEY (\`id\`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
--- 4. TABELA DE EMPRESAS (Com suporte a Facebook, Senha e Horário Semanal)
+-- 4. TABELA DE EMPRESAS (Completa: Acesso, Horário Semanal, Mídia, Verificação e Ciclo/Pagamento)
 CREATE TABLE IF NOT EXISTS \`empresas\` (
-  \`id\` VARCHAR(50) NOT NULL,
-  \`name\` VARCHAR(150) NOT NULL,
-  \`slug\` VARCHAR(180) NOT NULL,
-  \`city_id\` VARCHAR(50) NOT NULL,
-  \`category_id\` VARCHAR(50) NOT NULL,
-  \`plan_id\` VARCHAR(50) NOT NULL,
-  \`description\` TEXT,
-  \`phone\` VARCHAR(30) DEFAULT '',
-  \`whatsapp\` VARCHAR(30) NOT NULL,
-  \`email\` VARCHAR(120) DEFAULT '',
+  \`id\` VARCHAR(120) NOT NULL,
+  \`name\` VARCHAR(255) NOT NULL,
+  \`slug\` VARCHAR(255) NOT NULL,
+  \`city_id\` VARCHAR(120) NOT NULL,
+  \`category_id\` VARCHAR(120) NOT NULL,
+  \`plan_id\` VARCHAR(120) NOT NULL,
+  \`description\` LONGTEXT NULL,
+  \`phone\` VARCHAR(80) DEFAULT '',
+  \`whatsapp\` VARCHAR(80) NOT NULL,
+  \`email\` VARCHAR(255) DEFAULT '',
+  \`owner_email\` VARCHAR(255) DEFAULT '',
   \`address\` VARCHAR(255) DEFAULT '',
-  \`neighborhood\` VARCHAR(100) DEFAULT '',
-  \`opening_hours\` VARCHAR(255) DEFAULT '',
-  \`weekly_schedule_json\` TEXT,
-  \`logo_url\` TEXT,
-  \`cover_url\` TEXT,
-  \`instagram\` VARCHAR(100) DEFAULT '',
-  \`facebook\` VARCHAR(150) DEFAULT '',
+  \`neighborhood\` VARCHAR(255) DEFAULT '',
+  \`opening_hours\` TEXT NULL,
+  \`weekly_schedule_json\` LONGTEXT NULL,
+  \`logo_url\` LONGTEXT NULL,
+  \`cover_url\` LONGTEXT NULL,
+  \`instagram\` VARCHAR(255) DEFAULT '',
+  \`facebook\` VARCHAR(255) DEFAULT '',
   \`website\` VARCHAR(255) DEFAULT '',
   \`password\` VARCHAR(255) DEFAULT '',
   \`is_verified\` TINYINT(1) DEFAULT 0,
-  \`created_at\` TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  \`email_verified\` TINYINT(1) DEFAULT 0,
+  \`payment_status\` VARCHAR(40) DEFAULT 'active',
+  \`pending_plan_id\` VARCHAR(120) NULL,
+  \`pending_billing_cycle\` VARCHAR(32) NULL,
+  \`billing_cycle\` VARCHAR(32) NULL,
+  \`plan_expires_at\` VARCHAR(64) NULL,
+  \`payment_token\` VARCHAR(255) NULL,
+  \`sort_order\` INT NOT NULL DEFAULT 0,
+  \`created_at\` VARCHAR(64) NOT NULL,
+  \`updated_at\` TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   PRIMARY KEY (\`id\`),
   KEY \`idx_city\` (\`city_id\`),
   KEY \`idx_category\` (\`category_id\`),
@@ -105,18 +124,20 @@ CREATE TABLE IF NOT EXISTS \`empresas\` (
 
 -- 5. TABELA DE PRODUTOS DAS EMPRESAS
 CREATE TABLE IF NOT EXISTS \`produtos\` (
-  \`id\` VARCHAR(50) NOT NULL,
-  \`business_id\` VARCHAR(50) NOT NULL,
-  \`city_id\` VARCHAR(50) NOT NULL,
-  \`name\` VARCHAR(150) NOT NULL,
+  \`id\` VARCHAR(120) NOT NULL,
+  \`business_id\` VARCHAR(120) NOT NULL,
+  \`city_id\` VARCHAR(120) NOT NULL,
+  \`name\` VARCHAR(255) NOT NULL,
   \`price\` DECIMAL(10,2) NOT NULL DEFAULT 0.00,
   \`original_price\` DECIMAL(10,2) DEFAULT NULL,
-  \`description\` TEXT,
-  \`image_url\` TEXT,
-  \`category\` VARCHAR(100) DEFAULT '',
+  \`description\` LONGTEXT NULL,
+  \`image_url\` LONGTEXT NULL,
+  \`category\` VARCHAR(255) DEFAULT '',
   \`is_active\` TINYINT(1) DEFAULT 1,
   \`featured\` TINYINT(1) DEFAULT 0,
-  \`created_at\` TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  \`sort_order\` INT NOT NULL DEFAULT 0,
+  \`created_at\` VARCHAR(64) NOT NULL,
+  \`updated_at\` TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   PRIMARY KEY (\`id\`),
   KEY \`idx_prod_biz\` (\`business_id\`),
   KEY \`idx_prod_city\` (\`city_id\`),
@@ -126,20 +147,22 @@ CREATE TABLE IF NOT EXISTS \`produtos\` (
 
 -- 5B. TABELA DE SERVIÇOS DAS EMPRESAS
 CREATE TABLE IF NOT EXISTS \`servicos\` (
-  \`id\` VARCHAR(50) NOT NULL,
-  \`business_id\` VARCHAR(50) NOT NULL,
-  \`city_id\` VARCHAR(50) NOT NULL,
-  \`name\` VARCHAR(150) NOT NULL,
+  \`id\` VARCHAR(120) NOT NULL,
+  \`business_id\` VARCHAR(120) NOT NULL,
+  \`city_id\` VARCHAR(120) NOT NULL,
+  \`name\` VARCHAR(255) NOT NULL,
   \`price\` DECIMAL(10,2) DEFAULT NULL,
-  \`price_type\` ENUM('fixed', 'from', 'hourly', 'quote') NOT NULL DEFAULT 'fixed',
-  \`duration\` VARCHAR(80) DEFAULT '',
-  \`service_mode\` ENUM('on_site', 'home_visit', 'online', 'both') NOT NULL DEFAULT 'on_site',
-  \`description\` TEXT,
-  \`image_url\` TEXT,
-  \`category\` VARCHAR(100) DEFAULT '',
+  \`price_type\` VARCHAR(32) NOT NULL DEFAULT 'fixed',
+  \`duration\` VARCHAR(120) DEFAULT '',
+  \`service_mode\` VARCHAR(32) NOT NULL DEFAULT 'on_site',
+  \`description\` LONGTEXT NULL,
+  \`image_url\` LONGTEXT NULL,
+  \`category\` VARCHAR(255) DEFAULT '',
   \`is_active\` TINYINT(1) DEFAULT 1,
   \`featured\` TINYINT(1) DEFAULT 0,
-  \`created_at\` TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  \`sort_order\` INT NOT NULL DEFAULT 0,
+  \`created_at\` VARCHAR(64) NOT NULL,
+  \`updated_at\` TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   PRIMARY KEY (\`id\`),
   KEY \`idx_serv_biz\` (\`business_id\`),
   KEY \`idx_serv_city\` (\`city_id\`),
@@ -147,38 +170,65 @@ CREATE TABLE IF NOT EXISTS \`servicos\` (
   CONSTRAINT \`fk_serv_city\` FOREIGN KEY (\`city_id\`) REFERENCES \`cidades\` (\`id\`) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
+-- 5C. TABELA DE CATEGORIAS INTERNAS DE PRODUTOS DAS LOJAS
+CREATE TABLE IF NOT EXISTS \`categorias_produtos_loja\` (
+  \`id\` VARCHAR(120) NOT NULL,
+  \`business_id\` VARCHAR(120) NOT NULL,
+  \`name\` VARCHAR(255) NOT NULL,
+  \`description\` TEXT NULL,
+  \`sort_order\` INT NOT NULL DEFAULT 0,
+  \`updated_at\` TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (\`id\`),
+  KEY \`idx_spc_biz\` (\`business_id\`),
+  CONSTRAINT \`fk_spc_biz\` FOREIGN KEY (\`business_id\`) REFERENCES \`empresas\` (\`id\`) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
 -- 6. TABELA DE BANNERS PUBLICITÁRIOS (Patrocinados)
 CREATE TABLE IF NOT EXISTS \`banners\` (
-  \`id\` VARCHAR(50) NOT NULL,
-  \`title\` VARCHAR(150) NOT NULL,
-  \`tagline\` VARCHAR(255) DEFAULT '',
-  \`position\` ENUM('top', 'bottom', 'rotating_header') NOT NULL DEFAULT 'top',
-  \`image_url\` TEXT NOT NULL,
-  \`link_url\` VARCHAR(255) DEFAULT '',
-  \`advertiser_name\` VARCHAR(120) NOT NULL,
-  \`city_id\` VARCHAR(50) DEFAULT 'all',
+  \`id\` VARCHAR(120) NOT NULL,
+  \`title\` VARCHAR(255) NOT NULL,
+  \`tagline\` TEXT NULL,
+  \`position\` VARCHAR(40) NOT NULL DEFAULT 'top',
+  \`image_url\` LONGTEXT NOT NULL,
+  \`link_url\` VARCHAR(500) DEFAULT '',
+  \`advertiser_name\` VARCHAR(255) NOT NULL,
+  \`city_id\` VARCHAR(120) DEFAULT 'all',
   \`price_monthly\` DECIMAL(10,2) DEFAULT 0.00,
   \`is_active\` TINYINT(1) DEFAULT 1,
   \`clicks_count\` INT DEFAULT 0,
-  \`badge_text\` VARCHAR(50) DEFAULT 'Publicidade',
+  \`badge_text\` VARCHAR(120) DEFAULT 'Publicidade',
+  \`sort_order\` INT NOT NULL DEFAULT 0,
   \`created_at\` TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  \`updated_at\` TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   PRIMARY KEY (\`id\`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- 7. TABELA DE PAGAMENTOS E ASSINATURAS (MERCADO PAGO)
 CREATE TABLE IF NOT EXISTS \`pagamentos\` (
-  \`id\` VARCHAR(50) NOT NULL,
-  \`business_id\` VARCHAR(50) NOT NULL,
-  \`plan_id\` VARCHAR(50) NOT NULL,
-  \`billing_cycle\` VARCHAR(20) DEFAULT 'monthly',
+  \`id\` VARCHAR(120) NOT NULL,
+  \`business_id\` VARCHAR(120) NOT NULL,
+  \`business_name\` VARCHAR(255) DEFAULT '',
+  \`plan_id\` VARCHAR(120) NOT NULL,
+  \`plan_name\` VARCHAR(255) DEFAULT '',
+  \`billing_cycle\` VARCHAR(32) DEFAULT 'monthly',
+  \`cycle_months\` INT DEFAULT 1,
+  \`base_amount\` DECIMAL(10,2) DEFAULT NULL,
   \`discount_percent\` DECIMAL(5,2) DEFAULT 0.00,
+  \`discount_amount\` DECIMAL(10,2) DEFAULT 0.00,
   \`amount\` DECIMAL(10,2) NOT NULL,
-  \`payment_method\` VARCHAR(30) NOT NULL,
-  \`status\` VARCHAR(30) DEFAULT 'approved',
-  \`mercadopago_payment_id\` VARCHAR(100),
-  \`payer_email\` VARCHAR(150),
+  \`payment_method\` VARCHAR(32) NOT NULL,
+  \`status\` VARCHAR(32) DEFAULT 'approved',
+  \`mercadopago_payment_id\` VARCHAR(255),
+  \`qr_code\` LONGTEXT NULL,
+  \`qr_code_text\` LONGTEXT NULL,
+  \`payer_email\` VARCHAR(255),
   \`installments\` INT DEFAULT 1,
-  \`created_at\` TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  \`card_last_four\` VARCHAR(16) NULL,
+  \`card_brand\` VARCHAR(64) NULL,
+  \`sort_order\` INT NOT NULL DEFAULT 0,
+  \`created_at\` VARCHAR(64) NOT NULL,
+  \`paid_at\` VARCHAR(64) NULL,
+  \`updated_at\` TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   PRIMARY KEY (\`id\`),
   KEY \`idx_business\` (\`business_id\`),
   KEY \`idx_plan\` (\`plan_id\`)
@@ -191,56 +241,64 @@ CREATE TABLE IF NOT EXISTS \`pagamentos\` (
 -- Cidades
 ${cities
   .map(
-    (c) =>
-      `INSERT INTO \`cidades\` (\`id\`, \`name\`, \`state\`, \`slug\`, \`is_active\`, \`is_default\`, \`description\`) VALUES (${escapeSql(c.id)}, ${escapeSql(c.name)}, ${escapeSql(c.state)}, ${escapeSql(c.slug)}, ${c.isActive ? 1 : 0}, ${c.isDefault ? 1 : 0}, ${escapeSql(c.description || '')}) ON DUPLICATE KEY UPDATE \`name\`=VALUES(\`name\`);`
+    (c, idx) =>
+      `INSERT INTO \`cidades\` (\`id\`, \`name\`, \`state\`, \`slug\`, \`is_active\`, \`is_default\`, \`banner_url\`, \`description\`, \`sort_order\`) VALUES (${escapeSql(c.id)}, ${escapeSql(c.name)}, ${escapeSql(c.state)}, ${escapeSql(c.slug)}, ${c.isActive ? 1 : 0}, ${c.isDefault ? 1 : 0}, ${escapeSql(c.bannerUrl || '')}, ${escapeSql(c.description || '')}, ${idx}) ON DUPLICATE KEY UPDATE \`name\`=VALUES(\`name\`), \`is_default\`=VALUES(\`is_default\`), \`sort_order\`=VALUES(\`sort_order\`);`
   )
   .join('\n')}
 
 -- Categorias
 ${categories
   .map(
-    (cat) =>
-      `INSERT INTO \`categorias\` (\`id\`, \`name\`, \`slug\`, \`icon_name\`, \`description\`, \`color\`) VALUES (${escapeSql(cat.id)}, ${escapeSql(cat.name)}, ${escapeSql(cat.slug)}, ${escapeSql(cat.iconName)}, ${escapeSql(cat.description || '')}, ${escapeSql(cat.color || '#2563EB')}) ON DUPLICATE KEY UPDATE \`name\`=VALUES(\`name\`);`
+    (cat, idx) =>
+      `INSERT INTO \`categorias\` (\`id\`, \`name\`, \`slug\`, \`icon_name\`, \`description\`, \`color\`, \`sort_order\`) VALUES (${escapeSql(cat.id)}, ${escapeSql(cat.name)}, ${escapeSql(cat.slug)}, ${escapeSql(cat.iconName)}, ${escapeSql(cat.description || '')}, ${escapeSql(cat.color || '#2563EB')}, ${idx}) ON DUPLICATE KEY UPDATE \`name\`=VALUES(\`name\`), \`sort_order\`=VALUES(\`sort_order\`);`
   )
   .join('\n')}
 
 -- Planos
 ${plans
   .map(
-    (p) =>
-      `INSERT INTO \`planos\` (\`id\`, \`name\`, \`price_monthly\`, \`product_limit\`, \`badge\`, \`features_json\`, \`use_custom_discounts\`, \`cycle_discounts_json\`, \`highlighted\`, \`color\`) VALUES (${escapeSql(p.id)}, ${escapeSql(p.name)}, ${p.priceMonthly.toFixed(2)}, ${p.productLimit}, ${escapeSql(p.badge)}, ${escapeSql(JSON.stringify(p.features))}, ${p.useCustomDiscounts ? 1 : 0}, ${escapeSql(JSON.stringify(p.cycleDiscounts || null))}, ${p.highlighted ? 1 : 0}, ${escapeSql(p.color)}) ON DUPLICATE KEY UPDATE \`name\`=VALUES(\`name\`);`
+    (p, idx) =>
+      `INSERT INTO \`planos\` (\`id\`, \`name\`, \`price_monthly\`, \`product_limit\`, \`business_limit\`, \`badge\`, \`features_json\`, \`use_custom_discounts\`, \`cycle_discounts_json\`, \`highlighted\`, \`color\`, \`sort_order\`) VALUES (${escapeSql(p.id)}, ${escapeSql(p.name)}, ${p.priceMonthly.toFixed(2)}, ${p.productLimit}, ${p.businessLimit ?? 1}, ${escapeSql(p.badge)}, ${escapeSql(JSON.stringify(p.features))}, ${p.useCustomDiscounts ? 1 : 0}, ${escapeSql(JSON.stringify(p.cycleDiscounts || null))}, ${p.highlighted ? 1 : 0}, ${escapeSql(p.color)}, ${idx}) ON DUPLICATE KEY UPDATE \`name\`=VALUES(\`name\`), \`business_limit\`=VALUES(\`business_limit\`), \`sort_order\`=VALUES(\`sort_order\`);`
   )
   .join('\n')}
 
 -- Empresas
 ${businesses
   .map(
-    (b) =>
-      `INSERT INTO \`empresas\` (\`id\`, \`name\`, \`slug\`, \`city_id\`, \`category_id\`, \`plan_id\`, \`description\`, \`phone\`, \`whatsapp\`, \`email\`, \`address\`, \`neighborhood\`, \`opening_hours\`, \`weekly_schedule_json\`, \`logo_url\`, \`instagram\`, \`facebook\`, \`website\`, \`password\`, \`is_verified\`) VALUES (${escapeSql(b.id)}, ${escapeSql(b.name)}, ${escapeSql(b.slug)}, ${escapeSql(b.cityId)}, ${escapeSql(b.categoryId)}, ${escapeSql(b.planId)}, ${escapeSql(b.description)}, ${escapeSql(b.phone)}, ${escapeSql(b.whatsapp)}, ${escapeSql(b.email || '')}, ${escapeSql(b.address)}, ${escapeSql(b.neighborhood)}, ${escapeSql(b.openingHours || '')}, ${escapeSql(JSON.stringify(b.weeklySchedule || []))}, ${escapeSql(b.logoUrl)}, ${escapeSql(b.instagram || '')}, ${escapeSql(b.facebook || '')}, ${escapeSql(b.website || '')}, ${escapeSql(b.password || '123456')}, ${b.isVerified ? 1 : 0}) ON DUPLICATE KEY UPDATE \`name\`=VALUES(\`name\`);`
+    (b, idx) =>
+      `INSERT INTO \`empresas\` (\`id\`, \`name\`, \`slug\`, \`city_id\`, \`category_id\`, \`plan_id\`, \`description\`, \`phone\`, \`whatsapp\`, \`email\`, \`owner_email\`, \`address\`, \`neighborhood\`, \`opening_hours\`, \`weekly_schedule_json\`, \`logo_url\`, \`cover_url\`, \`instagram\`, \`facebook\`, \`website\`, \`password\`, \`is_verified\`, \`email_verified\`, \`payment_status\`, \`pending_plan_id\`, \`pending_billing_cycle\`, \`billing_cycle\`, \`plan_expires_at\`, \`payment_token\`, \`created_at\`, \`sort_order\`) VALUES (${escapeSql(b.id)}, ${escapeSql(b.name)}, ${escapeSql(b.slug)}, ${escapeSql(b.cityId)}, ${escapeSql(b.categoryId)}, ${escapeSql(b.planId)}, ${escapeSql(b.description)}, ${escapeSql(b.phone)}, ${escapeSql(b.whatsapp)}, ${escapeSql(b.email || '')}, ${escapeSql(b.ownerEmail || '')}, ${escapeSql(b.address)}, ${escapeSql(b.neighborhood)}, ${escapeSql(b.openingHours || '')}, ${escapeSql(JSON.stringify(b.weeklySchedule || []))}, ${escapeSql(b.logoUrl)}, ${escapeSql(b.coverUrl || '')}, ${escapeSql(b.instagram || '')}, ${escapeSql(b.facebook || '')}, ${escapeSql(b.website || '')}, ${escapeSql(b.password || '123456')}, ${b.isVerified ? 1 : 0}, ${b.emailVerified ? 1 : 0}, ${escapeSql(b.paymentStatus || 'active')}, ${escapeSql(b.pendingPlanId || '')}, ${escapeSql(b.pendingBillingCycle || '')}, ${escapeSql(b.billingCycle || '')}, ${escapeSql(b.planExpiresAt || '')}, ${escapeSql(b.paymentToken || '')}, ${escapeSql(b.createdAt || new Date().toISOString().split('T')[0])}, ${idx}) ON DUPLICATE KEY UPDATE \`name\`=VALUES(\`name\`), \`sort_order\`=VALUES(\`sort_order\`);`
   )
   .join('\n')}
 
 -- Produtos
 ${products
   .map(
-    (prod) =>
-      `INSERT INTO \`produtos\` (\`id\`, \`business_id\`, \`city_id\`, \`name\`, \`price\`, \`original_price\`, \`description\`, \`image_url\`, \`category\`, \`is_active\`, \`featured\`) VALUES (${escapeSql(prod.id)}, ${escapeSql(prod.businessId)}, ${escapeSql(prod.cityId)}, ${escapeSql(prod.name)}, ${prod.price.toFixed(2)}, ${prod.originalPrice ? prod.originalPrice.toFixed(2) : 'NULL'}, ${escapeSql(prod.description)}, ${escapeSql(prod.imageUrl)}, ${escapeSql(prod.category)}, ${prod.isActive ? 1 : 0}, ${prod.featured ? 1 : 0}) ON DUPLICATE KEY UPDATE \`name\`=VALUES(\`name\`);`
+    (prod, idx) =>
+      `INSERT INTO \`produtos\` (\`id\`, \`business_id\`, \`city_id\`, \`name\`, \`price\`, \`original_price\`, \`description\`, \`image_url\`, \`category\`, \`is_active\`, \`featured\`, \`created_at\`, \`sort_order\`) VALUES (${escapeSql(prod.id)}, ${escapeSql(prod.businessId)}, ${escapeSql(prod.cityId)}, ${escapeSql(prod.name)}, ${prod.price.toFixed(2)}, ${prod.originalPrice ? prod.originalPrice.toFixed(2) : 'NULL'}, ${escapeSql(prod.description)}, ${escapeSql(prod.imageUrl)}, ${escapeSql(prod.category)}, ${prod.isActive ? 1 : 0}, ${prod.featured ? 1 : 0}, ${escapeSql(prod.createdAt || new Date().toISOString().split('T')[0])}, ${idx}) ON DUPLICATE KEY UPDATE \`name\`=VALUES(\`name\`), \`sort_order\`=VALUES(\`sort_order\`);`
   )
   .join('\n')}
 
 -- Serviços
 ${services
   .map(
-    (serv) =>
-      `INSERT INTO \`servicos\` (\`id\`, \`business_id\`, \`city_id\`, \`name\`, \`price\`, \`price_type\`, \`duration\`, \`service_mode\`, \`description\`, \`image_url\`, \`category\`, \`is_active\`, \`featured\`) VALUES (${escapeSql(serv.id)}, ${escapeSql(serv.businessId)}, ${escapeSql(serv.cityId)}, ${escapeSql(serv.name)}, ${serv.price !== undefined && serv.price !== null ? serv.price.toFixed(2) : 'NULL'}, ${escapeSql(serv.priceType)}, ${escapeSql(serv.duration || '')}, ${escapeSql(serv.serviceMode)}, ${escapeSql(serv.description)}, ${escapeSql(serv.imageUrl)}, ${escapeSql(serv.category)}, ${serv.isActive ? 1 : 0}, ${serv.featured ? 1 : 0}) ON DUPLICATE KEY UPDATE \`name\`=VALUES(\`name\`);`
+    (serv, idx) =>
+      `INSERT INTO \`servicos\` (\`id\`, \`business_id\`, \`city_id\`, \`name\`, \`price\`, \`price_type\`, \`duration\`, \`service_mode\`, \`description\`, \`image_url\`, \`category\`, \`is_active\`, \`featured\`, \`created_at\`, \`sort_order\`) VALUES (${escapeSql(serv.id)}, ${escapeSql(serv.businessId)}, ${escapeSql(serv.cityId)}, ${escapeSql(serv.name)}, ${serv.price !== undefined && serv.price !== null ? serv.price.toFixed(2) : 'NULL'}, ${escapeSql(serv.priceType)}, ${escapeSql(serv.duration || '')}, ${escapeSql(serv.serviceMode)}, ${escapeSql(serv.description)}, ${escapeSql(serv.imageUrl)}, ${escapeSql(serv.category)}, ${serv.isActive ? 1 : 0}, ${serv.featured ? 1 : 0}, ${escapeSql(serv.createdAt || new Date().toISOString().split('T')[0])}, ${idx}) ON DUPLICATE KEY UPDATE \`name\`=VALUES(\`name\`), \`sort_order\`=VALUES(\`sort_order\`);`
+  )
+  .join('\n')}
+
+-- Categorias de Produtos das Lojas
+${storeProductCategories
+  .map(
+    (spc, idx) =>
+      `INSERT INTO \`categorias_produtos_loja\` (\`id\`, \`business_id\`, \`name\`, \`description\`, \`sort_order\`) VALUES (${escapeSql(spc.id)}, ${escapeSql(spc.businessId)}, ${escapeSql(spc.name)}, ${escapeSql(spc.description || '')}, ${idx}) ON DUPLICATE KEY UPDATE \`name\`=VALUES(\`name\`), \`sort_order\`=VALUES(\`sort_order\`);`
   )
   .join('\n')}
 
 -- Banners
 ${banners
   .map(
-    (b) =>
-      `INSERT INTO \`banners\` (\`id\`, \`title\`, \`tagline\`, \`position\`, \`image_url\`, \`link_url\`, \`advertiser_name\`, \`city_id\`, \`price_monthly\`, \`is_active\`, \`clicks_count\`, \`badge_text\`) VALUES (${escapeSql(b.id)}, ${escapeSql(b.title)}, ${escapeSql(b.tagline || '')}, ${escapeSql(b.position)}, ${escapeSql(b.imageUrl)}, ${escapeSql(b.linkUrl || '')}, ${escapeSql(b.advertiserName)}, ${escapeSql(b.cityId)}, ${b.priceMonthly.toFixed(2)}, ${b.isActive ? 1 : 0}, ${b.clicksCount || 0}, ${escapeSql(b.badgeText || 'Publicidade')}) ON DUPLICATE KEY UPDATE \`title\`=VALUES(\`title\`);`
+    (b, idx) =>
+      `INSERT INTO \`banners\` (\`id\`, \`title\`, \`tagline\`, \`position\`, \`image_url\`, \`link_url\`, \`advertiser_name\`, \`city_id\`, \`price_monthly\`, \`is_active\`, \`clicks_count\`, \`badge_text\`, \`sort_order\`) VALUES (${escapeSql(b.id)}, ${escapeSql(b.title)}, ${escapeSql(b.tagline || '')}, ${escapeSql(b.position)}, ${escapeSql(b.imageUrl)}, ${escapeSql(b.linkUrl || '')}, ${escapeSql(b.advertiserName)}, ${escapeSql(b.cityId)}, ${b.priceMonthly.toFixed(2)}, ${b.isActive ? 1 : 0}, ${b.clicksCount || 0}, ${escapeSql(b.badgeText || 'Publicidade')}, ${idx}) ON DUPLICATE KEY UPDATE \`title\`=VALUES(\`title\`), \`sort_order\`=VALUES(\`sort_order\`);`
   )
   .join('\n')}
 
@@ -355,7 +413,7 @@ try {
     writeSqlLine(\$out, "");
 
     // Lista de tabelas a serem exportadas em ordem de integridade referencial
-    \$tables = ['cidades', 'categorias', 'planos', 'empresas', 'produtos', 'servicos', 'banners', 'pagamentos'];
+    \$tables = ['cidades', 'categorias', 'planos', 'empresas', 'produtos', 'servicos', 'categorias_produtos_loja', 'banners', 'pagamentos'];
 
     foreach (\$tables as \$table) {
         // Verifica se a tabela existe no banco de dados
