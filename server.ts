@@ -136,15 +136,34 @@ interface IncomingSmtpConfig {
   pass?: string;
 }
 
+function normalizeSmtpHost(rawHost?: string): string {
+  if (!rawHost) return '';
+  return rawHost
+    .trim()
+    .replace(/^(https?|smtps?):\/\//i, '')
+    .split('/')[0]
+    .split('?')[0]
+    .replace(/:\d+$/, '')
+    .trim();
+}
+
+function getSmtpTlsOptions() {
+  if (process.env.SMTP_TLS_REJECT_UNAUTHORIZED === 'false') {
+    return { tls: { rejectUnauthorized: false } };
+  }
+  return {};
+}
+
 function resolveSmtpTransportConfig(clientSmtp?: IncomingSmtpConfig) {
+  const clientHost = normalizeSmtpHost(clientSmtp?.host);
   const clientHasCreds = Boolean(
-    clientSmtp?.enabled && clientSmtp.host?.trim() && clientSmtp.user?.trim() && clientSmtp.pass?.trim()
+    clientSmtp?.enabled && clientHost && clientSmtp?.user?.trim() && clientSmtp?.pass?.trim()
   );
 
   if (clientHasCreds && clientSmtp) {
     return {
       source: 'admin_panel' as const,
-      host: clientSmtp.host!.trim(),
+      host: clientHost,
       port: Number(clientSmtp.port || 587),
       secure: Boolean(clientSmtp.secure),
       auth: {
@@ -156,14 +175,15 @@ function resolveSmtpTransportConfig(clientSmtp?: IncomingSmtpConfig) {
     };
   }
 
+  const envHost = normalizeSmtpHost(process.env.SMTP_HOST);
   const envHasCreds = Boolean(
-    process.env.SMTP_HOST?.trim() && process.env.SMTP_USER?.trim() && process.env.SMTP_PASS?.trim()
+    envHost && process.env.SMTP_USER?.trim() && process.env.SMTP_PASS?.trim()
   );
 
   if (envHasCreds) {
     return {
       source: 'env' as const,
-      host: process.env.SMTP_HOST!.trim(),
+      host: envHost,
       port: Number(process.env.SMTP_PORT || 587),
       secure: process.env.SMTP_SECURE === 'true',
       auth: {
@@ -180,7 +200,7 @@ function resolveSmtpTransportConfig(clientSmtp?: IncomingSmtpConfig) {
 
 app.get('/api/email/status', (_req, res) => {
   const hasEnvSmtp = Boolean(
-    process.env.SMTP_HOST?.trim() && process.env.SMTP_USER?.trim() && process.env.SMTP_PASS?.trim()
+    normalizeSmtpHost(process.env.SMTP_HOST) && process.env.SMTP_USER?.trim() && process.env.SMTP_PASS?.trim()
   );
   res.json({
     hasEnvSmtp,
@@ -218,6 +238,7 @@ app.post('/api/email/send', async (req, res) => {
       port: resolved.port,
       secure: resolved.secure,
       auth: resolved.auth,
+      ...getSmtpTlsOptions(),
     });
 
     const info = await transporter.sendMail({
@@ -266,6 +287,7 @@ app.post('/api/email/test-smtp', async (req, res) => {
       port: resolved.port,
       secure: resolved.secure,
       auth: resolved.auth,
+      ...getSmtpTlsOptions(),
     });
 
     await transporter.verify();

@@ -118,19 +118,32 @@ export const AdminEmailTab: React.FC = () => {
     }));
   };
 
+  const normalizeHostInput = (raw: string) =>
+    raw
+      .trim()
+      .replace(/^(https?|smtps?):\/\//i, '')
+      .split('/')[0]
+      .split('?')[0]
+      .replace(/:\d+$/, '')
+      .trim();
+
   const handleSaveSmtp = (e: React.FormEvent) => {
     e.preventDefault();
-    updateSmtpConfig(smtpDraft);
+    const sanitized = { ...smtpDraft, host: normalizeHostInput(smtpDraft.host) };
+    setSmtpDraft(sanitized);
+    updateSmtpConfig(sanitized);
     showNotice('Configurações de SMTP e remetente salvas.');
   };
 
   const handleRunSmtpTest = async () => {
     setIsTesting(true);
     setTestResult({ status: 'idle', msg: '' });
-    updateSmtpConfig(smtpDraft);
+    const sanitized = { ...smtpDraft, host: normalizeHostInput(smtpDraft.host) };
+    setSmtpDraft(sanitized);
+    updateSmtpConfig(sanitized);
     const res = await testSmtpConnection({
       to: testRecipient.trim() || undefined,
-      smtpConfig: smtpDraft,
+      smtpConfig: sanitized,
     });
     setTestResult({
       status: res.success ? 'ok' : 'err',
@@ -490,9 +503,15 @@ export const AdminEmailTab: React.FC = () => {
                 type="text"
                 value={smtpDraft.host}
                 onChange={(e) => setSmtpDraft({ ...smtpDraft, host: e.target.value })}
-                placeholder="smtp.hostgator.com.br ou smtp.gmail.com"
+                onBlur={(e) =>
+                  setSmtpDraft((prev) => ({ ...prev, host: normalizeHostInput(e.target.value) }))
+                }
+                placeholder="mail.achenacidade.com.br (sem https://)"
                 className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-950 text-xs sm:text-sm font-mono"
               />
+              <p className="text-[11px] text-slate-400 mt-1">
+                Informe apenas o domínio (ex: mail.achenacidade.com.br), sem https:// ou barra final.
+              </p>
             </div>
 
             <div>
