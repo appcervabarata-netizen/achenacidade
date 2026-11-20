@@ -951,3 +951,694 @@ export async function incrementBannerClicksDb(bannerId: string): Promise<void> {
     [bannerId]
   );
 }
+
+const RESOURCE_TABLE_MAP: Record<string, string> = {
+  cities: 'cities',
+  categories: 'categories',
+  plans: 'plans',
+  businesses: 'businesses',
+  products: 'products',
+  services: 'services',
+  storeProductCategories: 'store_product_categories',
+  store_product_categories: 'store_product_categories',
+  banners: 'banners',
+  paymentTransactions: 'payment_transactions',
+  payment_transactions: 'payment_transactions',
+  emailLogs: 'email_logs',
+  email_logs: 'email_logs',
+};
+
+export async function upsertEntity(resource: string, item: any): Promise<void> {
+  const activePool = getPool();
+  if (!activePool) return;
+  await ensureDatabaseSchema();
+
+  if (!item || !item.id) {
+    throw new Error(`Missing entity id for ${resource}`);
+  }
+
+  const conn = await activePool.getConnection();
+  try {
+    await conn.beginTransaction();
+
+    switch (resource) {
+      case 'cities': {
+        if (item.isDefault) {
+          await conn.query(`UPDATE cities SET is_default = 0 WHERE id <> ?`, [item.id]);
+        }
+        await conn.query(
+          `INSERT INTO cities (id, name, state, slug, is_active, is_default, banner_url, description, sort_order)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+           ON DUPLICATE KEY UPDATE
+             name = VALUES(name),
+             state = VALUES(state),
+             slug = VALUES(slug),
+             is_active = VALUES(is_active),
+             is_default = VALUES(is_default),
+             banner_url = VALUES(banner_url),
+             description = VALUES(description)`,
+          [
+            item.id,
+            item.name || '',
+            item.state || '',
+            item.slug || '',
+            item.isActive === false ? 0 : 1,
+            item.isDefault ? 1 : 0,
+            item.bannerUrl || null,
+            item.description || null,
+            0,
+          ]
+        );
+        break;
+      }
+
+      case 'categories': {
+        await conn.query(
+          `INSERT INTO categories (id, name, slug, icon_name, description, color, sort_order)
+           VALUES (?, ?, ?, ?, ?, ?, ?)
+           ON DUPLICATE KEY UPDATE
+             name = VALUES(name),
+             slug = VALUES(slug),
+             icon_name = VALUES(icon_name),
+             description = VALUES(description),
+             color = VALUES(color)`,
+          [
+            item.id,
+            item.name || '',
+            item.slug || '',
+            item.iconName || 'Tag',
+            item.description || null,
+            item.color || null,
+            0,
+          ]
+        );
+        break;
+      }
+
+      case 'plans': {
+        await conn.query(
+          `INSERT INTO plans (id, name, price_monthly, product_limit, business_limit, badge, features, highlighted, color, use_custom_discounts, cycle_discounts, sort_order)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+           ON DUPLICATE KEY UPDATE
+             name = VALUES(name),
+             price_monthly = VALUES(price_monthly),
+             product_limit = VALUES(product_limit),
+             business_limit = VALUES(business_limit),
+             badge = VALUES(badge),
+             features = VALUES(features),
+             highlighted = VALUES(highlighted),
+             color = VALUES(color),
+             use_custom_discounts = VALUES(use_custom_discounts),
+             cycle_discounts = VALUES(cycle_discounts)`,
+          [
+            item.id,
+            item.name || '',
+            toNumber(item.priceMonthly, 0),
+            toNumber(item.productLimit, 3),
+            toNumber(item.businessLimit, 1),
+            item.badge || '',
+            JSON.stringify(item.features || []),
+            item.highlighted ? 1 : 0,
+            item.color || '#1D4ED8',
+            item.useCustomDiscounts ? 1 : 0,
+            item.cycleDiscounts ? JSON.stringify(item.cycleDiscounts) : null,
+            0,
+          ]
+        );
+        break;
+      }
+
+      case 'businesses': {
+        await conn.query(
+          `INSERT INTO businesses (
+             id, name, slug, city_id, category_id, plan_id, description, phone, whatsapp, email, owner_email,
+             address, neighborhood, opening_hours, weekly_schedule, logo_url, cover_url, instagram, facebook,
+             website, password, is_verified, email_verified, payment_status, pending_plan_id,
+             pending_billing_cycle, billing_cycle, plan_expires_at, payment_token, created_at, sort_order
+           ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+           ON DUPLICATE KEY UPDATE
+             name = VALUES(name),
+             slug = VALUES(slug),
+             city_id = VALUES(city_id),
+             category_id = VALUES(category_id),
+             plan_id = VALUES(plan_id),
+             description = VALUES(description),
+             phone = VALUES(phone),
+             whatsapp = VALUES(whatsapp),
+             email = VALUES(email),
+             owner_email = VALUES(owner_email),
+             address = VALUES(address),
+             neighborhood = VALUES(neighborhood),
+             opening_hours = VALUES(opening_hours),
+             weekly_schedule = VALUES(weekly_schedule),
+             logo_url = VALUES(logo_url),
+             cover_url = VALUES(cover_url),
+             instagram = VALUES(instagram),
+             facebook = VALUES(facebook),
+             website = VALUES(website),
+             password = VALUES(password),
+             is_verified = VALUES(is_verified),
+             email_verified = VALUES(email_verified),
+             payment_status = VALUES(payment_status),
+             pending_plan_id = VALUES(pending_plan_id),
+             pending_billing_cycle = VALUES(pending_billing_cycle),
+             billing_cycle = VALUES(billing_cycle),
+             plan_expires_at = VALUES(plan_expires_at),
+             payment_token = VALUES(payment_token)`,
+          [
+            item.id,
+            item.name || '',
+            item.slug || '',
+            item.cityId || '',
+            item.categoryId || '',
+            item.planId || '',
+            item.description || '',
+            item.phone || '',
+            item.whatsapp || '',
+            item.email || null,
+            item.ownerEmail || null,
+            item.address || '',
+            item.neighborhood || '',
+            item.openingHours || null,
+            item.weeklySchedule ? JSON.stringify(item.weeklySchedule) : null,
+            item.logoUrl || '',
+            item.coverUrl || null,
+            item.instagram || null,
+            item.facebook || null,
+            item.website || null,
+            item.password || null,
+            item.isVerified ? 1 : 0,
+            item.emailVerified ? 1 : 0,
+            item.paymentStatus || 'active',
+            item.pendingPlanId || null,
+            item.pendingBillingCycle || null,
+            item.billingCycle || null,
+            item.planExpiresAt || null,
+            item.paymentToken || null,
+            item.createdAt || new Date().toISOString().split('T')[0],
+            0,
+          ]
+        );
+        break;
+      }
+
+      case 'products': {
+        await conn.query(
+          `INSERT INTO products (id, business_id, city_id, name, price, original_price, description, image_url, category, is_active, featured, created_at, sort_order)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+           ON DUPLICATE KEY UPDATE
+             business_id = VALUES(business_id),
+             city_id = VALUES(city_id),
+             name = VALUES(name),
+             price = VALUES(price),
+             original_price = VALUES(original_price),
+             description = VALUES(description),
+             image_url = VALUES(image_url),
+             category = VALUES(category),
+             is_active = VALUES(is_active),
+             featured = VALUES(featured)`,
+          [
+            item.id,
+            item.businessId || '',
+            item.cityId || '',
+            item.name || '',
+            toNumber(item.price, 0),
+            toOptionalNumber(item.originalPrice) ?? null,
+            item.description || '',
+            item.imageUrl || '',
+            item.category || '',
+            item.isActive === false ? 0 : 1,
+            item.featured ? 1 : 0,
+            item.createdAt || new Date().toISOString().split('T')[0],
+            0,
+          ]
+        );
+        break;
+      }
+
+      case 'services': {
+        await conn.query(
+          `INSERT INTO services (id, business_id, city_id, name, price_type, price, duration, service_mode, description, image_url, category, is_active, featured, created_at, sort_order)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+           ON DUPLICATE KEY UPDATE
+             business_id = VALUES(business_id),
+             city_id = VALUES(city_id),
+             name = VALUES(name),
+             price_type = VALUES(price_type),
+             price = VALUES(price),
+             duration = VALUES(duration),
+             service_mode = VALUES(service_mode),
+             description = VALUES(description),
+             image_url = VALUES(image_url),
+             category = VALUES(category),
+             is_active = VALUES(is_active),
+             featured = VALUES(featured)`,
+          [
+            item.id,
+            item.businessId || '',
+            item.cityId || '',
+            item.name || '',
+            item.priceType || 'fixed',
+            toOptionalNumber(item.price) ?? null,
+            item.duration || '',
+            item.serviceMode || 'on_site',
+            item.description || '',
+            item.imageUrl || '',
+            item.category || '',
+            item.isActive === false ? 0 : 1,
+            item.featured ? 1 : 0,
+            item.createdAt || new Date().toISOString().split('T')[0],
+            0,
+          ]
+        );
+        break;
+      }
+
+      case 'storeProductCategories':
+      case 'store_product_categories': {
+        await conn.query(
+          `INSERT INTO store_product_categories (id, business_id, name, description, sort_order)
+           VALUES (?, ?, ?, ?, ?)
+           ON DUPLICATE KEY UPDATE
+             business_id = VALUES(business_id),
+             name = VALUES(name),
+             description = VALUES(description)`,
+          [item.id, item.businessId || '', item.name || '', item.description || null, 0]
+        );
+        break;
+      }
+
+      case 'banners': {
+        await conn.query(
+          `INSERT INTO banners (id, title, position, image_url, link_url, advertiser_name, city_id, price_monthly, is_active, clicks_count, badge_text, tagline, sort_order)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+           ON DUPLICATE KEY UPDATE
+             title = VALUES(title),
+             position = VALUES(position),
+             image_url = VALUES(image_url),
+             link_url = VALUES(link_url),
+             advertiser_name = VALUES(advertiser_name),
+             city_id = VALUES(city_id),
+             price_monthly = VALUES(price_monthly),
+             is_active = VALUES(is_active),
+             clicks_count = VALUES(clicks_count),
+             badge_text = VALUES(badge_text),
+             tagline = VALUES(tagline)`,
+          [
+            item.id,
+            item.title || '',
+            item.position || 'top',
+            item.imageUrl || '',
+            item.linkUrl || null,
+            item.advertiserName || '',
+            item.cityId || 'all',
+            toNumber(item.priceMonthly, 0),
+            item.isActive === false ? 0 : 1,
+            toNumber(item.clicksCount, 0),
+            item.badgeText || null,
+            item.tagline || null,
+            0,
+          ]
+        );
+        break;
+      }
+
+      case 'paymentTransactions':
+      case 'payment_transactions': {
+        await conn.query(
+          `INSERT INTO payment_transactions (
+             id, business_id, business_name, plan_id, plan_name, billing_cycle, cycle_months, base_amount,
+             discount_percent, discount_amount, amount, payment_method, status, mercado_pago_payment_id,
+             qr_code, qr_code_text, installments, card_last_four, card_brand, payer_email, created_at, paid_at, sort_order
+           ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+           ON DUPLICATE KEY UPDATE
+             status = VALUES(status),
+             paid_at = VALUES(paid_at),
+             amount = VALUES(amount)`,
+          [
+            item.id,
+            item.businessId || '',
+            item.businessName || '',
+            item.planId || '',
+            item.planName || '',
+            item.billingCycle || null,
+            toOptionalNumber(item.cycleMonths) ?? null,
+            toOptionalNumber(item.baseAmount) ?? null,
+            toOptionalNumber(item.discountPercent) ?? null,
+            toOptionalNumber(item.discountAmount) ?? null,
+            toNumber(item.amount, 0),
+            item.paymentMethod || 'pix',
+            item.status || 'approved',
+            item.mercadoPagoPaymentId || '',
+            item.qrCode || null,
+            item.qrCodeText || null,
+            toOptionalNumber(item.installments) ?? null,
+            item.cardLastFour || null,
+            item.cardBrand || null,
+            item.payerEmail || '',
+            item.createdAt || '',
+            item.paidAt || null,
+            0,
+          ]
+        );
+        break;
+      }
+
+      case 'emailLogs':
+      case 'email_logs': {
+        await conn.query(
+          `INSERT INTO email_logs (
+             id, recipient_to, template_key, template_name, subject, html_body, text_body,
+             verification_code, payment_url, delivery_mode, status, error_message, created_at, sort_order
+           ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+           ON DUPLICATE KEY UPDATE
+             status = VALUES(status),
+             delivery_mode = VALUES(delivery_mode),
+             error_message = VALUES(error_message)`,
+          [
+            item.id,
+            item.to || '',
+            item.templateKey || 'test',
+            item.templateName || '',
+            item.subject || '',
+            item.htmlBody || '',
+            item.textBody || '',
+            item.verificationCode || null,
+            item.paymentUrl || null,
+            item.deliveryMode || 'local_fallback',
+            item.status || 'sent',
+            item.errorMessage || null,
+            item.createdAt || '',
+            0,
+          ]
+        );
+        break;
+      }
+
+      default:
+        throw new Error(`Unsupported resource: ${resource}`);
+    }
+
+    await conn.commit();
+  } catch (err) {
+    await conn.rollback();
+    throw err;
+  } finally {
+    conn.release();
+  }
+}
+
+type FieldTransform = (v: unknown) => unknown;
+interface FieldDef {
+  col: string;
+  transform?: FieldTransform;
+}
+
+const boolTransform: FieldTransform = (v) => (v ? 1 : 0);
+const nullableStr: FieldTransform = (v) => (v === undefined || v === null || v === '' ? null : String(v));
+const strTransform: FieldTransform = (v) => (v === undefined || v === null ? '' : String(v));
+const numTransform: FieldTransform = (v) => toNumber(v, 0);
+const optNumTransform: FieldTransform = (v) => toOptionalNumber(v) ?? null;
+const jsonTransform: FieldTransform = (v) => (v === undefined || v === null ? null : JSON.stringify(v));
+
+const RESOURCE_FIELD_MAPS: Record<string, Record<string, FieldDef>> = {
+  cities: {
+    name: { col: 'name', transform: strTransform },
+    state: { col: 'state', transform: strTransform },
+    slug: { col: 'slug', transform: strTransform },
+    isActive: { col: 'is_active', transform: boolTransform },
+    isDefault: { col: 'is_default', transform: boolTransform },
+    bannerUrl: { col: 'banner_url', transform: nullableStr },
+    description: { col: 'description', transform: nullableStr },
+  },
+  categories: {
+    name: { col: 'name', transform: strTransform },
+    slug: { col: 'slug', transform: strTransform },
+    iconName: { col: 'icon_name', transform: strTransform },
+    description: { col: 'description', transform: nullableStr },
+    color: { col: 'color', transform: nullableStr },
+  },
+  plans: {
+    name: { col: 'name', transform: strTransform },
+    priceMonthly: { col: 'price_monthly', transform: numTransform },
+    productLimit: { col: 'product_limit', transform: numTransform },
+    businessLimit: { col: 'business_limit', transform: numTransform },
+    badge: { col: 'badge', transform: strTransform },
+    features: { col: 'features', transform: (v) => JSON.stringify(Array.isArray(v) ? v : []) },
+    highlighted: { col: 'highlighted', transform: boolTransform },
+    color: { col: 'color', transform: strTransform },
+    useCustomDiscounts: { col: 'use_custom_discounts', transform: boolTransform },
+    cycleDiscounts: { col: 'cycle_discounts', transform: jsonTransform },
+  },
+  businesses: {
+    name: { col: 'name', transform: strTransform },
+    slug: { col: 'slug', transform: strTransform },
+    cityId: { col: 'city_id', transform: strTransform },
+    categoryId: { col: 'category_id', transform: strTransform },
+    planId: { col: 'plan_id', transform: strTransform },
+    description: { col: 'description', transform: strTransform },
+    phone: { col: 'phone', transform: strTransform },
+    whatsapp: { col: 'whatsapp', transform: strTransform },
+    email: { col: 'email', transform: nullableStr },
+    ownerEmail: { col: 'owner_email', transform: nullableStr },
+    address: { col: 'address', transform: strTransform },
+    neighborhood: { col: 'neighborhood', transform: strTransform },
+    openingHours: { col: 'opening_hours', transform: nullableStr },
+    weeklySchedule: { col: 'weekly_schedule', transform: jsonTransform },
+    logoUrl: { col: 'logo_url', transform: strTransform },
+    coverUrl: { col: 'cover_url', transform: nullableStr },
+    instagram: { col: 'instagram', transform: nullableStr },
+    facebook: { col: 'facebook', transform: nullableStr },
+    website: { col: 'website', transform: nullableStr },
+    password: { col: 'password', transform: nullableStr },
+    isVerified: { col: 'is_verified', transform: boolTransform },
+    emailVerified: { col: 'email_verified', transform: boolTransform },
+    paymentStatus: { col: 'payment_status', transform: strTransform },
+    pendingPlanId: { col: 'pending_plan_id', transform: nullableStr },
+    pendingBillingCycle: { col: 'pending_billing_cycle', transform: nullableStr },
+    billingCycle: { col: 'billing_cycle', transform: nullableStr },
+    planExpiresAt: { col: 'plan_expires_at', transform: nullableStr },
+    paymentToken: { col: 'payment_token', transform: nullableStr },
+  },
+  products: {
+    businessId: { col: 'business_id', transform: strTransform },
+    cityId: { col: 'city_id', transform: strTransform },
+    name: { col: 'name', transform: strTransform },
+    price: { col: 'price', transform: numTransform },
+    originalPrice: { col: 'original_price', transform: optNumTransform },
+    description: { col: 'description', transform: strTransform },
+    imageUrl: { col: 'image_url', transform: strTransform },
+    category: { col: 'category', transform: strTransform },
+    isActive: { col: 'is_active', transform: boolTransform },
+    featured: { col: 'featured', transform: boolTransform },
+  },
+  services: {
+    businessId: { col: 'business_id', transform: strTransform },
+    cityId: { col: 'city_id', transform: strTransform },
+    name: { col: 'name', transform: strTransform },
+    priceType: { col: 'price_type', transform: strTransform },
+    price: { col: 'price', transform: optNumTransform },
+    duration: { col: 'duration', transform: strTransform },
+    serviceMode: { col: 'service_mode', transform: strTransform },
+    description: { col: 'description', transform: strTransform },
+    imageUrl: { col: 'image_url', transform: strTransform },
+    category: { col: 'category', transform: strTransform },
+    isActive: { col: 'is_active', transform: boolTransform },
+    featured: { col: 'featured', transform: boolTransform },
+  },
+  storeProductCategories: {
+    businessId: { col: 'business_id', transform: strTransform },
+    name: { col: 'name', transform: strTransform },
+    description: { col: 'description', transform: nullableStr },
+  },
+  banners: {
+    title: { col: 'title', transform: strTransform },
+    position: { col: 'position', transform: strTransform },
+    imageUrl: { col: 'image_url', transform: strTransform },
+    linkUrl: { col: 'link_url', transform: nullableStr },
+    advertiserName: { col: 'advertiser_name', transform: strTransform },
+    cityId: { col: 'city_id', transform: strTransform },
+    priceMonthly: { col: 'price_monthly', transform: numTransform },
+    isActive: { col: 'is_active', transform: boolTransform },
+    clicksCount: { col: 'clicks_count', transform: numTransform },
+    badgeText: { col: 'badge_text', transform: nullableStr },
+    tagline: { col: 'tagline', transform: nullableStr },
+  },
+};
+
+export async function updateEntityById(
+  resource: string,
+  id: string,
+  updates: Record<string, unknown>
+): Promise<{ updated: boolean }> {
+  const activePool = getPool();
+  if (!activePool) return { updated: false };
+  await ensureDatabaseSchema();
+
+  const normalizedResource =
+    resource === 'store_product_categories'
+      ? 'storeProductCategories'
+      : resource;
+  const table = RESOURCE_TABLE_MAP[normalizedResource];
+  const fieldMap = RESOURCE_FIELD_MAPS[normalizedResource];
+
+  if (!table || !fieldMap) {
+    throw new Error(`Unsupported update resource: ${resource}`);
+  }
+
+  const setClauses: string[] = [];
+  const params: unknown[] = [];
+
+  for (const [key, def] of Object.entries(fieldMap)) {
+    if (Object.prototype.hasOwnProperty.call(updates, key)) {
+      const rawVal = updates[key];
+      const dbVal = def.transform ? def.transform(rawVal) : rawVal;
+      setClauses.push(`${def.col} = ?`);
+      params.push(dbVal);
+    }
+  }
+
+  if (setClauses.length === 0) {
+    return { updated: false };
+  }
+
+  const conn = await activePool.getConnection();
+  try {
+    await conn.beginTransaction();
+
+    if (normalizedResource === 'cities' && updates.isDefault === true) {
+      await conn.query(`UPDATE cities SET is_default = 0 WHERE id <> ?`, [id]);
+    }
+
+    const [result] = await conn.query<any>(
+      `UPDATE ${table} SET ${setClauses.join(', ')} WHERE id = ?`,
+      [...params, id]
+    );
+
+    await conn.commit();
+    return { updated: (result?.affectedRows || 0) > 0 };
+  } catch (err) {
+    await conn.rollback();
+    throw err;
+  } finally {
+    conn.release();
+  }
+}
+
+export async function deleteEntityById(resource: string, id: string): Promise<{ deleted: boolean }> {
+  const activePool = getPool();
+  if (!activePool) return { deleted: false };
+  await ensureDatabaseSchema();
+
+  const table = RESOURCE_TABLE_MAP[resource];
+  if (!table) {
+    throw new Error(`Unsupported delete resource: ${resource}`);
+  }
+
+  const conn = await activePool.getConnection();
+  try {
+    await conn.beginTransaction();
+
+    if (resource === 'businesses') {
+      await conn.query(`DELETE FROM products WHERE business_id = ?`, [id]);
+      await conn.query(`DELETE FROM services WHERE business_id = ?`, [id]);
+      await conn.query(`DELETE FROM store_product_categories WHERE business_id = ?`, [id]);
+    }
+
+    if ((resource === 'emailLogs' || resource === 'email_logs') && id === 'all') {
+      await conn.query(`DELETE FROM email_logs`);
+      await conn.commit();
+      return { deleted: true };
+    }
+
+    const [result] = await conn.query<any>(`DELETE FROM ${table} WHERE id = ?`, [id]);
+    await conn.commit();
+    return { deleted: (result?.affectedRows || 0) > 0 };
+  } catch (err) {
+    await conn.rollback();
+    throw err;
+  } finally {
+    conn.release();
+  }
+}
+
+export interface DatabaseDiagnostics {
+  configured: boolean;
+  connected: boolean;
+  seeded: boolean;
+  version?: string;
+  host?: string;
+  port?: number;
+  database?: string;
+  user?: string;
+  counts?: Record<string, number>;
+  error?: string;
+}
+
+export async function getDatabaseDiagnostics(): Promise<DatabaseDiagnostics> {
+  const cfg = getDbConfig();
+  if (!cfg.configured) {
+    return {
+      configured: false,
+      connected: false,
+      seeded: false,
+    };
+  }
+
+  const safeTarget = cfg.uri
+    ? { host: 'via DATABASE_URL', port: 3306, database: '(DATABASE_URL)', user: '(DATABASE_URL)' }
+    : { host: cfg.host, port: cfg.port || 3306, database: cfg.database, user: cfg.user };
+
+  try {
+    const activePool = getPool();
+    if (!activePool) {
+      return {
+        configured: false,
+        connected: false,
+        seeded: false,
+      };
+    }
+
+    await ensureDatabaseSchema();
+    const [verRows] = await activePool.query<RowDataPacket[]>(`SELECT VERSION() AS version`);
+    const version = verRows[0]?.version ? String(verRows[0].version) : undefined;
+    const seeded = await isSeedCompleted(activePool);
+
+    const tables = [
+      'cities',
+      'categories',
+      'plans',
+      'businesses',
+      'products',
+      'services',
+      'store_product_categories',
+      'banners',
+      'payment_transactions',
+      'email_logs',
+      'app_settings',
+    ];
+    const counts: Record<string, number> = {};
+    for (const tbl of tables) {
+      const [cRows] = await activePool.query<RowDataPacket[]>(`SELECT COUNT(*) AS total FROM ${tbl}`);
+      counts[tbl] = Number(cRows[0]?.total || 0);
+    }
+
+    return {
+      configured: true,
+      connected: true,
+      seeded,
+      version,
+      ...safeTarget,
+      counts,
+    };
+  } catch (err) {
+    return {
+      configured: true,
+      connected: false,
+      seeded: false,
+      ...safeTarget,
+      error: err instanceof Error ? err.message : 'Erro desconhecido ao conectar no MySQL.',
+    };
+  }
+}
+

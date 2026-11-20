@@ -46,6 +46,10 @@ export default defineConfig(() => {
         },
         workbox: {
           globPatterns: ['**/*.{js,css,html,ico,png,svg,jpg,jpeg,woff,woff2}'],
+          navigateFallbackDenylist: [/^\/api\//, /^\/uploads\//],
+          skipWaiting: true,
+          clientsClaim: true,
+          cleanupOutdatedCaches: true,
           importScripts: ['/sw-push.js'],
         },
         devOptions: {

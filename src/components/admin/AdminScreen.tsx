@@ -40,12 +40,14 @@ import {
   ChevronDown,
   ChevronUp,
   Mail,
+  Database,
 } from 'lucide-react';
 import { AdminTheme, Business, Plan, PlanCycleDiscounts } from '../../types';
 import { AdminBusinessEditModal } from './AdminBusinessEditModal';
 import { SocialCreativesStudio } from './SocialCreativesStudio';
 import { AdminSiteModeTab } from './AdminSiteModeTab';
 import { AdminEmailTab } from './AdminEmailTab';
+import { AdminDatabaseTab } from './AdminDatabaseTab';
 import { generateHostGatorPackage, downloadFile } from '../../utils/hostgatorGenerator';
 import {
   BILLING_CYCLE_LIST,
@@ -92,11 +94,13 @@ export const AdminScreen: React.FC = () => {
     planDiscountConfig,
     updatePlanDiscountConfig,
     resetPlanDiscountConfig,
+    dbSyncStatus,
+    dbLastError,
   } = useDirectory();
 
   // Active admin tab
   const [activeTab, setActiveTab] = useState<
-    'dashboard' | 'cities' | 'categories' | 'plans' | 'businesses' | 'banners' | 'payments' | 'emails' | 'creatives' | 'sitemode' | 'theme' | 'hostgator'
+    'dashboard' | 'cities' | 'categories' | 'plans' | 'businesses' | 'banners' | 'payments' | 'emails' | 'creatives' | 'sitemode' | 'theme' | 'database' | 'hostgator'
   >('dashboard');
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(true);
 
@@ -563,6 +567,17 @@ export const AdminScreen: React.FC = () => {
         </div>
 
         <div className="flex items-center gap-2">
+          {dbSyncStatus === 'error' && (
+            <button
+              type="button"
+              onClick={() => setActiveTab('database')}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-red-600/90 hover:bg-red-600 text-xs font-bold text-white transition cursor-pointer"
+              title={dbLastError || 'Erro ao gravar no MySQL'}
+            >
+              <AlertTriangle className="w-3.5 h-3.5 shrink-0" />
+              <span className="hidden md:inline">Erro MySQL</span>
+            </button>
+          )}
           <button
             onClick={() => {
               logout();
@@ -595,6 +610,7 @@ export const AdminScreen: React.FC = () => {
           { id: 'creatives', label: 'Criativos', icon: Instagram },
           { id: 'sitemode', label: 'L & M', icon: Rocket },
           { id: 'theme', label: 'Cores', icon: Palette },
+          { id: 'database', label: 'Banco MySQL', icon: Database },
           { id: 'hostgator', label: 'HostGator', icon: Server },
         ];
 
@@ -2682,6 +2698,11 @@ export const AdminScreen: React.FC = () => {
 
         {/* TAB: LANÇAMENTO & MANUTENÇÃO */}
         {activeTab === 'sitemode' && <AdminSiteModeTab />}
+
+        {/* TAB: BANCO DE DADOS MYSQL */}
+        {activeTab === 'database' && (
+          <AdminDatabaseTab onNotify={(msg) => showAdminToast(msg)} />
+        )}
 
         {/* TAB: HOSTGATOR */}
         {activeTab === 'hostgator' && (

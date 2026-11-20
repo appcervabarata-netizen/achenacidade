@@ -37,9 +37,14 @@ import {
 import {
   fetchBootstrap,
   seedDatabase,
+  syncAllDataToDb,
   resetDatabaseDemo,
-  scheduleCollectionSync,
-  scheduleSettingSync,
+  createEntityInDb,
+  updateEntityInDb,
+  deleteEntityInDb,
+  saveSettingToDb,
+  recordBannerClickInDb,
+  type ApiMutationResult,
   type DirectoryBootstrapPayload,
 } from '../utils/apiSync';
 
@@ -267,6 +272,13 @@ interface DirectoryContextType {
     billingCycle?: BillingCycle
   ) => void;
 
+  // MySQL / MariaDB Persistence Status & Controls
+  dbSyncStatus: 'checking' | 'connected' | 'local_only' | 'error';
+  dbLastError: string | null;
+  dbLastSyncedAt: string | null;
+  refreshFromDatabase: () => Promise<{ success: boolean; error?: string }>;
+  syncAllToDatabaseNow: () => Promise<{ success: boolean; error?: string }>;
+
   // Reset to default
   resetToDemoData: () => void;
 }
@@ -274,6 +286,31 @@ interface DirectoryContextType {
 const DirectoryContext = createContext<DirectoryContextType | undefined>(undefined);
 
 export const DirectoryProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
+  const [dbSyncStatus, setDbSyncStatus] = useState<'checking' | 'connected' | 'local_only' | 'error'>('checking');
+  const [dbLastError, setDbLastError] = useState<string | null>(null);
+  const [dbLastSyncedAt, setDbLastSyncedAt] = useState<string | null>(null);
+  const isLocalOnlyRef = useRef(false);
+
+  const trackDbMutation = (mutationPromise: Promise<ApiMutationResult>) => {
+    if (isLocalOnlyRef.current) return;
+    void mutationPromise.then((res) => {
+      if (!res.ok) {
+        setDbLastError(res.error || 'Falha ao gravar alteração no banco MySQL.');
+        setDbSyncStatus('error');
+        return;
+      }
+      if (res.databaseEnabled) {
+        setDbLastError(null);
+        setDbSyncStatus('connected');
+        setDbLastSyncedAt(new Date().toLocaleTimeString('pt-BR'));
+      } else {
+        isLocalOnlyRef.current = true;
+        setDbLastError(null);
+        setDbSyncStatus('local_only');
+      }
+    });
+  };
+
   // Load initial from localStorage or fall back to defaults (with one-time Alagoinhas - BA launch migration)
   const [cities, setCities] = useState<City[]>(() => {
     try {
@@ -410,9 +447,6 @@ export const DirectoryProvider: React.FC<{ children: React.ReactNode }> = ({ chi
 
   useEffect(() => {
     localStorage.setItem('achenacidade_store_prod_cats', JSON.stringify(storeProductCategories));
-    if (dbSyncEnabledRef.current && !pendingHydrationCommitRef.current) {
-      scheduleCollectionSync('storeProductCategories', storeProductCategories);
-    }
   }, [storeProductCategories]);
 
   const [adminTheme, setAdminThemeState] = useState<AdminTheme>(() => {
@@ -532,9 +566,6 @@ export const DirectoryProvider: React.FC<{ children: React.ReactNode }> = ({ chi
 
   useEffect(() => {
     localStorage.setItem('achenacidade_banners', JSON.stringify(banners));
-    if (dbSyncEnabledRef.current && !pendingHydrationCommitRef.current) {
-      scheduleCollectionSync('banners', banners);
-    }
   }, [banners]);
 
   // Session Configuration (Configurable in Admin)
@@ -554,13 +585,12 @@ export const DirectoryProvider: React.FC<{ children: React.ReactNode }> = ({ chi
 
   useEffect(() => {
     localStorage.setItem('achenacidade_session_config', JSON.stringify(sessionConfig));
-    if (dbSyncEnabledRef.current && !pendingHydrationCommitRef.current) {
-      scheduleSettingSync('sessionConfig', sessionConfig);
-    }
   }, [sessionConfig]);
 
   const updateSessionConfig = (updates: Partial<SessionConfig>) => {
-    setSessionConfig((prev) => ({ ...prev, ...updates }));
+    const next = { ...sessionConfig, ...updates };
+    setSessionConfig(next);
+    trackDbMutation(saveSettingToDb('sessionConfig', next));
   };
 
   // Site Mode Config (Normal | Launch | Maintenance)
@@ -588,35 +618,41 @@ export const DirectoryProvider: React.FC<{ children: React.ReactNode }> = ({ chi
 
   useEffect(() => {
     localStorage.setItem('achenacidade_site_mode_config', JSON.stringify(siteModeConfig));
-    if (dbSyncEnabledRef.current && !pendingHydrationCommitRef.current) {
-      scheduleSettingSync('siteModeConfig', siteModeConfig);
-    }
   }, [siteModeConfig]);
 
   const setSiteMode = (mode: SiteMode) => {
-    setSiteModeConfig((prev) => ({ ...prev, mode }));
+    const next = { ...siteModeConfig, mode };
+    setSiteModeConfig(next);
+    trackDbMutation(saveSettingToDb('siteModeConfig', next));
   };
 
   const updateSiteModeConfig = (updates: Partial<SiteModeConfig>) => {
-    setSiteModeConfig((prev) => ({ ...prev, ...updates }));
+    const next = { ...siteModeConfig, ...updates };
+    setSiteModeConfig(next);
+    trackDbMutation(saveSettingToDb('siteModeConfig', next));
   };
 
   const updateLaunchConfig = (updates: Partial<LaunchPageConfig>) => {
-    setSiteModeConfig((prev) => ({
-      ...prev,
-      launch: { ...prev.launch, ...updates },
-    }));
+    const next: SiteModeConfig = {
+      ...siteModeConfig,
+      launch: { ...siteModeConfig.launch, ...updates },
+    };
+    setSiteModeConfig(next);
+    trackDbMutation(saveSettingToDb('siteModeConfig', next));
   };
 
   const updateMaintenanceConfig = (updates: Partial<MaintenancePageConfig>) => {
-    setSiteModeConfig((prev) => ({
-      ...prev,
-      maintenance: { ...prev.maintenance, ...updates },
-    }));
+    const next: SiteModeConfig = {
+      ...siteModeConfig,
+      maintenance: { ...siteModeConfig.maintenance, ...updates },
+    };
+    setSiteModeConfig(next);
+    trackDbMutation(saveSettingToDb('siteModeConfig', next));
   };
 
   const resetSiteModeConfig = () => {
     setSiteModeConfig(defaultSiteModeConfig);
+    trackDbMutation(saveSettingToDb('siteModeConfig', defaultSiteModeConfig));
   };
 
   const [adminPreviewMode, setAdminPreviewMode] = useState<'none' | 'launch' | 'maintenance'>('none');
@@ -641,21 +677,21 @@ export const DirectoryProvider: React.FC<{ children: React.ReactNode }> = ({ chi
 
   useEffect(() => {
     localStorage.setItem('achenacidade_plan_discount_config', JSON.stringify(planDiscountConfig));
-    if (dbSyncEnabledRef.current && !pendingHydrationCommitRef.current) {
-      scheduleSettingSync('planDiscountConfig', planDiscountConfig);
-    }
   }, [planDiscountConfig]);
 
   const updatePlanDiscountConfig = (updates: Partial<PlanDiscountConfig>) => {
-    setPlanDiscountConfig((prev) => ({
-      annual: updates.annual !== undefined ? clampDiscountPercent(updates.annual) : prev.annual,
-      biennial: updates.biennial !== undefined ? clampDiscountPercent(updates.biennial) : prev.biennial,
-      triennial: updates.triennial !== undefined ? clampDiscountPercent(updates.triennial) : prev.triennial,
-    }));
+    const next: PlanDiscountConfig = {
+      annual: updates.annual !== undefined ? clampDiscountPercent(updates.annual) : planDiscountConfig.annual,
+      biennial: updates.biennial !== undefined ? clampDiscountPercent(updates.biennial) : planDiscountConfig.biennial,
+      triennial: updates.triennial !== undefined ? clampDiscountPercent(updates.triennial) : planDiscountConfig.triennial,
+    };
+    setPlanDiscountConfig(next);
+    trackDbMutation(saveSettingToDb('planDiscountConfig', next));
   };
 
   const resetPlanDiscountConfig = () => {
     setPlanDiscountConfig(defaultPlanDiscountConfig);
+    trackDbMutation(saveSettingToDb('planDiscountConfig', defaultPlanDiscountConfig));
   };
 
   // Mercado Pago Configuration
@@ -670,13 +706,12 @@ export const DirectoryProvider: React.FC<{ children: React.ReactNode }> = ({ chi
 
   useEffect(() => {
     localStorage.setItem('achenacidade_mercadopago_config', JSON.stringify(mercadoPagoConfig));
-    if (dbSyncEnabledRef.current && !pendingHydrationCommitRef.current) {
-      scheduleSettingSync('mercadoPagoConfig', mercadoPagoConfig);
-    }
   }, [mercadoPagoConfig]);
 
   const updateMercadoPagoConfig = (updates: Partial<MercadoPagoConfig>) => {
-    setMercadoPagoConfig((prev) => ({ ...prev, ...updates }));
+    const next = { ...mercadoPagoConfig, ...updates };
+    setMercadoPagoConfig(next);
+    trackDbMutation(saveSettingToDb('mercadoPagoConfig', next));
   };
 
   // Payment Transactions History
@@ -691,9 +726,6 @@ export const DirectoryProvider: React.FC<{ children: React.ReactNode }> = ({ chi
 
   useEffect(() => {
     localStorage.setItem('achenacidade_payment_transactions', JSON.stringify(paymentTransactions));
-    if (dbSyncEnabledRef.current && !pendingHydrationCommitRef.current) {
-      scheduleCollectionSync('paymentTransactions', paymentTransactions);
-    }
   }, [paymentTransactions]);
 
   // Payment Modal State
@@ -732,13 +764,12 @@ export const DirectoryProvider: React.FC<{ children: React.ReactNode }> = ({ chi
 
   useEffect(() => {
     localStorage.setItem('achenacidade_smtp_config', JSON.stringify(smtpConfig));
-    if (dbSyncEnabledRef.current && !pendingHydrationCommitRef.current) {
-      scheduleSettingSync('smtpConfig', smtpConfig);
-    }
   }, [smtpConfig]);
 
   const updateSmtpConfig = (updates: Partial<SmtpConfig>) => {
-    setSmtpConfig((prev) => ({ ...prev, ...updates }));
+    const next = { ...smtpConfig, ...updates };
+    setSmtpConfig(next);
+    trackDbMutation(saveSettingToDb('smtpConfig', next));
   };
 
   const [emailTemplates, setEmailTemplates] = useState<Record<EmailTemplateKey, EmailTemplate>>(() => {
@@ -759,20 +790,20 @@ export const DirectoryProvider: React.FC<{ children: React.ReactNode }> = ({ chi
 
   useEffect(() => {
     localStorage.setItem('achenacidade_email_templates', JSON.stringify(emailTemplates));
-    if (dbSyncEnabledRef.current && !pendingHydrationCommitRef.current) {
-      scheduleSettingSync('emailTemplates', emailTemplates);
-    }
   }, [emailTemplates]);
 
   const updateEmailTemplate = (key: EmailTemplateKey, updates: Partial<EmailTemplate>) => {
-    setEmailTemplates((prev) => ({
-      ...prev,
-      [key]: { ...prev[key], ...updates },
-    }));
+    const next = {
+      ...emailTemplates,
+      [key]: { ...emailTemplates[key], ...updates },
+    };
+    setEmailTemplates(next);
+    trackDbMutation(saveSettingToDb('emailTemplates', next));
   };
 
   const resetEmailTemplates = () => {
     setEmailTemplates(defaultEmailTemplates);
+    trackDbMutation(saveSettingToDb('emailTemplates', defaultEmailTemplates));
   };
 
   const [emailLogs, setEmailLogs] = useState<EmailLogEntry[]>(() => {
@@ -786,18 +817,12 @@ export const DirectoryProvider: React.FC<{ children: React.ReactNode }> = ({ chi
 
   useEffect(() => {
     localStorage.setItem('achenacidade_email_logs', JSON.stringify(emailLogs));
-    if (dbSyncEnabledRef.current && !pendingHydrationCommitRef.current) {
-      scheduleCollectionSync('emailLogs', emailLogs);
-    }
   }, [emailLogs]);
 
   const clearEmailLogs = () => {
     setEmailLogs([]);
+    trackDbMutation(deleteEntityInDb('emailLogs', 'all'));
   };
-
-  const dbSyncEnabledRef = useRef(false);
-  const pendingHydrationCommitRef = useRef(false);
-  const [, setDbHydrationTick] = useState(0);
 
   const verificationCodesRef = useRef<Record<string, { code: string; expiresAt: number }>>({});
 
@@ -824,6 +849,7 @@ export const DirectoryProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     });
 
     setEmailLogs((prev) => [result.logEntry, ...prev].slice(0, 60));
+    trackDbMutation(createEntityInDb('emailLogs', result.logEntry));
     return result;
   };
 
@@ -998,8 +1024,9 @@ export const DirectoryProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       pendingBillingCycle: undefined,
     });
 
-    // 2. Add to transaction history
+    // 2. Add to transaction history & persist immediately
     setPaymentTransactions((prev) => [newTransaction, ...prev]);
+    trackDbMutation(createEntityInDb('paymentTransactions', newTransaction));
 
     // 3. Fire Payment Approved email & Welcome email (if newly activated from pending paid registration)
     const appOrigin = typeof window !== 'undefined' ? window.location.origin : '';
@@ -1195,54 +1222,33 @@ export const DirectoryProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     localStorage.setItem('achenacidade_fav_services', JSON.stringify(favoriteServiceIds));
   }, [favoriteServiceIds]);
 
-  // Sync to localStorage + MySQL/MariaDB
+  // Sync to localStorage
   useEffect(() => {
     localStorage.setItem('achenacidade_cities', JSON.stringify(cities));
-    if (dbSyncEnabledRef.current && !pendingHydrationCommitRef.current) {
-      scheduleCollectionSync('cities', cities);
-    }
   }, [cities]);
 
   useEffect(() => {
     localStorage.setItem('achenacidade_categories', JSON.stringify(categories));
-    if (dbSyncEnabledRef.current && !pendingHydrationCommitRef.current) {
-      scheduleCollectionSync('categories', categories);
-    }
   }, [categories]);
 
   useEffect(() => {
     localStorage.setItem('achenacidade_plans', JSON.stringify(plans));
-    if (dbSyncEnabledRef.current && !pendingHydrationCommitRef.current) {
-      scheduleCollectionSync('plans', plans);
-    }
   }, [plans]);
 
   useEffect(() => {
     localStorage.setItem('achenacidade_businesses', JSON.stringify(businesses));
-    if (dbSyncEnabledRef.current && !pendingHydrationCommitRef.current) {
-      scheduleCollectionSync('businesses', businesses);
-    }
   }, [businesses]);
 
   useEffect(() => {
     localStorage.setItem('achenacidade_products', JSON.stringify(products));
-    if (dbSyncEnabledRef.current && !pendingHydrationCommitRef.current) {
-      scheduleCollectionSync('products', products);
-    }
   }, [products]);
 
   useEffect(() => {
     localStorage.setItem('achenacidade_services', JSON.stringify(services));
-    if (dbSyncEnabledRef.current && !pendingHydrationCommitRef.current) {
-      scheduleCollectionSync('services', services);
-    }
   }, [services]);
 
   useEffect(() => {
     localStorage.setItem('achenacidade_theme', JSON.stringify(adminTheme));
-    if (dbSyncEnabledRef.current && !pendingHydrationCommitRef.current) {
-      scheduleSettingSync('adminTheme', adminTheme);
-    }
     const rootStyle = document.documentElement.style;
     rootStyle.setProperty('--color-brand-blue', adminTheme.primaryColor);
     rootStyle.setProperty('--color-brand-orange', adminTheme.accentColor);
@@ -1285,6 +1291,7 @@ export const DirectoryProvider: React.FC<{ children: React.ReactNode }> = ({ chi
 
   const setAdminTheme = (theme: AdminTheme) => {
     setAdminThemeState(theme);
+    trackDbMutation(saveSettingToDb('adminTheme', theme));
   };
 
   // Find active city
@@ -1387,11 +1394,21 @@ export const DirectoryProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       id: `city-${Date.now()}`,
       slug,
     };
-    setCities((prev) => [...prev, newCity]);
+    setCities((prev) => {
+      const normalized = newCity.isDefault ? prev.map((c) => ({ ...c, isDefault: false })) : prev;
+      return [...normalized, newCity];
+    });
+    trackDbMutation(createEntityInDb('cities', newCity));
   };
 
   const updateCity = (id: string, updates: Partial<City>) => {
-    setCities((prev) => prev.map((c) => (c.id === id ? { ...c, ...updates } : c)));
+    setCities((prev) =>
+      prev.map((c) => {
+        if (c.id === id) return { ...c, ...updates };
+        return updates.isDefault === true ? { ...c, isDefault: false } : c;
+      })
+    );
+    trackDbMutation(updateEntityInDb('cities', id, updates as Record<string, unknown>));
   };
 
   const deleteCity = (id: string) => {
@@ -1399,6 +1416,7 @@ export const DirectoryProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     if (selectedCityId === id) {
       setSelectedCityId('all');
     }
+    trackDbMutation(deleteEntityInDb('cities', id));
   };
 
   // Category Actions
@@ -1415,14 +1433,17 @@ export const DirectoryProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       slug,
     };
     setCategories((prev) => [...prev, newCat]);
+    trackDbMutation(createEntityInDb('categories', newCat));
   };
 
   const updateCategory = (id: string, updates: Partial<Category>) => {
     setCategories((prev) => prev.map((c) => (c.id === id ? { ...c, ...updates } : c)));
+    trackDbMutation(updateEntityInDb('categories', id, updates as Record<string, unknown>));
   };
 
   const deleteCategory = (id: string) => {
     setCategories((prev) => prev.filter((c) => c.id !== id));
+    trackDbMutation(deleteEntityInDb('categories', id));
   };
 
   // Plan Actions
@@ -1432,14 +1453,17 @@ export const DirectoryProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       id: `plan-${Date.now()}`,
     };
     setPlans((prev) => [...prev, newPlan]);
+    trackDbMutation(createEntityInDb('plans', newPlan));
   };
 
   const updatePlan = (id: string, updates: Partial<Plan>) => {
     setPlans((prev) => prev.map((p) => (p.id === id ? { ...p, ...updates } : p)));
+    trackDbMutation(updateEntityInDb('plans', id, updates as Record<string, unknown>));
   };
 
   const deletePlan = (id: string) => {
     setPlans((prev) => prev.filter((p) => p.id !== id));
+    trackDbMutation(deleteEntityInDb('plans', id));
   };
 
   // Business Actions
@@ -1460,6 +1484,7 @@ export const DirectoryProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       createdAt: new Date().toISOString().split('T')[0],
     };
     setBusinesses((prev) => [newBiz, ...prev]);
+    trackDbMutation(createEntityInDb('businesses', newBiz));
     return id;
   };
 
@@ -1468,15 +1493,18 @@ export const DirectoryProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     if (currentBusinessAuth?.id === id) {
       setCurrentBusinessAuth((prev) => (prev ? { ...prev, ...updates } : null));
     }
+    trackDbMutation(updateEntityInDb('businesses', id, updates as Record<string, unknown>));
   };
 
   const deleteBusiness = (id: string) => {
     setBusinesses((prev) => prev.filter((b) => b.id !== id));
     setProducts((prev) => prev.filter((p) => p.businessId !== id));
     setServices((prev) => prev.filter((s) => s.businessId !== id));
+    setStoreProductCategories((prev) => prev.filter((c) => c.businessId !== id));
     if (currentBusinessAuth?.id === id) {
       setCurrentBusinessAuth(null);
     }
+    trackDbMutation(deleteEntityInDb('businesses', id));
   };
 
   // Push Notification Dispatcher Helper
@@ -1755,6 +1783,7 @@ export const DirectoryProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     };
 
     setProducts((prev) => [newProd, ...prev]);
+    trackDbMutation(createEntityInDb('products', newProd));
 
     if (isEligibleForPush(business, 'product')) {
       void notifyFavoriteOffer({
@@ -1769,10 +1798,12 @@ export const DirectoryProvider: React.FC<{ children: React.ReactNode }> = ({ chi
 
   const updateProduct = (id: string, updates: Partial<Product>) => {
     setProducts((prev) => prev.map((p) => (p.id === id ? { ...p, ...updates } : p)));
+    trackDbMutation(updateEntityInDb('products', id, updates as Record<string, unknown>));
   };
 
   const deleteProduct = (id: string) => {
     setProducts((prev) => prev.filter((p) => p.id !== id));
+    trackDbMutation(deleteEntityInDb('products', id));
   };
 
   // Service Actions with combined quota limit enforcement (Products + Services)!
@@ -1799,6 +1830,7 @@ export const DirectoryProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     };
 
     setServices((prev) => [newServ, ...prev]);
+    trackDbMutation(createEntityInDb('services', newServ));
 
     if (isEligibleForPush(business, 'service')) {
       void notifyFavoriteOffer({
@@ -1813,10 +1845,12 @@ export const DirectoryProvider: React.FC<{ children: React.ReactNode }> = ({ chi
 
   const updateService = (id: string, updates: Partial<Service>) => {
     setServices((prev) => prev.map((s) => (s.id === id ? { ...s, ...updates } : s)));
+    trackDbMutation(updateEntityInDb('services', id, updates as Record<string, unknown>));
   };
 
   const deleteService = (id: string) => {
     setServices((prev) => prev.filter((s) => s.id !== id));
+    trackDbMutation(deleteEntityInDb('services', id));
   };
 
   // Store Product Category Actions
@@ -1826,14 +1860,17 @@ export const DirectoryProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       id: `spc-${Date.now()}`,
     };
     setStoreProductCategories((prev) => [...prev, newCat]);
+    trackDbMutation(createEntityInDb('storeProductCategories', newCat));
   };
 
   const updateStoreProductCategory = (id: string, updates: Partial<StoreProductCategory>) => {
     setStoreProductCategories((prev) => prev.map((c) => (c.id === id ? { ...c, ...updates } : c)));
+    trackDbMutation(updateEntityInDb('storeProductCategories', id, updates as Record<string, unknown>));
   };
 
   const deleteStoreProductCategory = (id: string) => {
     setStoreProductCategories((prev) => prev.filter((c) => c.id !== id));
+    trackDbMutation(deleteEntityInDb('storeProductCategories', id));
   };
 
   // Business auth session
@@ -2033,82 +2070,210 @@ export const DirectoryProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     },
   });
 
+  const buildCurrentSnapshotPayload = (): DirectoryBootstrapPayload => ({
+    cities,
+    categories,
+    plans,
+    businesses,
+    products,
+    services,
+    storeProductCategories,
+    banners,
+    paymentTransactions,
+    emailLogs,
+    settings: {
+      adminTheme,
+      planDiscountConfig,
+      mercadoPagoConfig,
+      siteModeConfig,
+      smtpConfig,
+      emailTemplates,
+      sessionConfig,
+    },
+  });
+
+  const applyRemoteData = (data: DirectoryBootstrapPayload) => {
+    if (data.cities?.length) {
+      setCities(data.cities);
+      const defaultCity =
+        data.cities.find((c) => c.isActive && c.isDefault) ||
+        data.cities.find((c) => c.isActive) ||
+        data.cities[0];
+      if (defaultCity) {
+        setSelectedCityId((prev) =>
+          data.cities.some((c) => c.id === prev) ? prev : defaultCity.id
+        );
+      }
+    }
+    if (data.categories) setCategories(data.categories);
+    if (data.plans) setPlans(data.plans);
+    if (data.businesses) setBusinesses(data.businesses);
+    if (data.products) setProducts(data.products);
+    if (data.services) setServices(data.services);
+    if (data.storeProductCategories) setStoreProductCategories(data.storeProductCategories);
+    if (data.banners) setBanners(data.banners);
+    if (data.paymentTransactions) setPaymentTransactions(data.paymentTransactions);
+    if (data.emailLogs) setEmailLogs(data.emailLogs);
+
+    if (data.settings?.adminTheme) setAdminThemeState(data.settings.adminTheme);
+    if (data.settings?.planDiscountConfig) {
+      setPlanDiscountConfig({
+        annual: clampDiscountPercent(data.settings.planDiscountConfig.annual ?? defaultPlanDiscountConfig.annual),
+        biennial: clampDiscountPercent(data.settings.planDiscountConfig.biennial ?? defaultPlanDiscountConfig.biennial),
+        triennial: clampDiscountPercent(data.settings.planDiscountConfig.triennial ?? defaultPlanDiscountConfig.triennial),
+      });
+    }
+    if (data.settings?.mercadoPagoConfig) setMercadoPagoConfig(data.settings.mercadoPagoConfig);
+    if (data.settings?.siteModeConfig) {
+      setSiteModeConfig({
+        ...defaultSiteModeConfig,
+        ...data.settings.siteModeConfig,
+        launch: { ...defaultSiteModeConfig.launch, ...(data.settings.siteModeConfig.launch || {}) },
+        maintenance: { ...defaultSiteModeConfig.maintenance, ...(data.settings.siteModeConfig.maintenance || {}) },
+      });
+    }
+    if (data.settings?.smtpConfig) {
+      setSmtpConfig({ ...defaultSmtpConfig, ...data.settings.smtpConfig });
+    }
+    if (data.settings?.emailTemplates) {
+      const remoteTpl = data.settings.emailTemplates;
+      setEmailTemplates({
+        email_verification: { ...defaultEmailTemplates.email_verification, ...(remoteTpl.email_verification || {}) },
+        payment_link: { ...defaultEmailTemplates.payment_link, ...(remoteTpl.payment_link || {}) },
+        welcome: { ...defaultEmailTemplates.welcome, ...(remoteTpl.welcome || {}) },
+        payment_approved: { ...defaultEmailTemplates.payment_approved, ...(remoteTpl.payment_approved || {}) },
+      });
+    }
+    if (data.settings?.sessionConfig) setSessionConfig(data.settings.sessionConfig);
+  };
+
+  const refreshFromDatabase = async (): Promise<{ success: boolean; error?: string }> => {
+    setDbSyncStatus('checking');
+    const boot = await fetchBootstrap();
+
+    if (!boot.databaseEnabled) {
+      if (boot.error) {
+        isLocalOnlyRef.current = false;
+        setDbSyncStatus('error');
+        setDbLastError(boot.error);
+        return { success: false, error: boot.error };
+      }
+      isLocalOnlyRef.current = true;
+      setDbSyncStatus('local_only');
+      setDbLastError(null);
+      return { success: false, error: 'Banco MySQL não está configurado nas variáveis de ambiente do servidor.' };
+    }
+
+    isLocalOnlyRef.current = false;
+
+    if (boot.error) {
+      setDbSyncStatus('error');
+      setDbLastError(boot.error);
+      return { success: false, error: boot.error };
+    }
+
+    if (boot.seeded && boot.data) {
+      applyRemoteData(boot.data);
+      setDbSyncStatus('connected');
+      setDbLastError(null);
+      setDbLastSyncedAt(new Date().toLocaleTimeString('pt-BR'));
+      return { success: true };
+    }
+
+    const seedRes = await seedDatabase(buildInitialBootstrapPayload());
+    if (seedRes.error) {
+      setDbSyncStatus('error');
+      setDbLastError(seedRes.error);
+      return { success: false, error: seedRes.error };
+    }
+    if (seedRes.data) {
+      applyRemoteData(seedRes.data);
+    }
+    setDbSyncStatus('connected');
+    setDbLastError(null);
+    setDbLastSyncedAt(new Date().toLocaleTimeString('pt-BR'));
+    return { success: true };
+  };
+
+  const syncAllToDatabaseNow = async (): Promise<{ success: boolean; error?: string }> => {
+    setDbSyncStatus('checking');
+    const res = await syncAllDataToDb(buildCurrentSnapshotPayload());
+    if (!res.databaseEnabled) {
+      if (res.error) {
+        isLocalOnlyRef.current = false;
+        setDbSyncStatus('error');
+        setDbLastError(res.error);
+        return { success: false, error: res.error };
+      }
+      isLocalOnlyRef.current = true;
+      setDbSyncStatus('local_only');
+      return { success: false, error: 'Banco MySQL não configurado no servidor.' };
+    }
+    isLocalOnlyRef.current = false;
+    if (res.error) {
+      setDbSyncStatus('error');
+      setDbLastError(res.error);
+      return { success: false, error: res.error };
+    }
+    if (res.data) {
+      applyRemoteData(res.data);
+    }
+    setDbSyncStatus('connected');
+    setDbLastError(null);
+    setDbLastSyncedAt(new Date().toLocaleTimeString('pt-BR'));
+    return { success: true };
+  };
+
   // Hydrate full directory state from MySQL/MariaDB on mount (auto-seeding if empty)
   useEffect(() => {
     let active = true;
 
-    const applyRemoteData = (data: DirectoryBootstrapPayload) => {
-      pendingHydrationCommitRef.current = true;
-      if (data.cities?.length) {
-        setCities(data.cities);
-        const defaultCity =
-          data.cities.find((c) => c.isActive && c.isDefault) ||
-          data.cities.find((c) => c.isActive) ||
-          data.cities[0];
-        if (defaultCity) {
-          setSelectedCityId((prev) =>
-            data.cities.some((c) => c.id === prev) ? prev : defaultCity.id
-          );
-        }
-      }
-      if (data.categories) setCategories(data.categories);
-      if (data.plans) setPlans(data.plans);
-      if (data.businesses) setBusinesses(data.businesses);
-      if (data.products) setProducts(data.products);
-      if (data.services) setServices(data.services);
-      if (data.storeProductCategories) setStoreProductCategories(data.storeProductCategories);
-      if (data.banners) setBanners(data.banners);
-      if (data.paymentTransactions) setPaymentTransactions(data.paymentTransactions);
-      if (data.emailLogs) setEmailLogs(data.emailLogs);
-
-      if (data.settings?.adminTheme) setAdminThemeState(data.settings.adminTheme);
-      if (data.settings?.planDiscountConfig) {
-        setPlanDiscountConfig({
-          annual: clampDiscountPercent(data.settings.planDiscountConfig.annual ?? defaultPlanDiscountConfig.annual),
-          biennial: clampDiscountPercent(data.settings.planDiscountConfig.biennial ?? defaultPlanDiscountConfig.biennial),
-          triennial: clampDiscountPercent(data.settings.planDiscountConfig.triennial ?? defaultPlanDiscountConfig.triennial),
-        });
-      }
-      if (data.settings?.mercadoPagoConfig) setMercadoPagoConfig(data.settings.mercadoPagoConfig);
-      if (data.settings?.siteModeConfig) {
-        setSiteModeConfig({
-          ...defaultSiteModeConfig,
-          ...data.settings.siteModeConfig,
-          launch: { ...defaultSiteModeConfig.launch, ...(data.settings.siteModeConfig.launch || {}) },
-          maintenance: { ...defaultSiteModeConfig.maintenance, ...(data.settings.siteModeConfig.maintenance || {}) },
-        });
-      }
-      if (data.settings?.smtpConfig) {
-        setSmtpConfig({ ...defaultSmtpConfig, ...data.settings.smtpConfig });
-      }
-      if (data.settings?.emailTemplates) {
-        const remoteTpl = data.settings.emailTemplates;
-        setEmailTemplates({
-          email_verification: { ...defaultEmailTemplates.email_verification, ...(remoteTpl.email_verification || {}) },
-          payment_link: { ...defaultEmailTemplates.payment_link, ...(remoteTpl.payment_link || {}) },
-          welcome: { ...defaultEmailTemplates.welcome, ...(remoteTpl.welcome || {}) },
-          payment_approved: { ...defaultEmailTemplates.payment_approved, ...(remoteTpl.payment_approved || {}) },
-        });
-      }
-      if (data.settings?.sessionConfig) setSessionConfig(data.settings.sessionConfig);
-
-      setDbHydrationTick((t) => t + 1);
-    };
-
     const hydrate = async () => {
       const boot = await fetchBootstrap();
-      if (!active || !boot.databaseEnabled) return;
+      if (!active) return;
+
+      if (!boot.databaseEnabled) {
+        if (boot.error) {
+          isLocalOnlyRef.current = false;
+          setDbSyncStatus('error');
+          setDbLastError(boot.error);
+        } else {
+          isLocalOnlyRef.current = true;
+          setDbSyncStatus('local_only');
+          setDbLastError(null);
+        }
+        return;
+      }
+
+      isLocalOnlyRef.current = false;
+
+      if (boot.error) {
+        setDbSyncStatus('error');
+        setDbLastError(boot.error);
+        return;
+      }
 
       if (boot.seeded && boot.data) {
         applyRemoteData(boot.data);
+        setDbSyncStatus('connected');
+        setDbLastError(null);
+        setDbLastSyncedAt(new Date().toLocaleTimeString('pt-BR'));
         return;
       }
 
       const seedRes = await seedDatabase(buildInitialBootstrapPayload());
-      if (!active || !seedRes.databaseEnabled) return;
+      if (!active) return;
+      if (seedRes.error) {
+        setDbSyncStatus('error');
+        setDbLastError(seedRes.error);
+        return;
+      }
       if (seedRes.data) {
         applyRemoteData(seedRes.data);
       }
+      setDbSyncStatus('connected');
+      setDbLastError(null);
+      setDbLastSyncedAt(new Date().toLocaleTimeString('pt-BR'));
     };
 
     void hydrate();
@@ -2117,14 +2282,6 @@ export const DirectoryProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       active = false;
     };
   }, []);
-
-  // Must remain after all collection/settings effects so remote hydration never re-writes immediately
-  useEffect(() => {
-    if (pendingHydrationCommitRef.current) {
-      pendingHydrationCommitRef.current = false;
-      dbSyncEnabledRef.current = true;
-    }
-  });
 
   // Reset demo
   const resetToDemoData = () => {
@@ -2146,9 +2303,7 @@ export const DirectoryProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     setPaymentTransactions(initialPaymentTransactions);
     setSiteModeConfig(defaultSiteModeConfig);
     localStorage.clear();
-    if (dbSyncEnabledRef.current) {
-      void resetDatabaseDemo(buildInitialBootstrapPayload());
-    }
+    trackDbMutation(resetDatabaseDemo(buildInitialBootstrapPayload()));
   };
 
   const addBanner = (b: Omit<AdBanner, 'id' | 'clicksCount'>) => {
@@ -2158,28 +2313,35 @@ export const DirectoryProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       clicksCount: 0,
     };
     setBanners((prev) => [newBanner, ...prev]);
+    trackDbMutation(createEntityInDb('banners', newBanner));
   };
 
   const updateBanner = (id: string, updates: Partial<AdBanner>) => {
     setBanners((prev) =>
       prev.map((b) => (b.id === id ? { ...b, ...updates } : b))
     );
+    trackDbMutation(updateEntityInDb('banners', id, updates as Record<string, unknown>));
   };
 
   const deleteBanner = (id: string) => {
     setBanners((prev) => prev.filter((b) => b.id !== id));
+    trackDbMutation(deleteEntityInDb('banners', id));
   };
 
   const toggleBannerStatus = (id: string) => {
+    const current = banners.find((b) => b.id === id);
+    const nextIsActive = current ? !current.isActive : true;
     setBanners((prev) =>
       prev.map((b) => (b.id === id ? { ...b, isActive: !b.isActive } : b))
     );
+    trackDbMutation(updateEntityInDb('banners', id, { isActive: nextIsActive }));
   };
 
   const recordBannerClick = (id: string) => {
     setBanners((prev) =>
       prev.map((b) => (b.id === id ? { ...b, clicksCount: (b.clicksCount || 0) + 1 } : b))
     );
+    trackDbMutation(recordBannerClickInDb(id));
   };
 
   return (
@@ -2340,6 +2502,12 @@ export const DirectoryProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         verifyEmailCode,
         checkoutTarget,
         openCheckoutPage,
+
+        dbSyncStatus,
+        dbLastError,
+        dbLastSyncedAt,
+        refreshFromDatabase,
+        syncAllToDatabaseNow,
 
         resetToDemoData,
       }}

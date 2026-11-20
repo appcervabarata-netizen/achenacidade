@@ -16,6 +16,10 @@ import {
   syncCollection,
   upsertSetting,
   incrementBannerClicksDb,
+  upsertEntity,
+  updateEntityById,
+  deleteEntityById,
+  getDatabaseDiagnostics,
 } from './server/db.ts';
 
 dotenv.config();
@@ -35,6 +39,10 @@ try {
 
 app.use(express.json({ limit: '15mb' }));
 app.use('/uploads', express.static(UPLOADS_DIR, { maxAge: '30d' }));
+app.use('/api', (_req, res, next) => {
+  res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
+  next();
+});
 
 interface IncomingSmtpConfig {
   enabled?: boolean;
@@ -337,6 +345,92 @@ app.put('/api/settings/:key', async (req, res) => {
     const message = err instanceof Error ? err.message : 'Settings sync error.';
     console.error(`Error saving setting ${req.params.key}:`, message);
     res.status(500).json({ success: false, error: message });
+  }
+});
+
+app.post('/api/bootstrap/sync-all', async (req, res) => {
+  if (!isDatabaseConfigured()) {
+    res.json({
+      success: false,
+      databaseEnabled: false,
+      error: 'Variáveis DB_HOST / DB_NAME / DB_USER (ou DATABASE_URL) não estão configuradas no servidor.',
+    });
+    return;
+  }
+
+  try {
+    const result = await seedInitialDirectoryIfEmpty(req.body, true);
+    res.json({ success: true, databaseEnabled: true, seeded: true, data: result.data });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : 'Database full sync error.';
+    console.error('Error in /api/bootstrap/sync-all:', message);
+    res.status(500).json({ success: false, databaseEnabled: true, error: message });
+  }
+});
+
+app.post('/api/entities/:resource', async (req, res) => {
+  if (!isDatabaseConfigured()) {
+    res.json({ success: true, databaseEnabled: false });
+    return;
+  }
+
+  try {
+    const { resource } = req.params;
+    await upsertEntity(resource, req.body);
+    res.json({ success: true, databaseEnabled: true });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : 'Entity create/upsert error.';
+    console.error(`Error creating/upserting ${req.params.resource}:`, message);
+    res.status(500).json({ success: false, databaseEnabled: true, error: message });
+  }
+});
+
+app.put('/api/entities/:resource/:id', async (req, res) => {
+  if (!isDatabaseConfigured()) {
+    res.json({ success: true, updated: false, databaseEnabled: false });
+    return;
+  }
+
+  try {
+    const { resource, id } = req.params;
+    const result = await updateEntityById(resource, id, req.body || {});
+    res.json({ success: true, updated: result.updated, databaseEnabled: true });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : 'Entity update error.';
+    console.error(`Error updating ${req.params.resource}/${req.params.id}:`, message);
+    res.status(500).json({ success: false, databaseEnabled: true, error: message });
+  }
+});
+
+app.delete('/api/entities/:resource/:id', async (req, res) => {
+  if (!isDatabaseConfigured()) {
+    res.json({ success: true, deleted: false, databaseEnabled: false });
+    return;
+  }
+
+  try {
+    const { resource, id } = req.params;
+    const result = await deleteEntityById(resource, id);
+    res.json({ success: true, deleted: result.deleted, databaseEnabled: true });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : 'Entity delete error.';
+    console.error(`Error deleting ${req.params.resource}/${req.params.id}:`, message);
+    res.status(500).json({ success: false, databaseEnabled: true, error: message });
+  }
+});
+
+app.get('/api/db/diagnostics', async (_req, res) => {
+  try {
+    const diagnostics = await getDatabaseDiagnostics();
+    res.status(200).json(diagnostics);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : 'Diagnostics error.';
+    res.status(500).json({
+      configured: isDatabaseConfigured(),
+      connected: false,
+      seeded: false,
+      error: message,
+    });
   }
 });
 
