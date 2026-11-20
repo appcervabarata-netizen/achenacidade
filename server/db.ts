@@ -104,6 +104,7 @@ export function getPool(): Pool | null {
         waitForConnections: true,
         connectionLimit: 10,
         queueLimit: 0,
+        connectTimeout: 8000,
         enableKeepAlive: true,
         charset: 'utf8mb4',
         ...(cfg.ssl ? { ssl: { rejectUnauthorized: false } } : {}),
@@ -118,6 +119,7 @@ export function getPool(): Pool | null {
         waitForConnections: true,
         connectionLimit: 10,
         queueLimit: 0,
+        connectTimeout: 8000,
         enableKeepAlive: true,
         charset: 'utf8mb4',
         ...(cfg.ssl ? { ssl: { rejectUnauthorized: false } } : {}),
@@ -126,6 +128,19 @@ export function getPool(): Pool | null {
   }
 
   return pool;
+}
+
+export function isTransientConnectionError(err: unknown): boolean {
+  const code = (err as { code?: string } | null)?.code || '';
+  const msg = err instanceof Error ? err.message : String(err || '');
+  return (
+    code === 'ECONNREFUSED' ||
+    code === 'ETIMEDOUT' ||
+    code === 'ENOTFOUND' ||
+    code === 'ECONNRESET' ||
+    code === 'PROTOCOL_CONNECTION_LOST' ||
+    /ECONNREFUSED|ETIMEDOUT|PROTOCOL_CONNECTION_LOST|Connection lost/i.test(msg)
+  );
 }
 
 export async function closePool(): Promise<void> {
@@ -488,8 +503,9 @@ export async function ensureDatabaseSchema(forceMigrate = false): Promise<boolea
   if (schemaPromise) return schemaPromise;
 
   schemaPromise = (async () => {
-    const conn = await activePool.getConnection();
+    let conn: PoolConnection | null = null;
     try {
+      conn = await activePool.getConnection();
       const droppedTables = await dropLegacyPortugueseTables(conn);
       if (droppedTables.length > 0) {
         lastDroppedLegacyTables = droppedTables;
@@ -757,8 +773,15 @@ export async function ensureDatabaseSchema(forceMigrate = false): Promise<boolea
 
       schemaInitialized = true;
       return true;
+    } catch (err) {
+      if (isTransientConnectionError(err)) {
+        await closePool().catch(() => {});
+      }
+      throw err;
     } finally {
-      conn.release();
+      if (conn) {
+        conn.release();
+      }
       schemaPromise = null;
     }
   })();
@@ -2042,13 +2065,16 @@ export async function cleanupExpiredSessions(connOrPool?: Pool | PoolConnection)
   }
 }
 
-export async function authenticateWithDb(params: {
-  loginType: 'admin' | 'business';
-  email: string;
-  password: string;
-  ipAddress?: string;
-  userAgent?: string;
-}): Promise<{ success: boolean; session?: DbAuthSessionPayload; error?: string }> {
+export async function authenticateWithDb(
+  params: {
+    loginType: 'admin' | 'business';
+    email: string;
+    password: string;
+    ipAddress?: string;
+    userAgent?: string;
+  },
+  allowRetry = true
+): Promise<{ success: boolean; session?: DbAuthSessionPayload; error?: string }> {
   const activePool = getPool();
   const normalizedEmail = params.email.trim().toLowerCase();
   const rawPassword = params.password;
@@ -2061,8 +2087,18 @@ export async function authenticateWithDb(params: {
     return { success: false, error: 'Banco de dados não configurado no servidor.' };
   }
 
-  await ensureDatabaseSchema();
-  const conn = await activePool.getConnection();
+  let conn: PoolConnection | null = null;
+  try {
+    await ensureDatabaseSchema();
+    conn = await activePool.getConnection();
+  } catch (err) {
+    if (allowRetry && isTransientConnectionError(err)) {
+      await closePool().catch(() => {});
+      await new Promise((resolve) => setTimeout(resolve, 400));
+      return authenticateWithDb(params, false);
+    }
+    throw err;
+  }
 
   try {
     await cleanupExpiredSessions(conn);

@@ -11,6 +11,7 @@ import {
   hashPassword,
   verifyPassword,
   isDatabaseConfigured,
+  isTransientConnectionError,
   getPool,
   closePool,
   ensureDatabaseSchema,
@@ -686,9 +687,18 @@ app.post('/api/auth/login', async (req, res) => {
     clearLoginAttempts(rateKey);
     res.json({ success: true, databaseEnabled: true, session: result.session });
   } catch (err) {
-    const message = err instanceof Error ? err.message : 'Erro ao autenticar no banco de dados.';
-    console.error('Error in /api/auth/login:', message);
-    res.status(500).json({ success: false, databaseEnabled: true, error: message });
+    const rawMessage = err instanceof Error ? err.message : 'Erro ao autenticar no banco de dados.';
+    console.error('Error in /api/auth/login:', rawMessage);
+    if (isTransientConnectionError(err)) {
+      await closePool().catch(() => {});
+      res.status(503).json({
+        success: false,
+        databaseEnabled: true,
+        error: `Falha de conexão com o MySQL (${rawMessage}). Verifique no CapRover se o app do MySQL está rodando (não parado por falta de memória) e se DB_HOST aponta para o serviço MySQL correto (não phpMyAdmin).`,
+      });
+      return;
+    }
+    res.status(500).json({ success: false, databaseEnabled: true, error: rawMessage });
   }
 });
 
@@ -966,6 +976,9 @@ app.get('/api/health', async (_req, res) => {
     } catch (err) {
       database = 'error';
       databaseError = err instanceof Error ? err.message : 'Connection failed';
+      if (isTransientConnectionError(err)) {
+        await closePool().catch(() => {});
+      }
     }
   }
   res.status(200).json({ status: 'ok', database, ...(databaseError ? { databaseError } : {}) });
