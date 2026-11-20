@@ -1,5 +1,6 @@
 import React, { useState, useRef } from 'react';
-import { Upload, Image as ImageIcon, X, Check, Sparkles, RefreshCw } from 'lucide-react';
+import { Upload, Image as ImageIcon, X, Check, Sparkles } from 'lucide-react';
+import { uploadImageToServer } from '../../utils/apiSync';
 
 interface ImageUploadFieldProps {
   value: string;
@@ -26,6 +27,8 @@ export const ImageUploadField: React.FC<ImageUploadFieldProps> = ({
   const [customUrl, setCustomUrl] = useState('');
   const [uploadMessage, setUploadMessage] = useState<string | null>(null);
 
+  const [isUploading, setIsUploading] = useState(false);
+
   const handleFileChange = (file: File | undefined) => {
     if (!file) return;
 
@@ -40,14 +43,26 @@ export const ImageUploadField: React.FC<ImageUploadFieldProps> = ({
     }
 
     const reader = new FileReader();
-    reader.onload = () => {
+    reader.onload = async () => {
       if (typeof reader.result === 'string') {
-        onChange(reader.result);
-        setUploadMessage(`Imagem "${file.name}" carregada com sucesso!`);
+        const dataUrl = reader.result;
+        setIsUploading(true);
+        setUploadMessage(`Enviando "${file.name}"...`);
+        const serverUrl = await uploadImageToServer(dataUrl, file.name);
+        setIsUploading(false);
+
+        if (serverUrl) {
+          onChange(serverUrl);
+          setUploadMessage(`Imagem "${file.name}" salva no servidor!`);
+        } else {
+          onChange(dataUrl);
+          setUploadMessage(`Imagem "${file.name}" carregada com sucesso!`);
+        }
         setTimeout(() => setUploadMessage(null), 3000);
       }
     };
     reader.onerror = () => {
+      setIsUploading(false);
       setUploadMessage('Erro ao ler a imagem.');
     };
     reader.readAsDataURL(file);
@@ -158,11 +173,12 @@ export const ImageUploadField: React.FC<ImageUploadFieldProps> = ({
               <div className="flex flex-wrap items-center gap-2 justify-center sm:justify-start">
                 <button
                   type="button"
+                  disabled={isUploading}
                   onClick={() => fileInputRef.current?.click()}
-                  className="px-3.5 py-2 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold transition flex items-center gap-1.5 shadow-xs cursor-pointer"
+                  className="px-3.5 py-2 rounded-xl bg-blue-600 hover:bg-blue-700 disabled:opacity-60 text-white text-xs font-bold transition flex items-center gap-1.5 shadow-xs cursor-pointer"
                 >
                   <Upload className="w-3.5 h-3.5" />
-                  <span>{value ? 'Trocar Imagem' : 'Selecionar Arquivo'}</span>
+                  <span>{isUploading ? 'Enviando...' : value ? 'Trocar Imagem' : 'Selecionar Arquivo'}</span>
                 </button>
 
                 {value && (

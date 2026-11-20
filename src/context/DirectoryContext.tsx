@@ -34,6 +34,14 @@ import {
   clampDiscountPercent,
   parseBillingCycleParam,
 } from '../utils/planPricing';
+import {
+  fetchBootstrap,
+  seedDatabase,
+  resetDatabaseDemo,
+  scheduleCollectionSync,
+  scheduleSettingSync,
+  type DirectoryBootstrapPayload,
+} from '../utils/apiSync';
 
 export interface BusinessQuotaInfo {
   productsCount: number;
@@ -402,6 +410,9 @@ export const DirectoryProvider: React.FC<{ children: React.ReactNode }> = ({ chi
 
   useEffect(() => {
     localStorage.setItem('achenacidade_store_prod_cats', JSON.stringify(storeProductCategories));
+    if (dbSyncEnabledRef.current && !pendingHydrationCommitRef.current) {
+      scheduleCollectionSync('storeProductCategories', storeProductCategories);
+    }
   }, [storeProductCategories]);
 
   const [adminTheme, setAdminThemeState] = useState<AdminTheme>(() => {
@@ -521,6 +532,9 @@ export const DirectoryProvider: React.FC<{ children: React.ReactNode }> = ({ chi
 
   useEffect(() => {
     localStorage.setItem('achenacidade_banners', JSON.stringify(banners));
+    if (dbSyncEnabledRef.current && !pendingHydrationCommitRef.current) {
+      scheduleCollectionSync('banners', banners);
+    }
   }, [banners]);
 
   // Session Configuration (Configurable in Admin)
@@ -540,6 +554,9 @@ export const DirectoryProvider: React.FC<{ children: React.ReactNode }> = ({ chi
 
   useEffect(() => {
     localStorage.setItem('achenacidade_session_config', JSON.stringify(sessionConfig));
+    if (dbSyncEnabledRef.current && !pendingHydrationCommitRef.current) {
+      scheduleSettingSync('sessionConfig', sessionConfig);
+    }
   }, [sessionConfig]);
 
   const updateSessionConfig = (updates: Partial<SessionConfig>) => {
@@ -571,6 +588,9 @@ export const DirectoryProvider: React.FC<{ children: React.ReactNode }> = ({ chi
 
   useEffect(() => {
     localStorage.setItem('achenacidade_site_mode_config', JSON.stringify(siteModeConfig));
+    if (dbSyncEnabledRef.current && !pendingHydrationCommitRef.current) {
+      scheduleSettingSync('siteModeConfig', siteModeConfig);
+    }
   }, [siteModeConfig]);
 
   const setSiteMode = (mode: SiteMode) => {
@@ -621,6 +641,9 @@ export const DirectoryProvider: React.FC<{ children: React.ReactNode }> = ({ chi
 
   useEffect(() => {
     localStorage.setItem('achenacidade_plan_discount_config', JSON.stringify(planDiscountConfig));
+    if (dbSyncEnabledRef.current && !pendingHydrationCommitRef.current) {
+      scheduleSettingSync('planDiscountConfig', planDiscountConfig);
+    }
   }, [planDiscountConfig]);
 
   const updatePlanDiscountConfig = (updates: Partial<PlanDiscountConfig>) => {
@@ -647,6 +670,9 @@ export const DirectoryProvider: React.FC<{ children: React.ReactNode }> = ({ chi
 
   useEffect(() => {
     localStorage.setItem('achenacidade_mercadopago_config', JSON.stringify(mercadoPagoConfig));
+    if (dbSyncEnabledRef.current && !pendingHydrationCommitRef.current) {
+      scheduleSettingSync('mercadoPagoConfig', mercadoPagoConfig);
+    }
   }, [mercadoPagoConfig]);
 
   const updateMercadoPagoConfig = (updates: Partial<MercadoPagoConfig>) => {
@@ -665,6 +691,9 @@ export const DirectoryProvider: React.FC<{ children: React.ReactNode }> = ({ chi
 
   useEffect(() => {
     localStorage.setItem('achenacidade_payment_transactions', JSON.stringify(paymentTransactions));
+    if (dbSyncEnabledRef.current && !pendingHydrationCommitRef.current) {
+      scheduleCollectionSync('paymentTransactions', paymentTransactions);
+    }
   }, [paymentTransactions]);
 
   // Payment Modal State
@@ -703,6 +732,9 @@ export const DirectoryProvider: React.FC<{ children: React.ReactNode }> = ({ chi
 
   useEffect(() => {
     localStorage.setItem('achenacidade_smtp_config', JSON.stringify(smtpConfig));
+    if (dbSyncEnabledRef.current && !pendingHydrationCommitRef.current) {
+      scheduleSettingSync('smtpConfig', smtpConfig);
+    }
   }, [smtpConfig]);
 
   const updateSmtpConfig = (updates: Partial<SmtpConfig>) => {
@@ -727,6 +759,9 @@ export const DirectoryProvider: React.FC<{ children: React.ReactNode }> = ({ chi
 
   useEffect(() => {
     localStorage.setItem('achenacidade_email_templates', JSON.stringify(emailTemplates));
+    if (dbSyncEnabledRef.current && !pendingHydrationCommitRef.current) {
+      scheduleSettingSync('emailTemplates', emailTemplates);
+    }
   }, [emailTemplates]);
 
   const updateEmailTemplate = (key: EmailTemplateKey, updates: Partial<EmailTemplate>) => {
@@ -751,11 +786,18 @@ export const DirectoryProvider: React.FC<{ children: React.ReactNode }> = ({ chi
 
   useEffect(() => {
     localStorage.setItem('achenacidade_email_logs', JSON.stringify(emailLogs));
+    if (dbSyncEnabledRef.current && !pendingHydrationCommitRef.current) {
+      scheduleCollectionSync('emailLogs', emailLogs);
+    }
   }, [emailLogs]);
 
   const clearEmailLogs = () => {
     setEmailLogs([]);
   };
+
+  const dbSyncEnabledRef = useRef(false);
+  const pendingHydrationCommitRef = useRef(false);
+  const [, setDbHydrationTick] = useState(0);
 
   const verificationCodesRef = useRef<Record<string, { code: string; expiresAt: number }>>({});
 
@@ -1153,33 +1195,54 @@ export const DirectoryProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     localStorage.setItem('achenacidade_fav_services', JSON.stringify(favoriteServiceIds));
   }, [favoriteServiceIds]);
 
-  // Sync to localStorage
+  // Sync to localStorage + MySQL/MariaDB
   useEffect(() => {
     localStorage.setItem('achenacidade_cities', JSON.stringify(cities));
+    if (dbSyncEnabledRef.current && !pendingHydrationCommitRef.current) {
+      scheduleCollectionSync('cities', cities);
+    }
   }, [cities]);
 
   useEffect(() => {
     localStorage.setItem('achenacidade_categories', JSON.stringify(categories));
+    if (dbSyncEnabledRef.current && !pendingHydrationCommitRef.current) {
+      scheduleCollectionSync('categories', categories);
+    }
   }, [categories]);
 
   useEffect(() => {
     localStorage.setItem('achenacidade_plans', JSON.stringify(plans));
+    if (dbSyncEnabledRef.current && !pendingHydrationCommitRef.current) {
+      scheduleCollectionSync('plans', plans);
+    }
   }, [plans]);
 
   useEffect(() => {
     localStorage.setItem('achenacidade_businesses', JSON.stringify(businesses));
+    if (dbSyncEnabledRef.current && !pendingHydrationCommitRef.current) {
+      scheduleCollectionSync('businesses', businesses);
+    }
   }, [businesses]);
 
   useEffect(() => {
     localStorage.setItem('achenacidade_products', JSON.stringify(products));
+    if (dbSyncEnabledRef.current && !pendingHydrationCommitRef.current) {
+      scheduleCollectionSync('products', products);
+    }
   }, [products]);
 
   useEffect(() => {
     localStorage.setItem('achenacidade_services', JSON.stringify(services));
+    if (dbSyncEnabledRef.current && !pendingHydrationCommitRef.current) {
+      scheduleCollectionSync('services', services);
+    }
   }, [services]);
 
   useEffect(() => {
     localStorage.setItem('achenacidade_theme', JSON.stringify(adminTheme));
+    if (dbSyncEnabledRef.current && !pendingHydrationCommitRef.current) {
+      scheduleSettingSync('adminTheme', adminTheme);
+    }
     const rootStyle = document.documentElement.style;
     rootStyle.setProperty('--color-brand-blue', adminTheme.primaryColor);
     rootStyle.setProperty('--color-brand-orange', adminTheme.accentColor);
@@ -1948,6 +2011,121 @@ export const DirectoryProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     return () => window.removeEventListener('popstate', handlePopState);
   }, [currentView]);
 
+  const buildInitialBootstrapPayload = (): DirectoryBootstrapPayload => ({
+    cities: initialCities,
+    categories: initialCategories,
+    plans: initialPlans,
+    businesses: initialBusinesses,
+    products: initialProducts,
+    services: initialServices,
+    storeProductCategories: initialStoreProductCategories,
+    banners: initialBanners,
+    paymentTransactions: initialPaymentTransactions,
+    emailLogs: [],
+    settings: {
+      adminTheme: defaultTheme,
+      planDiscountConfig: defaultPlanDiscountConfig,
+      mercadoPagoConfig: defaultMercadoPagoConfig,
+      siteModeConfig: defaultSiteModeConfig,
+      smtpConfig: defaultSmtpConfig,
+      emailTemplates: defaultEmailTemplates,
+      sessionConfig: defaultSessionConfig,
+    },
+  });
+
+  // Hydrate full directory state from MySQL/MariaDB on mount (auto-seeding if empty)
+  useEffect(() => {
+    let active = true;
+
+    const applyRemoteData = (data: DirectoryBootstrapPayload) => {
+      pendingHydrationCommitRef.current = true;
+      if (data.cities?.length) {
+        setCities(data.cities);
+        const defaultCity =
+          data.cities.find((c) => c.isActive && c.isDefault) ||
+          data.cities.find((c) => c.isActive) ||
+          data.cities[0];
+        if (defaultCity) {
+          setSelectedCityId((prev) =>
+            data.cities.some((c) => c.id === prev) ? prev : defaultCity.id
+          );
+        }
+      }
+      if (data.categories) setCategories(data.categories);
+      if (data.plans) setPlans(data.plans);
+      if (data.businesses) setBusinesses(data.businesses);
+      if (data.products) setProducts(data.products);
+      if (data.services) setServices(data.services);
+      if (data.storeProductCategories) setStoreProductCategories(data.storeProductCategories);
+      if (data.banners) setBanners(data.banners);
+      if (data.paymentTransactions) setPaymentTransactions(data.paymentTransactions);
+      if (data.emailLogs) setEmailLogs(data.emailLogs);
+
+      if (data.settings?.adminTheme) setAdminThemeState(data.settings.adminTheme);
+      if (data.settings?.planDiscountConfig) {
+        setPlanDiscountConfig({
+          annual: clampDiscountPercent(data.settings.planDiscountConfig.annual ?? defaultPlanDiscountConfig.annual),
+          biennial: clampDiscountPercent(data.settings.planDiscountConfig.biennial ?? defaultPlanDiscountConfig.biennial),
+          triennial: clampDiscountPercent(data.settings.planDiscountConfig.triennial ?? defaultPlanDiscountConfig.triennial),
+        });
+      }
+      if (data.settings?.mercadoPagoConfig) setMercadoPagoConfig(data.settings.mercadoPagoConfig);
+      if (data.settings?.siteModeConfig) {
+        setSiteModeConfig({
+          ...defaultSiteModeConfig,
+          ...data.settings.siteModeConfig,
+          launch: { ...defaultSiteModeConfig.launch, ...(data.settings.siteModeConfig.launch || {}) },
+          maintenance: { ...defaultSiteModeConfig.maintenance, ...(data.settings.siteModeConfig.maintenance || {}) },
+        });
+      }
+      if (data.settings?.smtpConfig) {
+        setSmtpConfig({ ...defaultSmtpConfig, ...data.settings.smtpConfig });
+      }
+      if (data.settings?.emailTemplates) {
+        const remoteTpl = data.settings.emailTemplates;
+        setEmailTemplates({
+          email_verification: { ...defaultEmailTemplates.email_verification, ...(remoteTpl.email_verification || {}) },
+          payment_link: { ...defaultEmailTemplates.payment_link, ...(remoteTpl.payment_link || {}) },
+          welcome: { ...defaultEmailTemplates.welcome, ...(remoteTpl.welcome || {}) },
+          payment_approved: { ...defaultEmailTemplates.payment_approved, ...(remoteTpl.payment_approved || {}) },
+        });
+      }
+      if (data.settings?.sessionConfig) setSessionConfig(data.settings.sessionConfig);
+
+      setDbHydrationTick((t) => t + 1);
+    };
+
+    const hydrate = async () => {
+      const boot = await fetchBootstrap();
+      if (!active || !boot.databaseEnabled) return;
+
+      if (boot.seeded && boot.data) {
+        applyRemoteData(boot.data);
+        return;
+      }
+
+      const seedRes = await seedDatabase(buildInitialBootstrapPayload());
+      if (!active || !seedRes.databaseEnabled) return;
+      if (seedRes.data) {
+        applyRemoteData(seedRes.data);
+      }
+    };
+
+    void hydrate();
+
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  // Must remain after all collection/settings effects so remote hydration never re-writes immediately
+  useEffect(() => {
+    if (pendingHydrationCommitRef.current) {
+      pendingHydrationCommitRef.current = false;
+      dbSyncEnabledRef.current = true;
+    }
+  });
+
   // Reset demo
   const resetToDemoData = () => {
     setBanners(initialBanners);
@@ -1958,6 +2136,7 @@ export const DirectoryProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     setBusinesses(initialBusinesses);
     setProducts(initialProducts);
     setServices(initialServices);
+    setStoreProductCategories(initialStoreProductCategories);
     setFavoriteBusinessIds([]);
     setFavoriteProductIds([]);
     setFavoriteServiceIds([]);
@@ -1967,6 +2146,9 @@ export const DirectoryProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     setPaymentTransactions(initialPaymentTransactions);
     setSiteModeConfig(defaultSiteModeConfig);
     localStorage.clear();
+    if (dbSyncEnabledRef.current) {
+      void resetDatabaseDemo(buildInitialBootstrapPayload());
+    }
   };
 
   const addBanner = (b: Omit<AdBanner, 'id' | 'clicksCount'>) => {

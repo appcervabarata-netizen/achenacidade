@@ -26,17 +26,22 @@ WORKDIR /app
 
 ENV NODE_ENV=production
 ENV PORT=3000
+ENV UPLOADS_DIR=/app/uploads
 
 COPY package*.json ./
 
 # Instala somente dependências de produção necessárias para o servidor
 RUN npm install --omit=dev --legacy-peer-deps --no-audit --no-fund && npm cache clean --force
 
-# Copia os arquivos estáticos compilados e o servidor Express
+# Copia os arquivos estáticos compilados, o servidor Express e o módulo de banco de dados
 COPY --from=builder /app/dist ./dist
 COPY --from=builder /app/server.ts ./server.ts
+COPY --from=builder /app/server ./server
+
+# Prepara pasta padrão para Volume Persistente de imagens no CapRover
+RUN mkdir -p /app/uploads
 
 EXPOSE 3000
 
-# Executa "node server.ts" (suportado nativamente no Node 22+)
-CMD ["npm", "start"]
+# Executa "node server.ts" diretamente como PID 1 (suportado nativamente no Node 22+)
+CMD ["node", "server.ts"]
