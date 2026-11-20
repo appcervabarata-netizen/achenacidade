@@ -357,6 +357,7 @@ app.post('/api/banners/:id/click', async (req, res) => {
 
 app.get('/api/health', async (_req, res) => {
   let database: 'connected' | 'not_configured' | 'error' = 'not_configured';
+  let databaseError: string | undefined;
   if (isDatabaseConfigured()) {
     try {
       const dbPool = getPool();
@@ -364,11 +365,12 @@ app.get('/api/health', async (_req, res) => {
         await dbPool.query('SELECT 1');
         database = 'connected';
       }
-    } catch {
+    } catch (err) {
       database = 'error';
+      databaseError = err instanceof Error ? err.message : 'Connection failed';
     }
   }
-  res.status(200).json({ status: 'ok', database });
+  res.status(200).json({ status: 'ok', database, ...(databaseError ? { databaseError } : {}) });
 });
 
 async function startServer() {
