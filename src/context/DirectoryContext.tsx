@@ -44,6 +44,11 @@ import {
   deleteEntityInDb,
   saveSettingToDb,
   recordBannerClickInDb,
+  loginViaApi,
+  verifySessionViaApi,
+  renewSessionViaApi,
+  logoutViaApi,
+  switchBusinessViaApi,
   type ApiMutationResult,
   type DirectoryBootstrapPayload,
 } from '../utils/apiSync';
@@ -138,18 +143,22 @@ interface DirectoryContextType {
   toggleBannerStatus: (id: string) => void;
   recordBannerClick: (id: string) => void;
 
-  // Auth Session System
+  // Auth Session System (Database-backed with expiration)
   authSession: AuthSession;
   sessionConfig: SessionConfig;
   updateSessionConfig: (updates: Partial<SessionConfig>) => void;
-  renewSession: () => void;
-  loginAsAdmin: (email?: string) => void;
-  loginAsStoreOwner: (businessId: string, email?: string) => void;
+  renewSession: () => Promise<{ success: boolean; error?: string }>;
+  authenticateAdmin: (email: string, password: string) => Promise<{ success: boolean; error?: string }>;
+  authenticateStoreOwner: (email: string, password: string) => Promise<{ success: boolean; error?: string }>;
+  registerBusinessAndLogin: (
+    biz: Omit<Business, 'id' | 'slug' | 'createdAt'>,
+    navigateToPortal?: boolean
+  ) => Promise<{ success: boolean; businessId?: string; business?: Business; error?: string }>;
+  switchActiveBusiness: (businessId: string) => Promise<{ success: boolean; error?: string }>;
   logout: () => void;
 
   // Business portal session
   currentBusinessAuth: Business | null;
-  loginAsBusiness: (businessId: string, directBiz?: Business) => void;
   logoutBusiness: () => void;
 
   // Admin Theme Customization
@@ -930,11 +939,8 @@ export const DirectoryProvider: React.FC<{ children: React.ReactNode }> = ({ chi
           billingCycle: cycleParam ? parseBillingCycleParam(cycleParam) : undefined,
         });
         setCurrentViewState('checkout');
-      } else if (searchParams.get('painel') === '1' && bizId) {
-        const targetBiz = businesses.find((b) => b.id === bizId);
-        if (targetBiz) {
-          loginAsBusiness(targetBiz.id, targetBiz);
-        }
+      } else if (searchParams.get('painel') === '1') {
+        setCurrentViewState('login');
       }
     } catch {
       // Ignore malformed URL query
@@ -1072,7 +1078,7 @@ export const DirectoryProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     };
   };
 
-  // Auth session (persisted in localStorage with expiration checking)
+  // Auth session (persisted in localStorage with mandatory server token + expiration checking)
   const [authSession, setAuthSession] = useState<AuthSession>(() => {
     try {
       const savedRaw = localStorage.getItem('achenacidade_auth');
@@ -1080,8 +1086,12 @@ export const DirectoryProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         return { isAuthenticated: false, role: null, name: '', email: '' };
       }
       const saved: AuthSession = JSON.parse(savedRaw);
-      // If session is expired, invalidate it
-      if (saved.isAuthenticated && saved.expiresAt && Date.now() > saved.expiresAt) {
+      // Reject legacy sessions without a server token or expired sessions
+      if (
+        !saved.isAuthenticated ||
+        !saved.token ||
+        (saved.expiresAt && Date.now() >= saved.expiresAt)
+      ) {
         localStorage.removeItem('achenacidade_auth');
         return { isAuthenticated: false, role: null, name: '', email: '' };
       }
@@ -1094,6 +1104,27 @@ export const DirectoryProvider: React.FC<{ children: React.ReactNode }> = ({ chi
   useEffect(() => {
     localStorage.setItem('achenacidade_auth', JSON.stringify(authSession));
   }, [authSession]);
+
+  // Verify persisted session token with backend MySQL/server on mount
+  useEffect(() => {
+    let active = true;
+    const token = authSession.token;
+    if (!authSession.isAuthenticated || !token) return;
+
+    void verifySessionViaApi(token).then((res) => {
+      if (!active) return;
+      if (res.valid && res.session) {
+        setAuthSession(res.session);
+      } else if (!res.networkError) {
+        setAuthSession({ isAuthenticated: false, role: null, name: '', email: '' });
+        setCurrentBusinessAuth(null);
+      }
+    });
+
+    return () => {
+      active = false;
+    };
+  }, []);
 
   // Restore currentBusinessAuth when user is authenticated as business
   useEffect(() => {
@@ -1112,12 +1143,16 @@ export const DirectoryProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     const interval = setInterval(() => {
       if (authSession.isAuthenticated && authSession.expiresAt) {
         if (Date.now() >= authSession.expiresAt) {
-          logout();
+          void logoutViaApi(authSession.token);
+          setAuthSession({ isAuthenticated: false, role: null, name: '', email: '' });
+          setCurrentBusinessAuth(null);
+          setBusinessPortalTab('dashboard');
+          setCurrentView('login');
         }
       }
     }, 10000);
     return () => clearInterval(interval);
-  }, [authSession.isAuthenticated, authSession.expiresAt]);
+  }, [authSession.isAuthenticated, authSession.expiresAt, authSession.token]);
 
   // Active Modals
   const [activeModal, setActiveModal] = useState<{
@@ -1467,7 +1502,7 @@ export const DirectoryProvider: React.FC<{ children: React.ReactNode }> = ({ chi
   };
 
   // Business Actions
-  const addBusiness = (bizData: Omit<Business, 'id' | 'slug' | 'createdAt'>): string => {
+  const buildBusinessObject = (bizData: Omit<Business, 'id' | 'slug' | 'createdAt'>): Business => {
     const slug = bizData.name
       .toLowerCase()
       .normalize('NFD')
@@ -1475,23 +1510,41 @@ export const DirectoryProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       .replace(/[^a-z0-9]+/g, '-')
       .replace(/^-|-$/g, '');
     const id = `biz-${Date.now()}`;
-    const ownerEmail = bizData.ownerEmail || authSession.email || bizData.email || 'lojista@achenacidade.com.br';
-    const newBiz: Business = {
+    const ownerEmail = bizData.ownerEmail || authSession.email || bizData.email || '';
+    return {
       ...bizData,
       id,
       slug,
       ownerEmail,
+      hasPassword: Boolean(bizData.password?.trim()),
       createdAt: new Date().toISOString().split('T')[0],
     };
-    setBusinesses((prev) => [newBiz, ...prev]);
+  };
+
+  const sanitizeBusinessForState = (biz: Business): Business => {
+    const { password: _omitted, ...safe } = biz;
+    return {
+      ...safe,
+      hasPassword: Boolean(biz.password?.trim() || biz.hasPassword),
+    };
+  };
+
+  const addBusiness = (bizData: Omit<Business, 'id' | 'slug' | 'createdAt'>): string => {
+    const newBiz = buildBusinessObject(bizData);
+    setBusinesses((prev) => [sanitizeBusinessForState(newBiz), ...prev]);
     trackDbMutation(createEntityInDb('businesses', newBiz));
-    return id;
+    return newBiz.id;
   };
 
   const updateBusiness = (id: string, updates: Partial<Business>) => {
-    setBusinesses((prev) => prev.map((b) => (b.id === id ? { ...b, ...updates } : b)));
+    const { password: rawPwd, ...safeUpdates } = updates;
+    const stateUpdates: Partial<Business> = {
+      ...safeUpdates,
+      ...(rawPwd && rawPwd.trim() ? { hasPassword: true } : {}),
+    };
+    setBusinesses((prev) => prev.map((b) => (b.id === id ? { ...b, ...stateUpdates } : b)));
     if (currentBusinessAuth?.id === id) {
-      setCurrentBusinessAuth((prev) => (prev ? { ...prev, ...updates } : null));
+      setCurrentBusinessAuth((prev) => (prev ? { ...prev, ...stateUpdates } : null));
     }
     trackDbMutation(updateEntityInDb('businesses', id, updates as Record<string, unknown>));
   };
@@ -1873,27 +1926,6 @@ export const DirectoryProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     trackDbMutation(deleteEntityInDb('storeProductCategories', id));
   };
 
-  // Business auth session
-  const loginAsBusiness = (businessId: string, directBiz?: Business) => {
-    const biz = directBiz || businesses.find((b) => b.id === businessId);
-    if (biz) {
-      setCurrentBusinessAuth(biz);
-      const now = Date.now();
-      const durationMs = (sessionConfig.businessSessionDurationMinutes || 1440) * 60 * 1000;
-      setAuthSession({
-        isAuthenticated: true,
-        role: 'business',
-        name: biz.name,
-        email: biz.ownerEmail || biz.email || 'lojista@achenacidade.com.br',
-        businessId: biz.id,
-        loginTimestamp: now,
-        expiresAt: now + durationMs,
-      });
-      setCurrentView('business_portal');
-      setBusinessPortalTab('dashboard');
-    }
-  };
-
   const logoutBusiness = () => {
     setCurrentBusinessAuth(null);
   };
@@ -1937,57 +1969,128 @@ export const DirectoryProvider: React.FC<{ children: React.ReactNode }> = ({ chi
   const favoriteServices = services.filter((s) => favoriteServiceIds.includes(s.id));
   const totalFavoritesCount = favoriteBusinessIds.length + favoriteProductIds.length + favoriteServiceIds.length;
 
-  // Auth Actions
-  const loginAsAdmin = (email: string = 'admin@achenacidade.com.br') => {
-    const now = Date.now();
-    const durationMs = (sessionConfig.adminSessionDurationMinutes || 120) * 60 * 1000;
-    const session: AuthSession = {
-      isAuthenticated: true,
-      role: 'admin',
-      name: 'Administrador Master',
-      email,
-      loginTimestamp: now,
-      expiresAt: now + durationMs,
-    };
-    setAuthSession(session);
-    setCurrentView('admin');
-  };
-
-  const loginAsStoreOwner = (businessId: string, email: string = '') => {
-    const biz = businesses.find((b) => b.id === businessId);
-    if (biz) {
-      setCurrentBusinessAuth(biz);
-      const now = Date.now();
-      const durationMs = (sessionConfig.businessSessionDurationMinutes || 1440) * 60 * 1000;
-      const session: AuthSession = {
-        isAuthenticated: true,
-        role: 'business',
-        name: biz.name,
-        email: email || biz.ownerEmail || biz.email || 'lojista@achenacidade.com.br',
-        businessId: biz.id,
-        loginTimestamp: now,
-        expiresAt: now + durationMs,
-      };
-      setAuthSession(session);
-      setCurrentView('business_portal');
-      setBusinessPortalTab('dashboard');
+  // Database-backed Authentication Actions (No passwordless auto-login)
+  const authenticateAdmin = async (
+    email: string,
+    password: string
+  ): Promise<{ success: boolean; error?: string }> => {
+    const res = await loginViaApi({ loginType: 'admin', email, password });
+    if (!res.success || !res.session) {
+      return { success: false, error: res.error || 'E-mail ou senha inválidos.' };
     }
+    setCurrentBusinessAuth(null);
+    setAuthSession(res.session);
+    setCurrentView('admin');
+    return { success: true };
   };
 
-  const renewSession = () => {
-    if (!authSession.isAuthenticated || !authSession.role) return;
-    const now = Date.now();
-    const durationMinutes = authSession.role === 'admin'
-      ? (sessionConfig.adminSessionDurationMinutes || 120)
-      : (sessionConfig.businessSessionDurationMinutes || 1440);
-    setAuthSession((prev) => ({
-      ...prev,
-      loginTimestamp: now,
-      expiresAt: now + durationMinutes * 60 * 1000,
-    }));
+  const authenticateStoreOwner = async (
+    email: string,
+    password: string
+  ): Promise<{ success: boolean; error?: string }> => {
+    const res = await loginViaApi({ loginType: 'business', email, password });
+    if (!res.success || !res.session) {
+      return { success: false, error: res.error || 'E-mail ou senha da loja inválidos.' };
+    }
+    const matchedBiz = businesses.find((b) => b.id === res.session?.businessId) || null;
+    if (matchedBiz) {
+      setCurrentBusinessAuth(matchedBiz);
+    }
+    setAuthSession(res.session);
+    setCurrentView('business_portal');
+    setBusinessPortalTab('dashboard');
+    return { success: true };
+  };
+
+  const registerBusinessAndLogin = async (
+    bizData: Omit<Business, 'id' | 'slug' | 'createdAt'>,
+    navigateToPortal: boolean = true
+  ): Promise<{ success: boolean; businessId?: string; business?: Business; error?: string }> => {
+    const newBiz = buildBusinessObject(bizData);
+    const safeBiz = sanitizeBusinessForState(newBiz);
+    setBusinesses((prev) => [safeBiz, ...prev]);
+
+    const saveRes = await createEntityInDb('businesses', newBiz);
+    if (!saveRes.ok) {
+      return {
+        success: false,
+        error: saveRes.error || 'Falha ao salvar cadastro da loja no banco de dados.',
+      };
+    }
+
+    const loginEmail = (newBiz.ownerEmail || newBiz.email || '').trim();
+    const rawPassword = (newBiz.password || '').trim();
+    if (authSession.isAuthenticated && authSession.role === 'business' && authSession.token) {
+      const switchRes = await switchBusinessViaApi(authSession.token, safeBiz.id);
+      if (switchRes.success && switchRes.session) {
+        setCurrentBusinessAuth(safeBiz);
+        setAuthSession(switchRes.session);
+        if (navigateToPortal) {
+          setCurrentView('business_portal');
+          setBusinessPortalTab('dashboard');
+        }
+        return { success: true, businessId: safeBiz.id, business: safeBiz };
+      }
+    }
+
+    if (loginEmail && rawPassword) {
+      const loginRes = await loginViaApi({
+        loginType: 'business',
+        email: loginEmail,
+        password: rawPassword,
+      });
+      if (loginRes.success && loginRes.session) {
+        setCurrentBusinessAuth(safeBiz);
+        setAuthSession(loginRes.session);
+        if (navigateToPortal) {
+          setCurrentView('business_portal');
+          setBusinessPortalTab('dashboard');
+        }
+        return { success: true, businessId: safeBiz.id, business: safeBiz };
+      }
+    }
+
+    return {
+      success: true,
+      businessId: safeBiz.id,
+      business: safeBiz,
+    };
+  };
+
+  const switchActiveBusiness = async (
+    businessId: string
+  ): Promise<{ success: boolean; error?: string }> => {
+    if (!authSession.isAuthenticated || authSession.role !== 'business' || !authSession.token) {
+      return { success: false, error: 'Sessão de lojista não autenticada.' };
+    }
+    const targetBiz = businesses.find((b) => b.id === businessId);
+    if (!targetBiz) {
+      return { success: false, error: 'Loja não encontrada.' };
+    }
+    const res = await switchBusinessViaApi(authSession.token, businessId);
+    if (!res.success || !res.session) {
+      return { success: false, error: res.error || 'Não autorizado a acessar esta loja.' };
+    }
+    setCurrentBusinessAuth(targetBiz);
+    setAuthSession(res.session);
+    return { success: true };
+  };
+
+  const renewSession = async (): Promise<{ success: boolean; error?: string }> => {
+    if (!authSession.isAuthenticated || !authSession.role || !authSession.token) {
+      return { success: false, error: 'Sessão não autenticada.' };
+    }
+    const res = await renewSessionViaApi(authSession.token);
+    if (!res.success || !res.session) {
+      logout();
+      return { success: false, error: res.error || 'Sessão expirada. Faça login novamente.' };
+    }
+    setAuthSession(res.session);
+    return { success: true };
   };
 
   const logout = () => {
+    void logoutViaApi(authSession.token);
     setAuthSession({ isAuthenticated: false, role: null, name: '', email: '' });
     setCurrentBusinessAuth(null);
     setBusinessPortalTab('dashboard');
@@ -1999,13 +2102,20 @@ export const DirectoryProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     type: 'business_detail' | 'product_detail' | 'service_detail' | 'business_portal' | 'admin' | 'favorites' | 'notifications',
     id?: string
   ) => {
-    // If opening admin or business_portal, switch full-screen screen view instead of popup
     if (type === 'admin') {
-      setCurrentView('admin');
+      if (authSession.isAuthenticated && authSession.role === 'admin') {
+        setCurrentView('admin');
+      } else {
+        setCurrentView('login');
+      }
       return;
     }
     if (type === 'business_portal') {
-      setCurrentView('business_portal');
+      if (authSession.isAuthenticated && authSession.role === 'business') {
+        setCurrentView('business_portal');
+      } else {
+        setCurrentView('login');
+      }
       return;
     }
     setActiveModal({ type, id });
@@ -2404,7 +2514,6 @@ export const DirectoryProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         setSearchServiceQuery,
 
         currentBusinessAuth,
-        loginAsBusiness,
         logoutBusiness,
 
         currentView,
@@ -2415,8 +2524,10 @@ export const DirectoryProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         sessionConfig,
         updateSessionConfig,
         renewSession,
-        loginAsAdmin,
-        loginAsStoreOwner,
+        authenticateAdmin,
+        authenticateStoreOwner,
+        registerBusinessAndLogin,
+        switchActiveBusiness,
         logout,
 
         // Banners

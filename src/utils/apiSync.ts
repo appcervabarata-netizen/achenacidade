@@ -1,6 +1,7 @@
 import type {
   AdBanner,
   AdminTheme,
+  AuthSession,
   Business,
   Category,
   City,
@@ -65,6 +66,8 @@ export interface DatabaseDiagnostics {
   user?: string;
   counts?: Record<string, number>;
   migratedColumns?: string[];
+  droppedLegacyTables?: string[];
+  remainingLegacyTables?: string[];
   error?: string;
 }
 
@@ -190,6 +193,7 @@ export async function fetchDbDiagnostics(): Promise<DatabaseDiagnostics> {
 export async function migrateDatabaseInDb(): Promise<{
   success: boolean;
   addedColumns: string[];
+  droppedLegacyTables: string[];
   error?: string;
 }> {
   try {
@@ -201,18 +205,221 @@ export async function migrateDatabaseInDb(): Promise<{
     const data = (await res.json()) as {
       success?: boolean;
       addedColumns?: string[];
+      droppedLegacyTables?: string[];
       error?: string;
     };
     return {
       success: Boolean(res.ok && data.success),
       addedColumns: Array.isArray(data.addedColumns) ? data.addedColumns : [],
+      droppedLegacyTables: Array.isArray(data.droppedLegacyTables) ? data.droppedLegacyTables : [],
       error: data.error,
     };
   } catch (err) {
     return {
       success: false,
       addedColumns: [],
+      droppedLegacyTables: [],
       error: err instanceof Error ? err.message : 'Erro ao executar migração SQL.',
+    };
+  }
+}
+
+export async function cleanupLegacyTablesInDb(): Promise<{
+  success: boolean;
+  droppedTables: string[];
+  error?: string;
+}> {
+  try {
+    const res = await fetch('/api/db/cleanup-legacy', {
+      method: 'POST',
+      cache: 'no-store',
+      headers: { Accept: 'application/json' },
+    });
+    const data = (await res.json()) as {
+      success?: boolean;
+      droppedTables?: string[];
+      error?: string;
+    };
+    return {
+      success: Boolean(res.ok && data.success),
+      droppedTables: Array.isArray(data.droppedTables) ? data.droppedTables : [],
+      error: data.error,
+    };
+  } catch (err) {
+    return {
+      success: false,
+      droppedTables: [],
+      error: err instanceof Error ? err.message : 'Erro ao excluir tabelas antigas em português.',
+    };
+  }
+}
+
+export async function loginViaApi(params: {
+  loginType: 'admin' | 'business';
+  email: string;
+  password: string;
+}): Promise<{ success: boolean; session?: AuthSession; databaseEnabled?: boolean; error?: string }> {
+  try {
+    const res = await fetch('/api/auth/login', {
+      method: 'POST',
+      cache: 'no-store',
+      headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+      body: JSON.stringify(params),
+    });
+    const data = (await res.json()) as {
+      success?: boolean;
+      session?: AuthSession;
+      databaseEnabled?: boolean;
+      error?: string;
+    };
+    if (!res.ok || !data.success || !data.session) {
+      return {
+        success: false,
+        databaseEnabled: data.databaseEnabled,
+        error: data.error || 'E-mail ou senha inválidos.',
+      };
+    }
+    return { success: true, session: data.session, databaseEnabled: data.databaseEnabled };
+  } catch (err) {
+    return {
+      success: false,
+      error: err instanceof Error ? err.message : 'Erro de conexão com o servidor de autenticação.',
+    };
+  }
+}
+
+export async function verifySessionViaApi(
+  token: string
+): Promise<{ valid: boolean; session?: AuthSession; networkError?: boolean }> {
+  if (!token) return { valid: false };
+  try {
+    const res = await fetch('/api/auth/session', {
+      method: 'GET',
+      cache: 'no-store',
+      headers: {
+        Authorization: `Bearer ${token}`,
+        Accept: 'application/json',
+      },
+    });
+    if (res.status === 401 || res.status === 403) {
+      return { valid: false };
+    }
+    if (!res.ok) {
+      return { valid: false, networkError: true };
+    }
+    const data = (await res.json()) as { authenticated?: boolean; session?: AuthSession };
+    if (!data.authenticated || !data.session) {
+      return { valid: false };
+    }
+    return { valid: true, session: data.session };
+  } catch {
+    return { valid: false, networkError: true };
+  }
+}
+
+export async function renewSessionViaApi(
+  token: string
+): Promise<{ success: boolean; session?: AuthSession; error?: string }> {
+  if (!token) return { success: false, error: 'Sessão sem token.' };
+  try {
+    const res = await fetch('/api/auth/renew', {
+      method: 'POST',
+      cache: 'no-store',
+      headers: {
+        Authorization: `Bearer ${token}`,
+        'Content-Type': 'application/json',
+        Accept: 'application/json',
+      },
+      body: JSON.stringify({ token }),
+    });
+    const data = (await res.json()) as { success?: boolean; session?: AuthSession; error?: string };
+    if (!res.ok || !data.success || !data.session) {
+      return { success: false, error: data.error || 'Sessão expirada.' };
+    }
+    return { success: true, session: data.session };
+  } catch (err) {
+    return {
+      success: false,
+      error: err instanceof Error ? err.message : 'Erro ao renovar sessão.',
+    };
+  }
+}
+
+export async function logoutViaApi(token?: string): Promise<void> {
+  if (!token) return;
+  try {
+    await fetch('/api/auth/logout', {
+      method: 'POST',
+      keepalive: true,
+      headers: {
+        Authorization: `Bearer ${token}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ token }),
+    });
+  } catch {
+    // Ignore logout network errors
+  }
+}
+
+export async function switchBusinessViaApi(
+  token: string,
+  businessId: string
+): Promise<{ success: boolean; session?: AuthSession; error?: string }> {
+  if (!token) return { success: false, error: 'Sessão inválida.' };
+  try {
+    const res = await fetch('/api/auth/switch-business', {
+      method: 'POST',
+      cache: 'no-store',
+      headers: {
+        Authorization: `Bearer ${token}`,
+        'Content-Type': 'application/json',
+        Accept: 'application/json',
+      },
+      body: JSON.stringify({ businessId }),
+    });
+    const data = (await res.json()) as { success?: boolean; session?: AuthSession; error?: string };
+    if (!res.ok || !data.success || !data.session) {
+      return { success: false, error: data.error || 'Não foi possível alternar a loja.' };
+    }
+    return { success: true, session: data.session };
+  } catch (err) {
+    return {
+      success: false,
+      error: err instanceof Error ? err.message : 'Erro de conexão ao alternar loja.',
+    };
+  }
+}
+
+export async function changeAdminPasswordViaApi(params: {
+  token: string;
+  currentPassword: string;
+  newPassword: string;
+}): Promise<{ success: boolean; error?: string }> {
+  if (!params.token) return { success: false, error: 'Sessão administrativa ausente.' };
+  try {
+    const res = await fetch('/api/auth/change-password', {
+      method: 'POST',
+      cache: 'no-store',
+      headers: {
+        Authorization: `Bearer ${params.token}`,
+        'Content-Type': 'application/json',
+        Accept: 'application/json',
+      },
+      body: JSON.stringify({
+        currentPassword: params.currentPassword,
+        newPassword: params.newPassword,
+      }),
+    });
+    const data = (await res.json()) as { success?: boolean; error?: string };
+    if (!res.ok || !data.success) {
+      return { success: false, error: data.error || 'Não foi possível alterar a senha.' };
+    }
+    return { success: true };
+  } catch (err) {
+    return {
+      success: false,
+      error: err instanceof Error ? err.message : 'Erro ao atualizar senha.',
     };
   }
 }

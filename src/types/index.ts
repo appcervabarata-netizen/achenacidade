@@ -76,6 +76,7 @@ export interface Business {
   facebook?: string;
   website?: string;
   password?: string;
+  hasPassword?: boolean;
   isVerified?: boolean;
   emailVerified?: boolean;
   paymentStatus?: 'active' | 'pending_payment';
@@ -162,11 +163,14 @@ export interface SessionConfig {
 export interface AuthSession {
   isAuthenticated: boolean;
   role: 'admin' | 'business' | null;
+  userId?: string;
   name: string;
   email: string;
   businessId?: string;
+  token?: string;
   loginTimestamp?: number;
   expiresAt?: number;
+  durationMinutes?: number;
 }
 
 export type AppView =

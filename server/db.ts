@@ -1,5 +1,47 @@
+import crypto from 'crypto';
 import mysql from 'mysql2/promise';
 import type { Pool, PoolConnection, RowDataPacket } from 'mysql2/promise';
+
+export const DEFAULT_ADMIN_EMAIL = 'vital.crispiniano@gmail.com';
+export const DEFAULT_ADMIN_PASSWORD = process.env.ADMIN_DEFAULT_PASSWORD || 'Vitor2027cidade';
+
+export function hashPassword(plain: string): string {
+  const salt = crypto.randomBytes(16).toString('hex');
+  const derived = crypto.scryptSync(plain, salt, 64).toString('hex');
+  return `scrypt$${salt}$${derived}`;
+}
+
+export function isPasswordHashed(value: unknown): boolean {
+  return typeof value === 'string' && value.startsWith('scrypt$');
+}
+
+export function verifyPassword(plain: string, stored: unknown): boolean {
+  if (!plain || typeof stored !== 'string' || !stored) return false;
+  if (stored.startsWith('scrypt$')) {
+    const parts = stored.split('$');
+    if (parts.length !== 3) return false;
+    const [, salt, expectedHex] = parts;
+    try {
+      const actualBuf = crypto.scryptSync(plain, salt, 64);
+      const expectedBuf = Buffer.from(expectedHex, 'hex');
+      if (actualBuf.length !== expectedBuf.length) return false;
+      return crypto.timingSafeEqual(actualBuf, expectedBuf);
+    } catch {
+      return false;
+    }
+  }
+  const a = Buffer.from(plain, 'utf8');
+  const b = Buffer.from(stored, 'utf8');
+  if (a.length !== b.length) return false;
+  return crypto.timingSafeEqual(a, b);
+}
+
+function hashIfPresent(value: unknown): string | null {
+  if (value === undefined || value === null) return null;
+  const str = String(value).trim();
+  if (!str) return null;
+  return isPasswordHashed(str) ? str : hashPassword(str);
+}
 
 export interface DbRuntimeConfig {
   configured: boolean;
@@ -122,11 +164,51 @@ function toOptionalNumber(value: unknown): number | undefined {
 }
 
 let lastMigratedColumns: string[] = [];
+let lastDroppedLegacyTables: string[] = [];
+
+export const LEGACY_PORTUGUESE_TABLES = [
+  'pagamentos',
+  'categorias_produtos_loja',
+  'servicos',
+  'produtos',
+  'empresas',
+  'planos',
+  'categorias',
+  'cidades',
+  'usuarios',
+  'configuracoes',
+  'sessoes',
+  'anuncios',
+];
 
 const EXPECTED_TABLE_COLUMNS: Record<string, Array<{ name: string; definition: string }>> = {
   app_meta: [
     { name: 'meta_value', definition: "VARCHAR(500) NOT NULL DEFAULT ''" },
     { name: 'updated_at', definition: 'TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP' },
+  ],
+  admin_users: [
+    { name: 'email', definition: "VARCHAR(255) NOT NULL DEFAULT ''" },
+    { name: 'name', definition: "VARCHAR(255) NOT NULL DEFAULT 'Administrador Master'" },
+    { name: 'password_hash', definition: "VARCHAR(255) NOT NULL DEFAULT ''" },
+    { name: 'role', definition: "VARCHAR(32) NOT NULL DEFAULT 'admin'" },
+    { name: 'is_active', definition: 'TINYINT(1) NOT NULL DEFAULT 1' },
+    { name: 'last_login_at', definition: 'VARCHAR(64) NULL' },
+    { name: 'sort_order', definition: 'INT NOT NULL DEFAULT 0' },
+    { name: 'created_at', definition: 'TIMESTAMP DEFAULT CURRENT_TIMESTAMP' },
+    { name: 'updated_at', definition: 'TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP' },
+  ],
+  auth_sessions: [
+    { name: 'role', definition: "VARCHAR(32) NOT NULL DEFAULT 'business'" },
+    { name: 'user_id', definition: "VARCHAR(120) NOT NULL DEFAULT ''" },
+    { name: 'email', definition: "VARCHAR(255) NOT NULL DEFAULT ''" },
+    { name: 'name', definition: "VARCHAR(255) NOT NULL DEFAULT ''" },
+    { name: 'business_id', definition: 'VARCHAR(120) NULL' },
+    { name: 'ip_address', definition: 'VARCHAR(120) NULL' },
+    { name: 'user_agent', definition: 'VARCHAR(500) NULL' },
+    { name: 'created_at', definition: 'BIGINT NOT NULL DEFAULT 0' },
+    { name: 'expires_at', definition: 'BIGINT NOT NULL DEFAULT 0' },
+    { name: 'last_activity_at', definition: 'BIGINT NOT NULL DEFAULT 0' },
+    { name: 'revoked', definition: 'TINYINT(1) NOT NULL DEFAULT 0' },
   ],
   cities: [
     { name: 'name', definition: "VARCHAR(255) NOT NULL DEFAULT ''" },
@@ -341,6 +423,63 @@ async function ensureMissingColumns(conn: PoolConnection): Promise<string[]> {
   return added;
 }
 
+async function dropLegacyPortugueseTables(conn: PoolConnection): Promise<string[]> {
+  const [tableRows] = await conn.query<RowDataPacket[]>(
+    `SELECT TABLE_NAME AS tableName
+     FROM INFORMATION_SCHEMA.TABLES
+     WHERE TABLE_SCHEMA = DATABASE()`
+  );
+
+  const existingTables = new Set(
+    tableRows.map((row) => String(row.tableName || '').toLowerCase())
+  );
+
+  const toDrop = LEGACY_PORTUGUESE_TABLES.filter((tbl) =>
+    existingTables.has(tbl.toLowerCase())
+  );
+
+  if (toDrop.length === 0) {
+    return [];
+  }
+
+  await conn.query('SET FOREIGN_KEY_CHECKS = 0');
+  try {
+    for (const tbl of toDrop) {
+      await conn.query(`DROP TABLE IF EXISTS \`${tbl}\``);
+    }
+  } finally {
+    await conn.query('SET FOREIGN_KEY_CHECKS = 1');
+  }
+
+  console.log('Dropped legacy Portuguese MySQL tables:', toDrop.join(', '));
+  return toDrop;
+}
+
+async function ensureDefaultAdminUser(conn: PoolConnection): Promise<void> {
+  // Remove legacy demo admin placeholder if present
+  await conn.query(
+    `DELETE FROM admin_users WHERE LOWER(email) = 'admin@achenacidade.com.br'`
+  );
+
+  const [rows] = await conn.query<RowDataPacket[]>(
+    `SELECT id, password_hash FROM admin_users WHERE LOWER(email) = LOWER(?) LIMIT 1`,
+    [DEFAULT_ADMIN_EMAIL]
+  );
+
+  if (rows.length === 0) {
+    await conn.query(
+      `INSERT INTO admin_users (id, email, name, password_hash, role, is_active, sort_order)
+       VALUES (?, ?, ?, ?, 'admin', 1, 0)`,
+      ['admin-master-1', DEFAULT_ADMIN_EMAIL, 'Administrador Master', hashPassword(DEFAULT_ADMIN_PASSWORD)]
+    );
+  } else if (!rows[0].password_hash) {
+    await conn.query(
+      `UPDATE admin_users SET password_hash = ?, is_active = 1 WHERE id = ?`,
+      [hashPassword(DEFAULT_ADMIN_PASSWORD), rows[0].id]
+    );
+  }
+}
+
 export async function ensureDatabaseSchema(forceMigrate = false): Promise<boolean> {
   const activePool = getPool();
   if (!activePool) return false;
@@ -351,11 +490,51 @@ export async function ensureDatabaseSchema(forceMigrate = false): Promise<boolea
   schemaPromise = (async () => {
     const conn = await activePool.getConnection();
     try {
+      const droppedTables = await dropLegacyPortugueseTables(conn);
+      if (droppedTables.length > 0) {
+        lastDroppedLegacyTables = droppedTables;
+      }
+
       await conn.query(`
         CREATE TABLE IF NOT EXISTS app_meta (
           meta_key VARCHAR(120) PRIMARY KEY,
           meta_value VARCHAR(500) NOT NULL,
           updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+      `);
+
+      await conn.query(`
+        CREATE TABLE IF NOT EXISTS admin_users (
+          id VARCHAR(120) PRIMARY KEY,
+          email VARCHAR(255) NOT NULL,
+          name VARCHAR(255) NOT NULL,
+          password_hash VARCHAR(255) NOT NULL,
+          role VARCHAR(32) NOT NULL DEFAULT 'admin',
+          is_active TINYINT(1) NOT NULL DEFAULT 1,
+          last_login_at VARCHAR(64) NULL,
+          sort_order INT NOT NULL DEFAULT 0,
+          created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+          updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+          UNIQUE KEY uniq_admin_email (email)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+      `);
+
+      await conn.query(`
+        CREATE TABLE IF NOT EXISTS auth_sessions (
+          token VARCHAR(128) PRIMARY KEY,
+          role VARCHAR(32) NOT NULL,
+          user_id VARCHAR(120) NOT NULL,
+          email VARCHAR(255) NOT NULL,
+          name VARCHAR(255) NOT NULL,
+          business_id VARCHAR(120) NULL,
+          ip_address VARCHAR(120) NULL,
+          user_agent VARCHAR(500) NULL,
+          created_at BIGINT NOT NULL,
+          expires_at BIGINT NOT NULL,
+          last_activity_at BIGINT NOT NULL,
+          revoked TINYINT(1) NOT NULL DEFAULT 0,
+          KEY idx_auth_expires (expires_at),
+          KEY idx_auth_user (role, user_id)
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
       `);
 
@@ -574,6 +753,8 @@ export async function ensureDatabaseSchema(forceMigrate = false): Promise<boolea
         lastMigratedColumns = addedColumns;
       }
 
+      await ensureDefaultAdminUser(conn);
+
       schemaInitialized = true;
       return true;
     } finally {
@@ -684,7 +865,7 @@ export async function readAllDirectoryData(connOrPool?: Pool | PoolConnection): 
       ...(r.instagram ? { instagram: r.instagram } : {}),
       ...(r.facebook ? { facebook: r.facebook } : {}),
       ...(r.website ? { website: r.website } : {}),
-      ...(r.password ? { password: r.password } : {}),
+      hasPassword: Boolean(r.password),
       isVerified: Boolean(r.is_verified),
       emailVerified: Boolean(r.email_verified),
       paymentStatus: r.payment_status || 'active',
@@ -845,9 +1026,17 @@ export async function replaceCollectionInConn(conn: PoolConnection, collection: 
     }
 
     case 'businesses': {
+      const [existingPwdRows] = await conn.query<RowDataPacket[]>(`SELECT id, password FROM businesses`);
+      const existingPwdMap = new Map<string, string>();
+      for (const row of existingPwdRows) {
+        if (row.id && row.password) {
+          existingPwdMap.set(String(row.id), String(row.password));
+        }
+      }
       await conn.query(`DELETE FROM businesses`);
       for (let i = 0; i < safeItems.length; i++) {
         const b = safeItems[i];
+        const finalPassword = hashIfPresent(b.password) ?? existingPwdMap.get(String(b.id)) ?? null;
         await conn.query(
           `INSERT INTO businesses (
              id, name, slug, city_id, category_id, plan_id, description, phone, whatsapp, email, owner_email,
@@ -876,7 +1065,7 @@ export async function replaceCollectionInConn(conn: PoolConnection, collection: 
             b.instagram || null,
             b.facebook || null,
             b.website || null,
-            b.password || null,
+            finalPassword,
             b.isVerified ? 1 : 0,
             b.emailVerified ? 1 : 0,
             b.paymentStatus || 'active',
@@ -1294,6 +1483,7 @@ export async function upsertEntity(resource: string, item: any): Promise<void> {
       }
 
       case 'businesses': {
+        const hashedPwd = hashIfPresent(item.password);
         await conn.query(
           `INSERT INTO businesses (
              id, name, slug, city_id, category_id, plan_id, description, phone, whatsapp, email, owner_email,
@@ -1321,7 +1511,7 @@ export async function upsertEntity(resource: string, item: any): Promise<void> {
              instagram = VALUES(instagram),
              facebook = VALUES(facebook),
              website = VALUES(website),
-             password = VALUES(password),
+             password = COALESCE(VALUES(password), password),
              is_verified = VALUES(is_verified),
              email_verified = VALUES(email_verified),
              payment_status = VALUES(payment_status),
@@ -1351,7 +1541,7 @@ export async function upsertEntity(resource: string, item: any): Promise<void> {
             item.instagram || null,
             item.facebook || null,
             item.website || null,
-            item.password || null,
+            hashedPwd,
             item.isVerified ? 1 : 0,
             item.emailVerified ? 1 : 0,
             item.paymentStatus || 'active',
@@ -1635,7 +1825,7 @@ const RESOURCE_FIELD_MAPS: Record<string, Record<string, FieldDef>> = {
     instagram: { col: 'instagram', transform: nullableStr },
     facebook: { col: 'facebook', transform: nullableStr },
     website: { col: 'website', transform: nullableStr },
-    password: { col: 'password', transform: nullableStr },
+    password: { col: 'password', transform: hashIfPresent },
     isVerified: { col: 'is_verified', transform: boolTransform },
     emailVerified: { col: 'email_verified', transform: boolTransform },
     paymentStatus: { col: 'payment_status', transform: strTransform },
@@ -1717,6 +1907,11 @@ export async function updateEntityById(
   for (const [key, def] of Object.entries(fieldMap)) {
     if (Object.prototype.hasOwnProperty.call(updates, key)) {
       const rawVal = updates[key];
+      if (normalizedResource === 'businesses' && key === 'password') {
+        if (rawVal === undefined || rawVal === null || String(rawVal).trim() === '') {
+          continue;
+        }
+      }
       const dbVal = def.transform ? def.transform(rawVal) : rawVal;
       setClauses.push(`${def.col} = ?`);
       params.push(dbVal);
@@ -1787,6 +1982,438 @@ export async function deleteEntityById(resource: string, id: string): Promise<{ 
   }
 }
 
+export interface SessionSettingsValues {
+  adminSessionDurationMinutes: number;
+  businessSessionDurationMinutes: number;
+}
+
+export interface DbAuthSessionPayload {
+  isAuthenticated: true;
+  role: 'admin' | 'business';
+  userId: string;
+  name: string;
+  email: string;
+  businessId?: string;
+  token: string;
+  loginTimestamp: number;
+  expiresAt: number;
+  durationMinutes: number;
+}
+
+function clampDurationMinutes(value: unknown, fallback: number): number {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) return fallback;
+  return Math.max(5, Math.min(43200, Math.round(parsed)));
+}
+
+export async function getSessionConfigFromDb(connOrPool?: Pool | PoolConnection): Promise<SessionSettingsValues> {
+  const executor = connOrPool || getPool();
+  const defaults: SessionSettingsValues = {
+    adminSessionDurationMinutes: 120,
+    businessSessionDurationMinutes: 1440,
+  };
+  if (!executor) return defaults;
+
+  try {
+    const [rows] = await executor.query<RowDataPacket[]>(
+      `SELECT setting_value FROM app_settings WHERE setting_key = 'sessionConfig' LIMIT 1`
+    );
+    if (rows.length === 0) return defaults;
+    const parsed = parseJsonColumn<Partial<SessionSettingsValues>>(rows[0].setting_value, {});
+    return {
+      adminSessionDurationMinutes: clampDurationMinutes(parsed.adminSessionDurationMinutes, 120),
+      businessSessionDurationMinutes: clampDurationMinutes(parsed.businessSessionDurationMinutes, 1440),
+    };
+  } catch {
+    return defaults;
+  }
+}
+
+export async function cleanupExpiredSessions(connOrPool?: Pool | PoolConnection): Promise<void> {
+  const executor = connOrPool || getPool();
+  if (!executor) return;
+  try {
+    await executor.query(
+      `DELETE FROM auth_sessions WHERE expires_at < ? OR revoked = 1`,
+      [Date.now()]
+    );
+  } catch {
+    // Ignore cleanup errors if table is initializing
+  }
+}
+
+export async function authenticateWithDb(params: {
+  loginType: 'admin' | 'business';
+  email: string;
+  password: string;
+  ipAddress?: string;
+  userAgent?: string;
+}): Promise<{ success: boolean; session?: DbAuthSessionPayload; error?: string }> {
+  const activePool = getPool();
+  const normalizedEmail = params.email.trim().toLowerCase();
+  const rawPassword = params.password;
+
+  if (!normalizedEmail || !rawPassword) {
+    return { success: false, error: 'Informe o e-mail e a senha de acesso.' };
+  }
+
+  if (!activePool) {
+    return { success: false, error: 'Banco de dados não configurado no servidor.' };
+  }
+
+  await ensureDatabaseSchema();
+  const conn = await activePool.getConnection();
+
+  try {
+    await cleanupExpiredSessions(conn);
+    const sessionCfg = await getSessionConfigFromDb(conn);
+    const now = Date.now();
+
+    if (params.loginType === 'admin') {
+      const [rows] = await conn.query<RowDataPacket[]>(
+        `SELECT id, email, name, password_hash, is_active
+         FROM admin_users
+         WHERE LOWER(email) = ?
+         LIMIT 1`,
+        [normalizedEmail]
+      );
+
+      if (rows.length === 0) {
+        return { success: false, error: 'Usuário administrador ou senha inválidos.' };
+      }
+
+      const adminRow = rows[0];
+      if (!Boolean(adminRow.is_active)) {
+        return { success: false, error: 'Esta conta administrativa está desativada.' };
+      }
+
+      if (!verifyPassword(rawPassword, adminRow.password_hash)) {
+        return { success: false, error: 'Usuário administrador ou senha inválidos.' };
+      }
+
+      if (!isPasswordHashed(adminRow.password_hash)) {
+        await conn.query(`UPDATE admin_users SET password_hash = ? WHERE id = ?`, [
+          hashPassword(rawPassword),
+          adminRow.id,
+        ]);
+      }
+
+      const durationMinutes = sessionCfg.adminSessionDurationMinutes;
+      const expiresAt = now + durationMinutes * 60 * 1000;
+      const token = crypto.randomBytes(32).toString('hex');
+
+      await conn.query(`UPDATE admin_users SET last_login_at = ? WHERE id = ?`, [
+        new Date(now).toISOString(),
+        adminRow.id,
+      ]);
+
+      await conn.query(
+        `INSERT INTO auth_sessions (
+           token, role, user_id, email, name, business_id, ip_address, user_agent,
+           created_at, expires_at, last_activity_at, revoked
+         ) VALUES (?, 'admin', ?, ?, ?, NULL, ?, ?, ?, ?, ?, 0)`,
+        [
+          token,
+          adminRow.id,
+          adminRow.email,
+          adminRow.name || 'Administrador Master',
+          params.ipAddress || null,
+          (params.userAgent || '').slice(0, 480) || null,
+          now,
+          expiresAt,
+          now,
+        ]
+      );
+
+      return {
+        success: true,
+        session: {
+          isAuthenticated: true,
+          role: 'admin',
+          userId: String(adminRow.id),
+          name: String(adminRow.name || 'Administrador Master'),
+          email: String(adminRow.email),
+          token,
+          loginTimestamp: now,
+          expiresAt,
+          durationMinutes,
+        },
+      };
+    }
+
+    const [bizRows] = await conn.query<RowDataPacket[]>(
+      `SELECT id, name, email, owner_email, password
+       FROM businesses
+       WHERE LOWER(owner_email) = ? OR LOWER(email) = ?
+       ORDER BY sort_order ASC, id ASC`,
+      [normalizedEmail, normalizedEmail]
+    );
+
+    if (bizRows.length === 0) {
+      return { success: false, error: 'Nenhuma loja encontrada com este e-mail.' };
+    }
+
+    let matchedBiz: RowDataPacket | null = null;
+    let hasAnyPasswordConfigured = false;
+    for (const row of bizRows) {
+      if (row.password && String(row.password).trim() !== '') {
+        hasAnyPasswordConfigured = true;
+        if (verifyPassword(rawPassword, row.password)) {
+          matchedBiz = row;
+          break;
+        }
+      }
+    }
+
+    if (!hasAnyPasswordConfigured) {
+      return {
+        success: false,
+        error: 'Esta loja ainda não possui senha cadastrada. Solicite ao administrador definir uma senha.',
+      };
+    }
+
+    if (!matchedBiz) {
+      return { success: false, error: 'E-mail ou senha da loja inválidos.' };
+    }
+
+    if (!isPasswordHashed(matchedBiz.password)) {
+      await conn.query(`UPDATE businesses SET password = ? WHERE id = ?`, [
+        hashPassword(rawPassword),
+        matchedBiz.id,
+      ]);
+    }
+
+    const durationMinutes = sessionCfg.businessSessionDurationMinutes;
+    const expiresAt = now + durationMinutes * 60 * 1000;
+    const token = crypto.randomBytes(32).toString('hex');
+    const resolvedEmail = String(matchedBiz.owner_email || matchedBiz.email || normalizedEmail);
+
+    await conn.query(
+      `INSERT INTO auth_sessions (
+         token, role, user_id, email, name, business_id, ip_address, user_agent,
+         created_at, expires_at, last_activity_at, revoked
+       ) VALUES (?, 'business', ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)`,
+      [
+        token,
+        matchedBiz.id,
+        resolvedEmail,
+        matchedBiz.name,
+        matchedBiz.id,
+        params.ipAddress || null,
+        (params.userAgent || '').slice(0, 480) || null,
+        now,
+        expiresAt,
+        now,
+      ]
+    );
+
+    return {
+      success: true,
+      session: {
+        isAuthenticated: true,
+        role: 'business',
+        userId: String(matchedBiz.id),
+        name: String(matchedBiz.name),
+        email: resolvedEmail,
+        businessId: String(matchedBiz.id),
+        token,
+        loginTimestamp: now,
+        expiresAt,
+        durationMinutes,
+      },
+    };
+  } finally {
+    conn.release();
+  }
+}
+
+export async function verifySessionTokenInDb(token: string): Promise<DbAuthSessionPayload | null> {
+  const activePool = getPool();
+  if (!activePool || !token) return null;
+  await ensureDatabaseSchema();
+
+  const now = Date.now();
+  const [rows] = await activePool.query<RowDataPacket[]>(
+    `SELECT * FROM auth_sessions WHERE token = ? AND revoked = 0 LIMIT 1`,
+    [token]
+  );
+
+  if (rows.length === 0) return null;
+  const row = rows[0];
+  const expiresAt = Number(row.expires_at || 0);
+  if (now >= expiresAt) {
+    await activePool.query(`DELETE FROM auth_sessions WHERE token = ?`, [token]);
+    return null;
+  }
+
+  if (row.role === 'admin') {
+    const [admins] = await activePool.query<RowDataPacket[]>(
+      `SELECT id FROM admin_users WHERE id = ? AND is_active = 1 LIMIT 1`,
+      [row.user_id]
+    );
+    if (admins.length === 0) {
+      await activePool.query(`DELETE FROM auth_sessions WHERE token = ?`, [token]);
+      return null;
+    }
+  } else if (row.role === 'business' && row.business_id) {
+    const [bizes] = await activePool.query<RowDataPacket[]>(
+      `SELECT id FROM businesses WHERE id = ? LIMIT 1`,
+      [row.business_id]
+    );
+    if (bizes.length === 0) {
+      await activePool.query(`DELETE FROM auth_sessions WHERE token = ?`, [token]);
+      return null;
+    }
+  }
+
+  await activePool.query(`UPDATE auth_sessions SET last_activity_at = ? WHERE token = ?`, [
+    now,
+    token,
+  ]);
+
+  const sessionCfg = await getSessionConfigFromDb(activePool);
+  const durationMinutes =
+    row.role === 'admin'
+      ? sessionCfg.adminSessionDurationMinutes
+      : sessionCfg.businessSessionDurationMinutes;
+
+  return {
+    isAuthenticated: true,
+    role: row.role === 'admin' ? 'admin' : 'business',
+    userId: String(row.user_id),
+    name: String(row.name),
+    email: String(row.email),
+    ...(row.business_id ? { businessId: String(row.business_id) } : {}),
+    token: String(row.token),
+    loginTimestamp: Number(row.created_at),
+    expiresAt,
+    durationMinutes,
+  };
+}
+
+export async function renewSessionTokenInDb(token: string): Promise<DbAuthSessionPayload | null> {
+  const activePool = getPool();
+  if (!activePool || !token) return null;
+  const existing = await verifySessionTokenInDb(token);
+  if (!existing) return null;
+
+  const sessionCfg = await getSessionConfigFromDb(activePool);
+  const now = Date.now();
+  const durationMinutes =
+    existing.role === 'admin'
+      ? sessionCfg.adminSessionDurationMinutes
+      : sessionCfg.businessSessionDurationMinutes;
+  const expiresAt = now + durationMinutes * 60 * 1000;
+
+  await activePool.query(
+    `UPDATE auth_sessions SET expires_at = ?, last_activity_at = ? WHERE token = ?`,
+    [expiresAt, now, token]
+  );
+
+  return {
+    ...existing,
+    loginTimestamp: now,
+    expiresAt,
+    durationMinutes,
+  };
+}
+
+export async function revokeSessionTokenInDb(token: string): Promise<void> {
+  const activePool = getPool();
+  if (!activePool || !token) return;
+  try {
+    await ensureDatabaseSchema();
+    await activePool.query(`DELETE FROM auth_sessions WHERE token = ?`, [token]);
+  } catch {
+    // Ignore revoke errors
+  }
+}
+
+export async function switchBusinessSessionInDb(
+  token: string,
+  targetBusinessId: string
+): Promise<{ success: boolean; session?: DbAuthSessionPayload; error?: string }> {
+  const activePool = getPool();
+  if (!activePool || !token) {
+    return { success: false, error: 'Sessão inválida.' };
+  }
+
+  const current = await verifySessionTokenInDb(token);
+  if (!current || current.role !== 'business') {
+    return { success: false, error: 'Sessão de lojista inválida ou expirada.' };
+  }
+
+  const [rows] = await activePool.query<RowDataPacket[]>(
+    `SELECT id, name, email, owner_email FROM businesses WHERE id = ? LIMIT 1`,
+    [targetBusinessId]
+  );
+
+  if (rows.length === 0) {
+    return { success: false, error: 'Loja não encontrada.' };
+  }
+
+  const target = rows[0];
+  const sessionEmail = current.email.trim().toLowerCase();
+  const targetOwner = String(target.owner_email || '').trim().toLowerCase();
+  const targetEmail = String(target.email || '').trim().toLowerCase();
+
+  if (targetOwner !== sessionEmail && targetEmail !== sessionEmail && target.id !== current.businessId) {
+    return { success: false, error: 'Você não tem permissão para acessar esta loja.' };
+  }
+
+  await activePool.query(
+    `UPDATE auth_sessions SET business_id = ?, name = ?, last_activity_at = ? WHERE token = ?`,
+    [target.id, target.name, Date.now(), token]
+  );
+
+  return {
+    success: true,
+    session: {
+      ...current,
+      businessId: String(target.id),
+      name: String(target.name),
+    },
+  };
+}
+
+export async function changeAdminPasswordInDb(
+  token: string,
+  currentPassword: string,
+  newPassword: string
+): Promise<{ success: boolean; error?: string }> {
+  const activePool = getPool();
+  if (!activePool) return { success: false, error: 'Banco de dados não configurado.' };
+
+  const session = await verifySessionTokenInDb(token);
+  if (!session || session.role !== 'admin') {
+    return { success: false, error: 'Sessão administrativa inválida ou expirada.' };
+  }
+
+  if (!newPassword || newPassword.length < 6) {
+    return { success: false, error: 'A nova senha deve ter no mínimo 6 caracteres.' };
+  }
+
+  const [rows] = await activePool.query<RowDataPacket[]>(
+    `SELECT id, password_hash FROM admin_users WHERE id = ? LIMIT 1`,
+    [session.userId]
+  );
+
+  if (rows.length === 0) {
+    return { success: false, error: 'Usuário administrador não encontrado.' };
+  }
+
+  if (!verifyPassword(currentPassword, rows[0].password_hash)) {
+    return { success: false, error: 'Senha atual incorreta.' };
+  }
+
+  await activePool.query(`UPDATE admin_users SET password_hash = ? WHERE id = ?`, [
+    hashPassword(newPassword),
+    session.userId,
+  ]);
+
+  return { success: true };
+}
+
 export interface DatabaseDiagnostics {
   configured: boolean;
   connected: boolean;
@@ -1798,13 +2425,37 @@ export interface DatabaseDiagnostics {
   user?: string;
   counts?: Record<string, number>;
   migratedColumns?: string[];
+  droppedLegacyTables?: string[];
+  remainingLegacyTables?: string[];
   error?: string;
 }
 
-export async function migrateDatabaseSchema(): Promise<{ addedColumns: string[] }> {
+export async function cleanupLegacyTables(): Promise<{ droppedTables: string[] }> {
+  const activePool = getPool();
+  if (!activePool) return { droppedTables: [] };
+  const conn = await activePool.getConnection();
+  try {
+    const droppedTables = await dropLegacyPortugueseTables(conn);
+    if (droppedTables.length > 0) {
+      lastDroppedLegacyTables = droppedTables;
+    }
+    return { droppedTables };
+  } finally {
+    conn.release();
+  }
+}
+
+export async function migrateDatabaseSchema(): Promise<{
+  addedColumns: string[];
+  droppedLegacyTables: string[];
+}> {
   lastMigratedColumns = [];
+  lastDroppedLegacyTables = [];
   await ensureDatabaseSchema(true);
-  return { addedColumns: lastMigratedColumns };
+  return {
+    addedColumns: lastMigratedColumns,
+    droppedLegacyTables: lastDroppedLegacyTables,
+  };
 }
 
 export async function getDatabaseDiagnostics(): Promise<DatabaseDiagnostics> {
@@ -1832,12 +2483,25 @@ export async function getDatabaseDiagnostics(): Promise<DatabaseDiagnostics> {
     }
 
     lastMigratedColumns = [];
+    lastDroppedLegacyTables = [];
     await ensureDatabaseSchema(true);
+    await cleanupExpiredSessions(activePool);
+
     const [verRows] = await activePool.query<RowDataPacket[]>(`SELECT VERSION() AS version`);
     const version = verRows[0]?.version ? String(verRows[0].version) : undefined;
     const seeded = await isSeedCompleted(activePool);
 
+    const [allTableRows] = await activePool.query<RowDataPacket[]>(
+      `SELECT TABLE_NAME AS tableName FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_SCHEMA = DATABASE()`
+    );
+    const existingSet = new Set(allTableRows.map((r) => String(r.tableName || '').toLowerCase()));
+    const remainingLegacyTables = LEGACY_PORTUGUESE_TABLES.filter((t) =>
+      existingSet.has(t.toLowerCase())
+    );
+
     const tables = [
+      'admin_users',
+      'auth_sessions',
       'cities',
       'categories',
       'plans',
@@ -1864,6 +2528,8 @@ export async function getDatabaseDiagnostics(): Promise<DatabaseDiagnostics> {
       ...safeTarget,
       counts,
       migratedColumns: lastMigratedColumns,
+      droppedLegacyTables: lastDroppedLegacyTables,
+      remainingLegacyTables,
     };
   } catch (err) {
     return {

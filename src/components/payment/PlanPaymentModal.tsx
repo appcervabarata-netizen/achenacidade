@@ -80,7 +80,7 @@ export const PlanPaymentModal: React.FC<PlanPaymentModalProps> = ({
   const targetBusiness =
     businesses.find((b) => b.id === businessId) ||
     currentBusinessAuth ||
-    businesses[0];
+    null;
 
   useEffect(() => {
     if (isOpen) {

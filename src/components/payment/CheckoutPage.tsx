@@ -35,7 +35,7 @@ export const CheckoutPage: React.FC = () => {
     planDiscountConfig,
     processPlanPayment,
     sendTemplatedEmail,
-    loginAsBusiness,
+    authSession,
     setCurrentView,
   } = useDirectory();
 
@@ -254,8 +254,15 @@ export const CheckoutPage: React.FC = () => {
   };
 
   const handleGoToPortal = () => {
-    loginAsBusiness(targetBusiness.id, targetBusiness);
-    setCurrentView('business_portal');
+    if (
+      authSession.isAuthenticated &&
+      authSession.role === 'business' &&
+      authSession.businessId === targetBusiness.id
+    ) {
+      setCurrentView('business_portal');
+    } else {
+      setCurrentView('login');
+    }
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 

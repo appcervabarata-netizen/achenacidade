@@ -44,8 +44,7 @@ export const RegisterStoreScreen: React.FC = () => {
     cities,
     categories,
     plans,
-    addBusiness,
-    loginAsBusiness,
+    registerBusinessAndLogin,
     setCurrentView,
     sessionConfig,
     preselectedPlanId,
@@ -267,16 +266,14 @@ export const RegisterStoreScreen: React.FC = () => {
         paymentToken,
       };
 
-      const newId = addBusiness(newBizData);
-      const createdBizObj = {
-        ...newBizData,
-        id: newId,
-        slug: form.name.toLowerCase().replace(/[^a-z0-9]+/g, '-'),
-        createdAt: new Date().toISOString().split('T')[0],
-      };
+      const regRes = await registerBusinessAndLogin(newBizData, false);
+      if (!regRes.success || !regRes.businessId) {
+        setErrorMsg(regRes.error || 'Não foi possível concluir o cadastro da empresa no banco.');
+        setIsSubmitting(false);
+        return;
+      }
 
-      loginAsBusiness(newId, createdBizObj);
-
+      const newId = regRes.businessId;
       const cityName = cities.find((c) => c.id === form.cityId)?.name || 'Alagoinhas';
       const origin = typeof window !== 'undefined' ? window.location.origin : '';
 

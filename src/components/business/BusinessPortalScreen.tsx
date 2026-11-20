@@ -79,7 +79,7 @@ export const BusinessPortalScreen: React.FC = () => {
     businesses,
     products,
     services,
-    addBusiness,
+    registerBusinessAndLogin,
     updateBusiness,
     addProduct,
     deleteProduct,
@@ -91,7 +91,8 @@ export const BusinessPortalScreen: React.FC = () => {
     updateStoreProductCategory,
     deleteStoreProductCategory,
     currentBusinessAuth,
-    loginAsBusiness,
+    switchActiveBusiness,
+    renewSession,
     authSession,
     openPaymentModal,
     openCheckoutPage,
@@ -101,19 +102,21 @@ export const BusinessPortalScreen: React.FC = () => {
     preselectedBillingCycle,
   } = useDirectory();
 
-  // Active business session or default to first business if in demo mode
-  const activeBusiness = currentBusinessAuth || businesses[0];
+  // Strictly use authenticated business session (no unauthenticated demo fallback)
+  const activeBusiness =
+    currentBusinessAuth || businesses.find((b) => b.id === authSession.businessId) || null;
   const activePlan = activeBusiness ? plans.find((p) => p.id === activeBusiness.planId) || plans[0] : null;
   const businessProducts = activeBusiness ? products.filter((p) => p.businessId === activeBusiness.id) : [];
   const businessServices = activeBusiness ? services.filter((s) => s.businessId === activeBusiness.id) : [];
   const activeStoreCategories = activeBusiness ? storeProductCategories.filter((c) => c.businessId === activeBusiness.id) : [];
 
   // User's owned businesses (restricted strictly to the authenticated user's account)
-  const userOwnerEmail = activeBusiness?.ownerEmail || authSession.email || 'lojista@achenacidade.com.br';
+  const userOwnerEmail = activeBusiness?.ownerEmail || authSession.email || '';
   const myBusinesses = businesses.filter(
     (b) =>
-      (b.ownerEmail && b.ownerEmail.toLowerCase() === userOwnerEmail.toLowerCase()) ||
-      (b.email && b.email.toLowerCase() === userOwnerEmail.toLowerCase()) ||
+      (userOwnerEmail &&
+        ((b.ownerEmail && b.ownerEmail.toLowerCase() === userOwnerEmail.toLowerCase()) ||
+          (b.email && b.email.toLowerCase() === userOwnerEmail.toLowerCase()))) ||
       b.id === activeBusiness?.id
   );
 
@@ -516,6 +519,31 @@ export const BusinessPortalScreen: React.FC = () => {
     }
   };
 
+  if (!authSession.isAuthenticated || authSession.role !== 'business' || !activeBusiness) {
+    return (
+      <div className="min-h-screen bg-slate-50 dark:bg-slate-950 flex flex-col items-center justify-center p-6 text-center">
+        <Store className="w-12 h-12 text-blue-600 mb-3" />
+        <h2 className="text-xl font-bold text-slate-900 dark:text-white font-display">
+          Sessão da Loja Não Autenticada
+        </h2>
+        <p className="text-xs sm:text-sm text-slate-600 dark:text-slate-400 mt-1 max-w-md">
+          Faça login com o e-mail e senha da sua loja para gerenciar produtos, serviços e configurações.
+        </p>
+        <button
+          type="button"
+          onClick={() => setCurrentView('login')}
+          className="mt-5 px-5 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-xs sm:text-sm font-bold cursor-pointer"
+        >
+          Ir para Tela de Login
+        </button>
+      </div>
+    );
+  }
+
+  const remainingSessionMinutes = authSession.expiresAt
+    ? Math.max(0, Math.ceil((authSession.expiresAt - Date.now()) / 60000))
+    : null;
+
   return (
     <div className="min-h-screen bg-slate-50 dark:bg-slate-950 flex flex-col transition-colors pb-24 md:pb-12">
       
@@ -554,7 +582,9 @@ export const BusinessPortalScreen: React.FC = () => {
           {myBusinesses.length > 1 ? (
             <select
               value={activeBusiness?.id || ''}
-              onChange={(e) => loginAsBusiness(e.target.value)}
+              onChange={(e) => {
+                void switchActiveBusiness(e.target.value);
+              }}
               className="hidden md:block bg-slate-800 text-white text-xs font-semibold px-2.5 py-1.5 rounded-lg border border-slate-700 cursor-pointer outline-none"
             >
               {myBusinesses.map((b) => (
@@ -568,6 +598,29 @@ export const BusinessPortalScreen: React.FC = () => {
               <Store className="w-3.5 h-3.5 text-blue-400" />
               <span>Loja Ativa</span>
             </span>
+          )}
+
+          {remainingSessionMinutes !== null && (
+            <button
+              type="button"
+              onClick={() => {
+                void renewSession().then((res) => {
+                  if (res.success) {
+                    setNotification({ text: 'Sessão renovada com sucesso no banco de dados!', type: 'success' });
+                  }
+                });
+              }}
+              className="hidden sm:inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-[11px] font-semibold text-emerald-300 border border-slate-700 cursor-pointer"
+              title="Clique para renovar o tempo de sessão"
+            >
+              <Clock className="w-3 h-3" />
+              <span>
+                {remainingSessionMinutes >= 60
+                  ? `${Math.floor(remainingSessionMinutes / 60)}h ${remainingSessionMinutes % 60}m`
+                  : `${remainingSessionMinutes}m`}{' '}
+                · Renovar
+              </span>
+            </button>
           )}
 
           <button
@@ -2193,7 +2246,7 @@ export const BusinessPortalScreen: React.FC = () => {
               </div>
             ) : (
               <form
-                onSubmit={(e) => {
+                onSubmit={async (e) => {
                   e.preventDefault();
                   if (!newBizForm.name.trim() || !newBizForm.whatsapp.trim()) {
                     setNotification({ text: 'Informe ao menos o nome da empresa e o WhatsApp.', type: 'error' });
@@ -2208,7 +2261,7 @@ export const BusinessPortalScreen: React.FC = () => {
                     description: newBizForm.description.trim() || 'Nova empresa no achenacidade.',
                     phone: newBizForm.phone.trim(),
                     whatsapp: newBizForm.whatsapp.trim(),
-                    email: newBizForm.email.trim(),
+                    email: newBizForm.email.trim() || userOwnerEmail,
                     ownerEmail: userOwnerEmail,
                     address: newBizForm.address.trim() || 'Endereço Comercial',
                     neighborhood: newBizForm.neighborhood.trim() || 'Centro',
@@ -2219,19 +2272,16 @@ export const BusinessPortalScreen: React.FC = () => {
                     instagram: newBizForm.instagram.trim(),
                     facebook: newBizForm.facebook.trim(),
                     website: newBizForm.website.trim(),
-                    password: newBizForm.password || '123456',
+                    ...(newBizForm.password.trim() ? { password: newBizForm.password.trim() } : {}),
                     isVerified: false,
                   };
 
-                  const newId = addBusiness(newBizData);
-                  const createdBizObj = {
-                    ...newBizData,
-                    id: newId,
-                    slug: newBizForm.name.toLowerCase().replace(/[^a-z0-9]+/g, '-'),
-                    createdAt: new Date().toISOString().split('T')[0],
-                  };
+                  const res = await registerBusinessAndLogin(newBizData, true);
+                  if (!res.success) {
+                    setNotification({ text: res.error || 'Erro ao cadastrar nova loja no banco.', type: 'error' });
+                    return;
+                  }
 
-                  loginAsBusiness(newId, createdBizObj);
                   setActiveTab('dashboard');
                   setNotification({ text: `Loja "${newBizForm.name}" criada com sucesso! Você está no painel da sua nova loja.`, type: 'success' });
                 }}

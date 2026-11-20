@@ -33,7 +33,7 @@ export const BottomNav: React.FC = () => {
     logout,
     businesses,
     currentBusinessAuth,
-    loginAsBusiness,
+    switchActiveBusiness,
     openModal,
     totalFavoritesCount,
   } = useDirectory();
@@ -51,7 +51,8 @@ export const BottomNav: React.FC = () => {
   };
 
   if (isStoreOwnerLoggedIn) {
-    const activeBusiness = currentBusinessAuth || businesses.find((b) => b.id === authSession.businessId) || businesses[0];
+    const activeBusiness =
+      currentBusinessAuth || businesses.find((b) => b.id === authSession.businessId);
     const userOwnerEmail = activeBusiness?.ownerEmail || authSession.email || '';
     const myBusinesses = businesses.filter(
       (b) =>
@@ -119,7 +120,7 @@ export const BottomNav: React.FC = () => {
                   <select
                     value={activeBusiness?.id || ''}
                     onChange={(e) => {
-                      loginAsBusiness(e.target.value);
+                      void switchActiveBusiness(e.target.value);
                       setIsMerchantMenuOpen(false);
                     }}
                     className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-xs font-semibold text-slate-900 dark:text-white"

@@ -6,6 +6,10 @@ import fs from 'fs';
 import crypto from 'crypto';
 import { fileURLToPath } from 'url';
 import {
+  DEFAULT_ADMIN_EMAIL,
+  DEFAULT_ADMIN_PASSWORD,
+  hashPassword,
+  verifyPassword,
   isDatabaseConfigured,
   getPool,
   closePool,
@@ -21,6 +25,14 @@ import {
   deleteEntityById,
   getDatabaseDiagnostics,
   migrateDatabaseSchema,
+  cleanupLegacyTables,
+  authenticateWithDb,
+  verifySessionTokenInDb,
+  renewSessionTokenInDb,
+  revokeSessionTokenInDb,
+  switchBusinessSessionInDb,
+  changeAdminPasswordInDb,
+  type DbAuthSessionPayload,
 } from './server/db.ts';
 
 dotenv.config();
@@ -44,6 +56,73 @@ app.use('/api', (_req, res, next) => {
   res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
   next();
 });
+
+// Brute-force login attempt limiter (per IP + email)
+const loginAttempts = new Map<string, { count: number; resetAt: number }>();
+const MAX_LOGIN_ATTEMPTS = 8;
+const LOGIN_WINDOW_MS = 15 * 60 * 1000;
+
+function checkLoginRateLimit(key: string): { allowed: boolean; retryAfterMinutes?: number } {
+  const now = Date.now();
+  const entry = loginAttempts.get(key);
+  if (!entry || now > entry.resetAt) {
+    return { allowed: true };
+  }
+  if (entry.count >= MAX_LOGIN_ATTEMPTS) {
+    const retryAfterMinutes = Math.max(1, Math.ceil((entry.resetAt - now) / 60000));
+    return { allowed: false, retryAfterMinutes };
+  }
+  return { allowed: true };
+}
+
+function recordFailedLoginAttempt(key: string) {
+  const now = Date.now();
+  const entry = loginAttempts.get(key);
+  if (!entry || now > entry.resetAt) {
+    loginAttempts.set(key, { count: 1, resetAt: now + LOGIN_WINDOW_MS });
+  } else {
+    entry.count += 1;
+  }
+}
+
+function clearLoginAttempts(key: string) {
+  loginAttempts.delete(key);
+}
+
+// Local preview fallback store (used ONLY when MySQL DB_* env vars are not configured)
+let localAdminPasswordHash = hashPassword(DEFAULT_ADMIN_PASSWORD);
+let localSessionConfig = {
+  adminSessionDurationMinutes: 120,
+  businessSessionDurationMinutes: 1440,
+};
+const localSessions = new Map<string, DbAuthSessionPayload>();
+const localBusinessUsers = new Map<
+  string,
+  { id: string; name: string; email: string; ownerEmail: string; passwordHash: string }
+>();
+
+function extractSessionToken(req: express.Request): string {
+  const authHeader = req.headers.authorization;
+  if (typeof authHeader === 'string' && authHeader.toLowerCase().startsWith('bearer ')) {
+    return authHeader.slice(7).trim();
+  }
+  const headerToken = req.headers['x-session-token'];
+  if (typeof headerToken === 'string' && headerToken.trim()) {
+    return headerToken.trim();
+  }
+  if (req.body && typeof (req.body as { token?: unknown }).token === 'string') {
+    return String((req.body as { token: string }).token).trim();
+  }
+  return '';
+}
+
+function getClientIp(req: express.Request): string {
+  const forwarded = req.headers['x-forwarded-for'];
+  if (typeof forwarded === 'string' && forwarded.trim()) {
+    return forwarded.split(',')[0].trim();
+  }
+  return req.ip || req.socket?.remoteAddress || 'unknown';
+}
 
 interface IncomingSmtpConfig {
   enabled?: boolean;
@@ -332,14 +411,28 @@ app.put('/api/sync/:collection', async (req, res) => {
 });
 
 app.put('/api/settings/:key', async (req, res) => {
+  const { key } = req.params;
+  const { value } = req.body as { value?: any };
+
+  if (key === 'sessionConfig' && value && typeof value === 'object') {
+    const adminMins = Number(value.adminSessionDurationMinutes);
+    const bizMins = Number(value.businessSessionDurationMinutes);
+    localSessionConfig = {
+      adminSessionDurationMinutes: Number.isFinite(adminMins)
+        ? Math.max(5, Math.min(43200, Math.round(adminMins)))
+        : localSessionConfig.adminSessionDurationMinutes,
+      businessSessionDurationMinutes: Number.isFinite(bizMins)
+        ? Math.max(5, Math.min(43200, Math.round(bizMins)))
+        : localSessionConfig.businessSessionDurationMinutes,
+    };
+  }
+
   if (!isDatabaseConfigured()) {
     res.json({ success: true, databaseEnabled: false });
     return;
   }
 
   try {
-    const { key } = req.params;
-    const { value } = req.body as { value?: any };
     await upsertSetting(key, value);
     res.json({ success: true, databaseEnabled: true });
   } catch (err) {
@@ -370,13 +463,27 @@ app.post('/api/bootstrap/sync-all', async (req, res) => {
 });
 
 app.post('/api/entities/:resource', async (req, res) => {
+  const { resource } = req.params;
+  if (resource === 'businesses' && req.body && req.body.id) {
+    const b = req.body;
+    const rawPwd = typeof b.password === 'string' ? b.password.trim() : '';
+    if (rawPwd) {
+      localBusinessUsers.set(String(b.id), {
+        id: String(b.id),
+        name: String(b.name || ''),
+        email: String(b.email || ''),
+        ownerEmail: String(b.ownerEmail || ''),
+        passwordHash: hashPassword(rawPwd),
+      });
+    }
+  }
+
   if (!isDatabaseConfigured()) {
     res.json({ success: true, databaseEnabled: false });
     return;
   }
 
   try {
-    const { resource } = req.params;
     await upsertEntity(resource, req.body);
     res.json({ success: true, databaseEnabled: true });
   } catch (err) {
@@ -387,13 +494,27 @@ app.post('/api/entities/:resource', async (req, res) => {
 });
 
 app.put('/api/entities/:resource/:id', async (req, res) => {
+  const { resource, id } = req.params;
+  if (resource === 'businesses' && req.body) {
+    const existing = localBusinessUsers.get(id);
+    const rawPwd = typeof req.body.password === 'string' ? req.body.password.trim() : '';
+    if (existing || rawPwd) {
+      localBusinessUsers.set(id, {
+        id,
+        name: String(req.body.name ?? existing?.name ?? ''),
+        email: String(req.body.email ?? existing?.email ?? ''),
+        ownerEmail: String(req.body.ownerEmail ?? existing?.ownerEmail ?? ''),
+        passwordHash: rawPwd ? hashPassword(rawPwd) : (existing?.passwordHash || ''),
+      });
+    }
+  }
+
   if (!isDatabaseConfigured()) {
     res.json({ success: true, updated: false, databaseEnabled: false });
     return;
   }
 
   try {
-    const { resource, id } = req.params;
     const result = await updateEntityById(resource, id, req.body || {});
     res.json({ success: true, updated: result.updated, databaseEnabled: true });
   } catch (err) {
@@ -404,19 +525,319 @@ app.put('/api/entities/:resource/:id', async (req, res) => {
 });
 
 app.delete('/api/entities/:resource/:id', async (req, res) => {
+  const { resource, id } = req.params;
+  if (resource === 'businesses') {
+    localBusinessUsers.delete(id);
+  }
+
   if (!isDatabaseConfigured()) {
     res.json({ success: true, deleted: false, databaseEnabled: false });
     return;
   }
 
   try {
-    const { resource, id } = req.params;
     const result = await deleteEntityById(resource, id);
     res.json({ success: true, deleted: result.deleted, databaseEnabled: true });
   } catch (err) {
     const message = err instanceof Error ? err.message : 'Entity delete error.';
     console.error(`Error deleting ${req.params.resource}/${req.params.id}:`, message);
     res.status(500).json({ success: false, databaseEnabled: true, error: message });
+  }
+});
+
+// ========================================================
+// Authentication & Session Management Endpoints (DB + Local)
+// ========================================================
+
+app.post('/api/auth/login', async (req, res) => {
+  const { loginType, email, password } = req.body as {
+    loginType?: 'admin' | 'business';
+    email?: string;
+    password?: string;
+  };
+
+  const role: 'admin' | 'business' = loginType === 'admin' ? 'admin' : 'business';
+  const normalizedEmail = (email || '').trim().toLowerCase();
+  const rawPassword = typeof password === 'string' ? password : '';
+
+  if (!normalizedEmail || !rawPassword) {
+    res.status(400).json({ success: false, error: 'Informe o e-mail e a senha de acesso.' });
+    return;
+  }
+
+  const ip = getClientIp(req);
+  const rateKey = `${ip}:${role}:${normalizedEmail}`;
+  const rateCheck = checkLoginRateLimit(rateKey);
+  if (!rateCheck.allowed) {
+    res.status(429).json({
+      success: false,
+      error: `Muitas tentativas inválidas. Aguarde ${rateCheck.retryAfterMinutes} minuto(s) antes de tentar novamente.`,
+    });
+    return;
+  }
+
+  if (!isDatabaseConfigured()) {
+    const now = Date.now();
+    if (role === 'admin') {
+      if (
+        normalizedEmail !== DEFAULT_ADMIN_EMAIL.toLowerCase() ||
+        !verifyPassword(rawPassword, localAdminPasswordHash)
+      ) {
+        recordFailedLoginAttempt(rateKey);
+        res.status(401).json({ success: false, error: 'Usuário administrador ou senha inválidos.' });
+        return;
+      }
+
+      clearLoginAttempts(rateKey);
+      const token = crypto.randomBytes(32).toString('hex');
+      const durationMinutes = localSessionConfig.adminSessionDurationMinutes;
+      const session: DbAuthSessionPayload = {
+        isAuthenticated: true,
+        role: 'admin',
+        userId: 'admin-master',
+        name: 'Administrador Master',
+        email: DEFAULT_ADMIN_EMAIL,
+        token,
+        loginTimestamp: now,
+        expiresAt: now + durationMinutes * 60 * 1000,
+        durationMinutes,
+      };
+      localSessions.set(token, session);
+      res.json({ success: true, databaseEnabled: false, session });
+      return;
+    }
+
+    const matchingLocalBiz = Array.from(localBusinessUsers.values()).find(
+      (b) =>
+        (b.ownerEmail.toLowerCase() === normalizedEmail || b.email.toLowerCase() === normalizedEmail) &&
+        verifyPassword(rawPassword, b.passwordHash)
+    );
+
+    if (!matchingLocalBiz) {
+      recordFailedLoginAttempt(rateKey);
+      res.status(401).json({
+        success: false,
+        error: 'E-mail ou senha da loja inválidos.',
+      });
+      return;
+    }
+
+    clearLoginAttempts(rateKey);
+    const token = crypto.randomBytes(32).toString('hex');
+    const durationMinutes = localSessionConfig.businessSessionDurationMinutes;
+    const session: DbAuthSessionPayload = {
+      isAuthenticated: true,
+      role: 'business',
+      userId: matchingLocalBiz.id,
+      name: matchingLocalBiz.name,
+      email: matchingLocalBiz.ownerEmail || matchingLocalBiz.email || normalizedEmail,
+      businessId: matchingLocalBiz.id,
+      token,
+      loginTimestamp: now,
+      expiresAt: now + durationMinutes * 60 * 1000,
+      durationMinutes,
+    };
+    localSessions.set(token, session);
+    res.json({ success: true, databaseEnabled: false, session });
+    return;
+  }
+
+  try {
+    const result = await authenticateWithDb({
+      loginType: role,
+      email: normalizedEmail,
+      password: rawPassword,
+      ipAddress: ip,
+      userAgent: req.headers['user-agent'] || '',
+    });
+
+    if (!result.success || !result.session) {
+      recordFailedLoginAttempt(rateKey);
+      res.status(401).json({
+        success: false,
+        databaseEnabled: true,
+        error: result.error || 'Credenciais inválidas.',
+      });
+      return;
+    }
+
+    clearLoginAttempts(rateKey);
+    res.json({ success: true, databaseEnabled: true, session: result.session });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : 'Erro ao autenticar no banco de dados.';
+    console.error('Error in /api/auth/login:', message);
+    res.status(500).json({ success: false, databaseEnabled: true, error: message });
+  }
+});
+
+app.get('/api/auth/session', async (req, res) => {
+  const token = extractSessionToken(req);
+  if (!token) {
+    res.status(401).json({ authenticated: false, error: 'Token de sessão ausente.' });
+    return;
+  }
+
+  if (!isDatabaseConfigured()) {
+    const existing = localSessions.get(token);
+    if (!existing || Date.now() >= existing.expiresAt) {
+      localSessions.delete(token);
+      res.status(401).json({ authenticated: false, error: 'Sessão expirada ou inválida.' });
+      return;
+    }
+    res.json({ authenticated: true, databaseEnabled: false, session: existing });
+    return;
+  }
+
+  try {
+    const session = await verifySessionTokenInDb(token);
+    if (!session) {
+      res.status(401).json({ authenticated: false, databaseEnabled: true, error: 'Sessão expirada ou inválida.' });
+      return;
+    }
+    res.json({ authenticated: true, databaseEnabled: true, session });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : 'Erro ao validar sessão.';
+    res.status(500).json({ authenticated: false, error: message });
+  }
+});
+
+app.post('/api/auth/renew', async (req, res) => {
+  const token = extractSessionToken(req);
+  if (!token) {
+    res.status(401).json({ success: false, error: 'Token de sessão ausente.' });
+    return;
+  }
+
+  if (!isDatabaseConfigured()) {
+    const existing = localSessions.get(token);
+    if (!existing || Date.now() >= existing.expiresAt) {
+      localSessions.delete(token);
+      res.status(401).json({ success: false, error: 'Sessão expirada ou inválida.' });
+      return;
+    }
+    const now = Date.now();
+    const durationMinutes =
+      existing.role === 'admin'
+        ? localSessionConfig.adminSessionDurationMinutes
+        : localSessionConfig.businessSessionDurationMinutes;
+    const updated: DbAuthSessionPayload = {
+      ...existing,
+      loginTimestamp: now,
+      expiresAt: now + durationMinutes * 60 * 1000,
+      durationMinutes,
+    };
+    localSessions.set(token, updated);
+    res.json({ success: true, databaseEnabled: false, session: updated });
+    return;
+  }
+
+  try {
+    const session = await renewSessionTokenInDb(token);
+    if (!session) {
+      res.status(401).json({ success: false, error: 'Sessão expirada ou inválida.' });
+      return;
+    }
+    res.json({ success: true, databaseEnabled: true, session });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : 'Erro ao renovar sessão.';
+    res.status(500).json({ success: false, error: message });
+  }
+});
+
+app.post('/api/auth/logout', async (req, res) => {
+  const token = extractSessionToken(req);
+  if (token) {
+    localSessions.delete(token);
+    if (isDatabaseConfigured()) {
+      await revokeSessionTokenInDb(token);
+    }
+  }
+  res.json({ success: true });
+});
+
+app.post('/api/auth/switch-business', async (req, res) => {
+  const token = extractSessionToken(req);
+  const { businessId } = req.body as { businessId?: string };
+  if (!token || !businessId) {
+    res.status(400).json({ success: false, error: 'Token e ID da loja são obrigatórios.' });
+    return;
+  }
+
+  if (!isDatabaseConfigured()) {
+    const existing = localSessions.get(token);
+    if (!existing || existing.role !== 'business' || Date.now() >= existing.expiresAt) {
+      res.status(401).json({ success: false, error: 'Sessão inválida ou expirada.' });
+      return;
+    }
+    const target = localBusinessUsers.get(businessId);
+    const updated: DbAuthSessionPayload = {
+      ...existing,
+      businessId,
+      name: target?.name || existing.name,
+    };
+    localSessions.set(token, updated);
+    res.json({ success: true, databaseEnabled: false, session: updated });
+    return;
+  }
+
+  try {
+    const result = await switchBusinessSessionInDb(token, businessId);
+    if (!result.success || !result.session) {
+      res.status(403).json({ success: false, error: result.error || 'Não autorizado.' });
+      return;
+    }
+    res.json({ success: true, databaseEnabled: true, session: result.session });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : 'Erro ao alternar loja.';
+    res.status(500).json({ success: false, error: message });
+  }
+});
+
+app.post('/api/auth/change-password', async (req, res) => {
+  const token = extractSessionToken(req);
+  const { currentPassword, newPassword } = req.body as {
+    currentPassword?: string;
+    newPassword?: string;
+  };
+
+  if (!token) {
+    res.status(401).json({ success: false, error: 'Sessão administrativa ausente.' });
+    return;
+  }
+  if (!currentPassword || !newPassword) {
+    res.status(400).json({ success: false, error: 'Informe a senha atual e a nova senha.' });
+    return;
+  }
+
+  if (!isDatabaseConfigured()) {
+    const existing = localSessions.get(token);
+    if (!existing || existing.role !== 'admin' || Date.now() >= existing.expiresAt) {
+      res.status(401).json({ success: false, error: 'Sessão administrativa inválida ou expirada.' });
+      return;
+    }
+    if (!verifyPassword(currentPassword, localAdminPasswordHash)) {
+      res.status(400).json({ success: false, error: 'Senha atual incorreta.' });
+      return;
+    }
+    if (newPassword.length < 6) {
+      res.status(400).json({ success: false, error: 'A nova senha deve ter no mínimo 6 caracteres.' });
+      return;
+    }
+    localAdminPasswordHash = hashPassword(newPassword);
+    res.json({ success: true, databaseEnabled: false });
+    return;
+  }
+
+  try {
+    const result = await changeAdminPasswordInDb(token, currentPassword, newPassword);
+    if (!result.success) {
+      res.status(400).json({ success: false, error: result.error || 'Falha ao atualizar senha.' });
+      return;
+    }
+    res.json({ success: true, databaseEnabled: true });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : 'Erro ao alterar senha.';
+    res.status(500).json({ success: false, error: message });
   }
 });
 
@@ -437,16 +858,48 @@ app.get('/api/db/diagnostics', async (_req, res) => {
 
 app.post('/api/db/migrate', async (_req, res) => {
   if (!isDatabaseConfigured()) {
-    res.json({ success: false, databaseEnabled: false, addedColumns: [], error: 'Banco não configurado.' });
+    res.json({
+      success: false,
+      databaseEnabled: false,
+      addedColumns: [],
+      droppedLegacyTables: [],
+      error: 'Banco não configurado.',
+    });
     return;
   }
 
   try {
     const result = await migrateDatabaseSchema();
-    res.json({ success: true, databaseEnabled: true, addedColumns: result.addedColumns });
+    res.json({
+      success: true,
+      databaseEnabled: true,
+      addedColumns: result.addedColumns,
+      droppedLegacyTables: result.droppedLegacyTables,
+    });
   } catch (err) {
     const message = err instanceof Error ? err.message : 'Schema migration error.';
-    res.status(500).json({ success: false, databaseEnabled: true, addedColumns: [], error: message });
+    res.status(500).json({
+      success: false,
+      databaseEnabled: true,
+      addedColumns: [],
+      droppedLegacyTables: [],
+      error: message,
+    });
+  }
+});
+
+app.post('/api/db/cleanup-legacy', async (_req, res) => {
+  if (!isDatabaseConfigured()) {
+    res.json({ success: false, databaseEnabled: false, droppedTables: [], error: 'Banco não configurado.' });
+    return;
+  }
+
+  try {
+    const result = await cleanupLegacyTables();
+    res.json({ success: true, databaseEnabled: true, droppedTables: result.droppedTables });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : 'Erro ao remover tabelas antigas.';
+    res.status(500).json({ success: false, databaseEnabled: true, droppedTables: [], error: message });
   }
 });
 
@@ -506,9 +959,92 @@ async function startServer() {
   if (process.env.NODE_ENV !== 'production') {
     const { createServer: createViteServer } = await import('vite');
     const vite = await createViteServer({
-      server: { middlewareMode: true, hmr: false },
+      server: { middlewareMode: true, hmr: false, ws: false },
       appType: 'spa',
     });
+
+    app.get('/@vite/client', (_req, res) => {
+      res.setHeader('Content-Type', 'application/javascript; charset=utf-8');
+      res.setHeader('Cache-Control', 'no-store');
+      res.send(`import "/node_modules/vite/dist/client/env.mjs";
+
+const sheetsMap = new Map();
+const linkSheetsMap = new Map();
+
+if (typeof document !== "undefined") {
+  document.querySelectorAll("style[data-vite-dev-id]").forEach((el) => {
+    sheetsMap.set(el.getAttribute("data-vite-dev-id"), el);
+  });
+  document.querySelectorAll('link[rel="stylesheet"][data-vite-dev-id]').forEach((el) => {
+    linkSheetsMap.set(el.getAttribute("data-vite-dev-id"), el);
+  });
+}
+
+let lastInsertedStyle;
+
+export function updateStyle(id, content) {
+  if (typeof document === "undefined" || linkSheetsMap.has(id)) return;
+  let style = sheetsMap.get(id);
+  if (!style) {
+    style = document.createElement("style");
+    style.setAttribute("type", "text/css");
+    style.setAttribute("data-vite-dev-id", id);
+    style.textContent = content;
+    if (!lastInsertedStyle) {
+      document.head.appendChild(style);
+      setTimeout(() => {
+        lastInsertedStyle = undefined;
+      }, 0);
+    } else {
+      lastInsertedStyle.insertAdjacentElement("afterend", style);
+    }
+    lastInsertedStyle = style;
+  } else if (style.textContent !== content) {
+    style.textContent = content;
+  }
+  sheetsMap.set(id, style);
+}
+
+export function removeStyle(id) {
+  if (typeof document === "undefined") return;
+  if (linkSheetsMap.has(id)) {
+    document.querySelectorAll(\`link[rel="stylesheet"][data-vite-dev-id="\${CSS.escape(id)}"]\`).forEach((el) => el.remove());
+    linkSheetsMap.delete(id);
+  }
+  const style = sheetsMap.get(id);
+  if (style) {
+    style.remove();
+    sheetsMap.delete(id);
+  }
+}
+
+export function createHotContext() {
+  const noop = () => {};
+  return {
+    data: {},
+    accept: noop,
+    acceptExports: noop,
+    dispose: noop,
+    prune: noop,
+    decline: noop,
+    invalidate: noop,
+    on: noop,
+    off: noop,
+    send: noop,
+  };
+}
+
+export function injectQuery(url, queryToInject) {
+  if (url[0] !== "." && url[0] !== "/") return url;
+  const pathname = url.replace(/[?#].*$/, "");
+  const { search, hash } = new URL(url, "http://vite.dev");
+  return \`\${pathname}?\${queryToInject}\${search ? "&" + search.slice(1) : ""}\${hash || ""}\`;
+}
+
+export class ErrorOverlay extends (typeof HTMLElement !== "undefined" ? HTMLElement : Object) {}
+`);
+    });
+
     app.use(vite.middlewares);
   } else {
     const distPath = path.resolve(__dirname, 'dist');

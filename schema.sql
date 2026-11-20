@@ -1,16 +1,62 @@
 -- ========================================================
 -- achenacidade — Estrutura Completa do Banco de Dados MySQL / MariaDB
 -- Compatível com CapRover (MySQL 5.7+ / 8.0+ / MariaDB 10.3+) e phpMyAdmin
+-- Padrão exclusivo com nomes de tabelas em inglês
 -- Codificação: utf8mb4_unicode_ci
 -- ========================================================
 
 SET NAMES utf8mb4;
 SET FOREIGN_KEY_CHECKS = 0;
 
+-- Remove tabelas antigas em português caso tenham sido importadas anteriormente
+DROP TABLE IF EXISTS `pagamentos`;
+DROP TABLE IF EXISTS `categorias_produtos_loja`;
+DROP TABLE IF EXISTS `servicos`;
+DROP TABLE IF EXISTS `produtos`;
+DROP TABLE IF EXISTS `empresas`;
+DROP TABLE IF EXISTS `planos`;
+DROP TABLE IF EXISTS `categorias`;
+DROP TABLE IF EXISTS `cidades`;
+DROP TABLE IF EXISTS `usuarios`;
+DROP TABLE IF EXISTS `configuracoes`;
+DROP TABLE IF EXISTS `sessoes`;
+DROP TABLE IF EXISTS `anuncios`;
+
 CREATE TABLE IF NOT EXISTS `app_meta` (
   `meta_key` VARCHAR(120) PRIMARY KEY,
   `meta_value` VARCHAR(500) NOT NULL,
   `updated_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS `admin_users` (
+  `id` VARCHAR(120) PRIMARY KEY,
+  `email` VARCHAR(255) NOT NULL,
+  `name` VARCHAR(255) NOT NULL,
+  `password_hash` VARCHAR(255) NOT NULL,
+  `role` VARCHAR(32) NOT NULL DEFAULT 'admin',
+  `is_active` TINYINT(1) NOT NULL DEFAULT 1,
+  `last_login_at` VARCHAR(64) NULL,
+  `sort_order` INT NOT NULL DEFAULT 0,
+  `created_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  `updated_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  UNIQUE KEY `uniq_admin_email` (`email`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS `auth_sessions` (
+  `token` VARCHAR(128) PRIMARY KEY,
+  `role` VARCHAR(32) NOT NULL,
+  `user_id` VARCHAR(120) NOT NULL,
+  `email` VARCHAR(255) NOT NULL,
+  `name` VARCHAR(255) NOT NULL,
+  `business_id` VARCHAR(120) NULL,
+  `ip_address` VARCHAR(120) NULL,
+  `user_agent` VARCHAR(500) NULL,
+  `created_at` BIGINT NOT NULL,
+  `expires_at` BIGINT NOT NULL,
+  `last_activity_at` BIGINT NOT NULL,
+  `revoked` TINYINT(1) NOT NULL DEFAULT 0,
+  KEY `idx_auth_expires` (`expires_at`),
+  KEY `idx_auth_user` (`role`, `user_id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS `cities` (

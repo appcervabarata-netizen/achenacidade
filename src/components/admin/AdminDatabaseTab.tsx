@@ -12,9 +12,15 @@ import {
   ShieldAlert,
   Download,
   Wrench,
+  Trash2,
 } from 'lucide-react';
 import { useDirectory } from '../../context/DirectoryContext';
-import { fetchDbDiagnostics, migrateDatabaseInDb, type DatabaseDiagnostics } from '../../utils/apiSync';
+import {
+  cleanupLegacyTablesInDb,
+  fetchDbDiagnostics,
+  migrateDatabaseInDb,
+  type DatabaseDiagnostics,
+} from '../../utils/apiSync';
 
 interface AdminDatabaseTabProps {
   onNotify?: (message: string, variant?: 'success' | 'error' | 'info') => void;
@@ -32,6 +38,8 @@ const TABLE_LABELS: Record<string, string> = {
   payment_transactions: 'Pagamentos',
   email_logs: 'Logs de E-mail',
   app_settings: 'Configurações Gerais',
+  admin_users: 'Administradores',
+  auth_sessions: 'Sessões Ativas',
 };
 
 export const AdminDatabaseTab: React.FC<AdminDatabaseTabProps> = ({ onNotify }) => {
@@ -51,6 +59,7 @@ export const AdminDatabaseTab: React.FC<AdminDatabaseTabProps> = ({ onNotify }) 
   }>({ checked: false, ok: false, detail: '' });
   const [isTesting, setIsTesting] = useState(false);
   const [isMigrating, setIsMigrating] = useState(false);
+  const [isCleaningLegacy, setIsCleaningLegacy] = useState(false);
   const [isReloading, setIsReloading] = useState(false);
   const [isPushing, setIsPushing] = useState(false);
   const [confirmPush, setConfirmPush] = useState(false);
@@ -170,6 +179,27 @@ export const AdminDatabaseTab: React.FC<AdminDatabaseTabProps> = ({ onNotify }) 
       onNotify?.(msg, 'success');
     } else {
       const msg = res.error || 'Falha ao verificar/reparar colunas SQL.';
+      setActionMessage({ type: 'error', text: msg });
+      onNotify?.(msg, 'error');
+    }
+  };
+
+  const handleCleanupLegacyTables = async () => {
+    setIsCleaningLegacy(true);
+    setActionMessage(null);
+    const res = await cleanupLegacyTablesInDb();
+    await runDiagnostics(false);
+    setIsCleaningLegacy(false);
+
+    if (res.success) {
+      const msg =
+        res.droppedTables.length > 0
+          ? `Tabelas antigas em português removidas com sucesso: ${res.droppedTables.join(', ')}`
+          : 'Nenhuma tabela em português encontrada no banco — todas as tabelas já estão padronizadas em inglês.';
+      setActionMessage({ type: 'success', text: msg });
+      onNotify?.(msg, 'success');
+    } else {
+      const msg = res.error || 'Falha ao remover tabelas antigas em português.';
       setActionMessage({ type: 'error', text: msg });
       onNotify?.(msg, 'error');
     }
@@ -372,6 +402,60 @@ export const AdminDatabaseTab: React.FC<AdminDatabaseTabProps> = ({ onNotify }) 
             Migração automática aplicada com sucesso! Colunas adicionadas às tabelas existentes:
           </p>
           <p className="font-mono break-all">{diagnostics.migratedColumns.join(', ')}</p>
+        </div>
+      )}
+
+      {/* Padronização das Tabelas em Inglês & Exclusão de Tabelas em Português */}
+      {isConnected && (
+        <div
+          className={`p-5 rounded-2xl border flex flex-col sm:flex-row sm:items-center justify-between gap-4 ${
+            diagnostics?.remainingLegacyTables && diagnostics.remainingLegacyTables.length > 0
+              ? 'bg-amber-50 dark:bg-amber-950/30 border-amber-300 dark:border-amber-800'
+              : 'bg-emerald-50/70 dark:bg-emerald-950/20 border-emerald-200 dark:border-emerald-800'
+          }`}
+        >
+          <div className="space-y-1 text-xs">
+            <p className="font-bold text-slate-900 dark:text-white flex items-center gap-2">
+              {diagnostics?.remainingLegacyTables && diagnostics.remainingLegacyTables.length > 0 ? (
+                <>
+                  <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0" />
+                  <span>Tabelas em Português Detectadas no Banco</span>
+                </>
+              ) : (
+                <>
+                  <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+                  <span>Padronização SQL em Inglês Concluída</span>
+                </>
+              )}
+            </p>
+            {diagnostics?.remainingLegacyTables && diagnostics.remainingLegacyTables.length > 0 ? (
+              <p className="text-amber-800 dark:text-amber-200">
+                Tabelas encontradas para exclusão:{' '}
+                <span className="font-mono font-bold">
+                  {diagnostics.remainingLegacyTables.join(', ')}
+                </span>
+              </p>
+            ) : (
+              <p className="text-emerald-800 dark:text-emerald-300">
+                Nenhuma tabela em português existe neste banco. O sistema utiliza exclusivamente as tabelas oficiais em inglês.
+                {diagnostics?.droppedLegacyTables && diagnostics.droppedLegacyTables.length > 0
+                  ? ` (Removidas automaticamente: ${diagnostics.droppedLegacyTables.join(', ')})`
+                  : ''}
+              </p>
+            )}
+          </div>
+
+          <button
+            type="button"
+            onClick={() => void handleCleanupLegacyTables()}
+            disabled={isCleaningLegacy || isMigrating}
+            className="px-4 py-2.5 rounded-xl bg-rose-600 hover:bg-rose-700 text-white text-xs font-bold transition flex items-center gap-2 cursor-pointer shrink-0 disabled:opacity-50"
+          >
+            <Trash2 className="w-4 h-4" />
+            <span>
+              {isCleaningLegacy ? 'Verificando...' : 'Deletar Tabelas em Português'}
+            </span>
+          </button>
         </div>
       )}
 

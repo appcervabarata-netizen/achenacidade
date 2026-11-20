@@ -26,17 +26,17 @@ export const BusinessPortalModal: React.FC = () => {
     plans,
     businesses,
     products,
-    addBusiness,
     updateBusiness,
     addProduct,
     deleteProduct,
     currentBusinessAuth,
-    loginAsBusiness,
-    logoutBusiness,
+    authSession,
+    registerBusinessAndLogin,
+    setCurrentView,
   } = useDirectory();
 
-  // Tab: 'login' | 'register_business' | 'manage_products'
-  const [activeTab, setActiveTab] = useState<'login' | 'register_business' | 'manage_products'>('manage_products');
+  // Tab: 'manage_products' | 'register_business'
+  const [activeTab, setActiveTab] = useState<'manage_products' | 'register_business'>('manage_products');
 
   // Register Business Form State
   const [bizForm, setBizForm] = useState({
@@ -73,8 +73,12 @@ export const BusinessPortalModal: React.FC = () => {
     return null;
   }
 
-  // Active business session (either logged in or fallback to first business for testing convenience)
-  const activeBusiness = currentBusinessAuth || businesses[0];
+  // Active authenticated business session only (no unauthenticated fallback)
+  const isAuthenticatedBusiness =
+    authSession.isAuthenticated && authSession.role === 'business';
+  const activeBusiness = isAuthenticatedBusiness
+    ? currentBusinessAuth || businesses.find((b) => b.id === authSession.businessId) || null
+    : null;
   const activePlan = activeBusiness ? plans.find((p) => p.id === activeBusiness.planId) || plans[0] : null;
   const businessProducts = activeBusiness ? products.filter((p) => p.businessId === activeBusiness.id) : [];
 
@@ -83,15 +87,29 @@ export const BusinessPortalModal: React.FC = () => {
   const isQuotaFull = currentProductCount >= productLimit;
 
   // Handle Business Registration
-  const handleRegisterBusiness = (e: React.FormEvent) => {
+  const handleRegisterBusiness = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (!isAuthenticatedBusiness) {
+      setNotification({ text: 'Faça login antes de cadastrar uma nova filial.', type: 'error' });
+      return;
+    }
     if (!bizForm.name || !bizForm.whatsapp) {
       setNotification({ text: 'Por favor preencha ao menos o nome da empresa e o WhatsApp.', type: 'error' });
       return;
     }
 
-    const newId = addBusiness(bizForm);
-    loginAsBusiness(newId);
+    const res = await registerBusinessAndLogin(
+      {
+        ...bizForm,
+        email: bizForm.email || authSession.email,
+        ownerEmail: authSession.email,
+      },
+      false
+    );
+    if (!res.success) {
+      setNotification({ text: res.error || 'Falha ao cadastrar empresa no banco.', type: 'error' });
+      return;
+    }
     setNotification({ text: 'Empresa cadastrada com sucesso! Agora você pode cadastrar seus produtos.', type: 'success' });
     setActiveTab('manage_products');
   };
@@ -200,17 +218,6 @@ export const BusinessPortalModal: React.FC = () => {
           >
             Cadastrar Nova Empresa
           </button>
-
-          <button
-            onClick={() => setActiveTab('login')}
-            className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition cursor-pointer ${
-              activeTab === 'login'
-                ? 'bg-blue-600 text-white shadow-xs'
-                : 'text-slate-600 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-700'
-            }`}
-          >
-            Alternar Loja Cadastrada
-          </button>
         </div>
 
         {/* Notifications */}
@@ -241,7 +248,28 @@ export const BusinessPortalModal: React.FC = () => {
 
         {/* Content Body */}
         <div className="p-6 overflow-y-auto flex-1 space-y-6">
-          
+          {!activeBusiness && (
+            <div className="p-6 rounded-2xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700 text-center space-y-3">
+              <AlertCircle className="w-8 h-8 text-orange-600 mx-auto" />
+              <h3 className="text-base font-bold text-slate-900 dark:text-white">
+                Autenticação Necessária
+              </h3>
+              <p className="text-xs text-slate-600 dark:text-slate-400">
+                Entre com o e-mail e senha da sua loja para gerenciar produtos e serviços.
+              </p>
+              <button
+                type="button"
+                onClick={() => {
+                  closeModal();
+                  setCurrentView('login');
+                }}
+                className="px-5 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold cursor-pointer"
+              >
+                Ir para a Tela de Login
+              </button>
+            </div>
+          )}
+
           {/* TAB 1: MANAGE PRODUCTS */}
           {activeTab === 'manage_products' && activeBusiness && (
             <div className="space-y-6">
@@ -633,56 +661,6 @@ export const BusinessPortalModal: React.FC = () => {
                 </button>
               </div>
             </form>
-          )}
-
-          {/* TAB 3: SWITCH STORE */}
-          {activeTab === 'login' && (
-            <div className="space-y-4">
-              <h3 className="text-base font-bold text-slate-900 dark:text-white">
-                Selecione qual empresa deseja gerenciar:
-              </h3>
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                {businesses.map((biz) => {
-                  const bPlan = plans.find((p) => p.id === biz.planId);
-                  const isCurrent = activeBusiness?.id === biz.id;
-
-                  return (
-                    <div
-                      key={biz.id}
-                      onClick={() => {
-                        loginAsBusiness(biz.id);
-                        setActiveTab('manage_products');
-                        setNotification({ text: `Agora gerenciando: ${biz.name}`, type: 'success' });
-                      }}
-                      className={`p-4 rounded-2xl border transition cursor-pointer flex items-center gap-3 ${
-                        isCurrent
-                          ? 'bg-blue-50 dark:bg-blue-950/40 border-blue-600 ring-2 ring-blue-500/20'
-                          : 'bg-white dark:bg-slate-800 border-slate-200 dark:border-slate-700 hover:border-blue-300'
-                      }`}
-                    >
-                      <img
-                        src={biz.logoUrl}
-                        alt={biz.name}
-                        className="w-12 h-12 rounded-xl object-cover shrink-0"
-                      />
-                      <div className="min-w-0 flex-1">
-                        <div className="text-xs font-bold text-slate-900 dark:text-white truncate">
-                          {biz.name}
-                        </div>
-                        <div className="text-[11px] text-slate-500 dark:text-slate-400">
-                          {biz.neighborhood} · {bPlan?.name} ({bPlan?.productLimit} prods)
-                        </div>
-                      </div>
-                      {isCurrent && (
-                        <span className="text-[10px] font-bold text-blue-600 bg-blue-100 dark:bg-blue-900/60 px-2 py-0.5 rounded-full shrink-0">
-                          Ativa
-                        </span>
-                      )}
-                    </div>
-                  );
-                })}
-              </div>
-            </div>
           )}
 
         </div>

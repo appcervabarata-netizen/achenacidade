@@ -93,7 +93,7 @@ export const AdminBusinessEditModal: React.FC<AdminBusinessEditModalProps> = ({
         website: business.website || '',
         logoUrl: business.logoUrl || '',
         coverUrl: business.coverUrl || '',
-        password: business.password || '',
+        password: '',
       });
       setSchedule(cloneWeeklySchedule(business.weeklySchedule));
       setSaveSuccess(false);
@@ -129,7 +129,7 @@ export const AdminBusinessEditModal: React.FC<AdminBusinessEditModalProps> = ({
       website: formData.website.trim(),
       logoUrl: formData.logoUrl.trim() || business.logoUrl,
       coverUrl: formData.coverUrl.trim(),
-      password: formData.password.trim() || business.password,
+      ...(formData.password.trim() ? { password: formData.password.trim() } : {}),
     });
 
     setSaveSuccess(true);
@@ -667,7 +667,9 @@ export const AdminBusinessEditModal: React.FC<AdminBusinessEditModalProps> = ({
                 <div>
                   <p className="font-bold mb-0.5">Área de Credenciais do Lojista</p>
                   <p>
-                    Como Administrador, você pode verificar ou redefinir a senha de acesso do lojista caso ele tenha esquecido ou precise de suporte técnico.
+                    {business.hasPassword
+                      ? 'Esta loja já possui senha criptografada salva no banco de dados. Preencha abaixo apenas se desejar redefinir.'
+                      : 'Esta loja ainda não possui senha cadastrada. Defina uma senha para liberar o login do lojista.'}
                   </p>
                 </div>
               </div>
@@ -694,7 +696,7 @@ export const AdminBusinessEditModal: React.FC<AdminBusinessEditModalProps> = ({
               <div>
                 <div className="flex items-center justify-between mb-1">
                   <label className="text-xs font-bold text-slate-700 dark:text-slate-300">
-                    Senha de Acesso da Loja
+                    Nova Senha de Acesso da Loja
                   </label>
                   <button
                     type="button"
@@ -711,7 +713,7 @@ export const AdminBusinessEditModal: React.FC<AdminBusinessEditModalProps> = ({
                     type={showPassword ? 'text' : 'password'}
                     value={formData.password}
                     onChange={(e) => setFormData({ ...formData, password: e.target.value })}
-                    placeholder="Definir nova senha"
+                    placeholder="Deixe em branco para manter a senha atual"
                     className="w-full pl-9 pr-10 py-2.5 rounded-xl border border-slate-300 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-xs sm:text-sm text-slate-900 dark:text-white outline-none font-mono"
                   />
                   <button
@@ -724,7 +726,7 @@ export const AdminBusinessEditModal: React.FC<AdminBusinessEditModalProps> = ({
                   </button>
                 </div>
                 <span className="text-[10px] text-slate-500 mt-1 block">
-                  Deixe como está para manter a senha atual, ou digite uma nova para alterá-la imediatamente.
+                  A senha digitada será criptografada com scrypt antes de ser salva no MySQL.
                 </span>
               </div>
             </div>

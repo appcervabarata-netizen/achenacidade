@@ -89,8 +89,18 @@ function AppContent() {
 
       {/* Primary Dynamic Screen View */}
       {currentView === 'login' && <LoginScreen />}
-      {currentView === 'admin' && <AdminScreen />}
-      {currentView === 'business_portal' && <BusinessPortalScreen />}
+      {currentView === 'admin' &&
+        (authSession.isAuthenticated && authSession.role === 'admin' ? (
+          <AdminScreen />
+        ) : (
+          <LoginScreen />
+        ))}
+      {currentView === 'business_portal' &&
+        (authSession.isAuthenticated && authSession.role === 'business' ? (
+          <BusinessPortalScreen />
+        ) : (
+          <LoginScreen />
+        ))}
       {currentView === 'register_store' && <RegisterStoreScreen />}
       {currentView === 'checkout' && <CheckoutPage />}
       {currentView === 'categories' && <CategoriesPage />}
