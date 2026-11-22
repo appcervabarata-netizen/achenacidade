@@ -555,7 +555,7 @@ export const LaunchPage: React.FC<LaunchPageProps> = ({ isPreview = false, onExi
             className="inline-flex items-center gap-1.5 text-slate-500 hover:text-blue-600 dark:hover:text-blue-400 font-medium transition cursor-pointer"
           >
             <Lock className="w-3.5 h-3.5" />
-            <span>Acesso Administrativo / Lojista</span>
+            <span>Área do Lojista</span>
           </button>
         </div>
       </footer>

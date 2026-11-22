@@ -3,7 +3,6 @@ import { useDirectory } from '../../context/DirectoryContext';
 import {
   ArrowLeft,
   Store,
-  ShieldCheck,
   Lock,
   Mail,
   Eye,
@@ -16,23 +15,15 @@ import {
 export const LoginScreen: React.FC = () => {
   const {
     setCurrentView,
-    authenticateAdmin,
     authenticateStoreOwner,
     sessionConfig,
   } = useDirectory();
 
-  const [loginType, setLoginType] = useState<'business' | 'admin'>('business');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
-
-  const handleTabSwitch = (nextType: 'business' | 'admin') => {
-    setLoginType(nextType);
-    setErrorMsg(null);
-    setPassword('');
-  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -46,11 +37,7 @@ export const LoginScreen: React.FC = () => {
 
     setIsSubmitting(true);
     try {
-      const result =
-        loginType === 'admin'
-          ? await authenticateAdmin(trimmedEmail, password)
-          : await authenticateStoreOwner(trimmedEmail, password);
-
+      const result = await authenticateStoreOwner(trimmedEmail, password);
       if (!result.success) {
         setErrorMsg(result.error || 'E-mail ou senha inválidos.');
       }
@@ -61,10 +48,7 @@ export const LoginScreen: React.FC = () => {
     }
   };
 
-  const sessionHours =
-    loginType === 'admin'
-      ? sessionConfig.adminSessionDurationMinutes
-      : sessionConfig.businessSessionDurationMinutes;
+  const sessionMinutes = sessionConfig.businessSessionDurationMinutes;
 
   const formatSessionLabel = (minutes: number) => {
     if (minutes >= 60) {
@@ -101,46 +85,14 @@ export const LoginScreen: React.FC = () => {
         {/* Title */}
         <div className="text-center mb-6">
           <div className="w-12 h-12 rounded-2xl bg-blue-50 dark:bg-blue-950/60 border border-blue-200 dark:border-blue-900 flex items-center justify-center mx-auto mb-3 shadow-xs">
-            {loginType === 'admin' ? (
-              <ShieldCheck className="w-6 h-6 text-orange-500" />
-            ) : (
-              <Store className="w-6 h-6 text-blue-600" />
-            )}
+            <Store className="w-6 h-6 text-blue-600" />
           </div>
           <h1 className="text-2xl font-extrabold text-slate-900 dark:text-white font-display">
-            Acesso ao Sistema
+            Área do Lojista
           </h1>
           <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
-            Autenticação segura validada diretamente no banco de dados.
+            Acesse o painel da sua empresa para gerenciar produtos, serviços e plano.
           </p>
-        </div>
-
-        {/* Tab switcher: Lojista vs Admin */}
-        <div className="flex rounded-xl bg-slate-200/80 dark:bg-slate-800 p-1 mb-5">
-          <button
-            type="button"
-            onClick={() => handleTabSwitch('business')}
-            className={`flex-1 py-2 text-xs font-bold rounded-lg transition-all flex items-center justify-center gap-1.5 cursor-pointer ${
-              loginType === 'business'
-                ? 'bg-white dark:bg-slate-900 text-blue-600 dark:text-white shadow-xs'
-                : 'text-slate-600 dark:text-slate-400 hover:text-slate-900'
-            }`}
-          >
-            <Store className="w-3.5 h-3.5" />
-            <span>Área do Lojista</span>
-          </button>
-          <button
-            type="button"
-            onClick={() => handleTabSwitch('admin')}
-            className={`flex-1 py-2 text-xs font-bold rounded-lg transition-all flex items-center justify-center gap-1.5 cursor-pointer ${
-              loginType === 'admin'
-                ? 'bg-white dark:bg-slate-900 text-orange-600 dark:text-orange-400 shadow-xs'
-                : 'text-slate-600 dark:text-slate-400 hover:text-slate-900'
-            }`}
-          >
-            <ShieldCheck className="w-3.5 h-3.5" />
-            <span>Administrador</span>
-          </button>
         </div>
 
         {/* Login Form */}
@@ -155,7 +107,7 @@ export const LoginScreen: React.FC = () => {
           <form onSubmit={handleSubmit} className="space-y-4">
             <div>
               <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
-                E-mail de Acesso
+                E-mail da Loja
               </label>
               <div className="relative flex items-center">
                 <Mail className="w-4 h-4 text-slate-400 absolute left-3 pointer-events-none" />
@@ -200,7 +152,7 @@ export const LoginScreen: React.FC = () => {
             <div className="flex items-center justify-between text-[11px] text-slate-500 dark:text-slate-400 pt-0.5">
               <span className="inline-flex items-center gap-1">
                 <Clock className="w-3.5 h-3.5 text-blue-600" />
-                <span>Duração da sessão: {formatSessionLabel(sessionHours)}</span>
+                <span>Duração da sessão: {formatSessionLabel(sessionMinutes)}</span>
               </span>
               <span className="font-semibold text-emerald-600 dark:text-emerald-400">
                 Conexão criptografada
@@ -210,35 +162,23 @@ export const LoginScreen: React.FC = () => {
             <button
               type="submit"
               disabled={isSubmitting}
-              className={`w-full py-3 rounded-xl text-white font-bold text-xs sm:text-sm flex items-center justify-center gap-2 shadow-md transition cursor-pointer disabled:opacity-60 ${
-                loginType === 'admin'
-                  ? 'bg-orange-600 hover:bg-orange-700'
-                  : 'bg-blue-600 hover:bg-blue-700'
-              }`}
+              className="w-full py-3 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs sm:text-sm flex items-center justify-center gap-2 shadow-md transition cursor-pointer disabled:opacity-60"
             >
-              <span>
-                {isSubmitting
-                  ? 'Autenticando...'
-                  : loginType === 'admin'
-                  ? 'Entrar como Administrador'
-                  : 'Entrar no Painel da Loja'}
-              </span>
+              <span>{isSubmitting ? 'Autenticando...' : 'Entrar no Painel da Loja'}</span>
               <ArrowRight className="w-4 h-4" />
             </button>
 
             {/* Option: Cadastrar Nova Empresa */}
-            {loginType === 'business' && (
-              <div className="pt-2 border-t border-slate-100 dark:border-slate-800 text-center">
-                <button
-                  type="button"
-                  onClick={() => setCurrentView('register_store')}
-                  className="w-full py-2.5 px-4 rounded-xl border border-orange-200 dark:border-orange-900 bg-orange-50 dark:bg-orange-950/40 text-orange-700 dark:text-orange-300 hover:bg-orange-100 text-xs font-bold transition flex items-center justify-center gap-2 cursor-pointer shadow-xs"
-                >
-                  <Store className="w-3.5 h-3.5 text-orange-600" />
-                  <span>Ainda não tem conta? Cadastrar Nova Empresa</span>
-                </button>
-              </div>
-            )}
+            <div className="pt-2 border-t border-slate-100 dark:border-slate-800 text-center">
+              <button
+                type="button"
+                onClick={() => setCurrentView('register_store')}
+                className="w-full py-2.5 px-4 rounded-xl border border-orange-200 dark:border-orange-900 bg-orange-50 dark:bg-orange-950/40 text-orange-700 dark:text-orange-300 hover:bg-orange-100 text-xs font-bold transition flex items-center justify-center gap-2 cursor-pointer shadow-xs"
+              >
+                <Store className="w-3.5 h-3.5 text-orange-600" />
+                <span>Ainda não tem conta? Cadastrar Nova Empresa</span>
+              </button>
+            </div>
           </form>
         </div>
       </main>

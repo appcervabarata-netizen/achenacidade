@@ -260,7 +260,7 @@ export const Navbar: React.FC = () => {
               <button
                 onClick={() => setCurrentView('login')}
                 className="hidden sm:flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold shadow-xs transition-colors cursor-pointer whitespace-nowrap"
-                title="Entrar na conta de lojista ou administrador"
+                title="Entrar no Portal da Loja"
               >
                 <User className="w-3.5 h-3.5" />
                 <span>Entrar</span>

@@ -432,7 +432,7 @@ export const AdminEmailTab: React.FC = () => {
             </span>
           </div>
 
-          <div className="flex flex-col sm:flex-row gap-4">
+          <div className="flex flex-col sm:flex-row flex-wrap gap-4">
             <label className="inline-flex items-center gap-2 text-xs font-bold text-slate-700 dark:text-slate-200 cursor-pointer">
               <input
                 type="checkbox"
@@ -441,6 +441,18 @@ export const AdminEmailTab: React.FC = () => {
                 className="rounded border-slate-300 text-blue-600"
               />
               <span>Ativar envio SMTP personalizado abaixo</span>
+            </label>
+
+            <label className="inline-flex items-center gap-2 text-xs font-semibold text-slate-600 dark:text-slate-300 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={Boolean(smtpDraft.allowSelfSignedCert)}
+                onChange={(e) =>
+                  setSmtpDraft({ ...smtpDraft, allowSelfSignedCert: e.target.checked })
+                }
+                className="rounded border-slate-300 text-blue-600"
+              />
+              <span>Aceitar certificado autoassinado (iRedMail / TLS interno)</span>
             </label>
 
             <label className="inline-flex items-center gap-2 text-xs font-semibold text-slate-600 dark:text-slate-300 cursor-pointer">

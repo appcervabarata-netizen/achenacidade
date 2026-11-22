@@ -294,6 +294,12 @@ interface DirectoryContextType {
 
 const DirectoryContext = createContext<DirectoryContextType | undefined>(undefined);
 
+function isLoginAdminPath(
+  pathname = typeof window !== 'undefined' ? window.location.pathname : ''
+): boolean {
+  return pathname.replace(/\/+$/, '').toLowerCase() === '/loginadmin';
+}
+
 export const DirectoryProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [dbSyncStatus, setDbSyncStatus] = useState<'checking' | 'connected' | 'local_only' | 'error'>('checking');
   const [dbLastError, setDbLastError] = useState<string | null>(null);
@@ -547,16 +553,33 @@ export const DirectoryProvider: React.FC<{ children: React.ReactNode }> = ({ chi
   }, [pushAlerts]);
 
   // Full Screen Navigation State with History Support for Mobile Back Button
-  const [currentView, setCurrentViewState] = useState<AppView>('home');
+  const [currentView, setCurrentViewState] = useState<AppView>(() =>
+    isLoginAdminPath() ? 'admin_login' : 'home'
+  );
   const [businessPortalTab, setBusinessPortalTab] = useState<BusinessPortalTab>('dashboard');
 
   const setCurrentView = (view: AppView, replace: boolean = false) => {
     setCurrentViewState((prev) => {
-      if (prev !== view) {
-        if (replace) {
-          window.history.replaceState({ view, modal: null }, '');
+      const targetUrl =
+        view === 'admin_login'
+          ? '/loginadmin'
+          : isLoginAdminPath() && view !== 'admin'
+          ? '/'
+          : null;
+
+      if (prev !== view || targetUrl) {
+        if (targetUrl) {
+          if (replace) {
+            window.history.replaceState({ view, modal: null }, '', targetUrl);
+          } else {
+            window.history.pushState({ view, modal: null }, '', targetUrl);
+          }
         } else {
-          window.history.pushState({ view, modal: null }, '');
+          if (replace) {
+            window.history.replaceState({ view, modal: null }, '');
+          } else {
+            window.history.pushState({ view, modal: null }, '');
+          }
         }
       }
       return view;
@@ -939,7 +962,7 @@ export const DirectoryProvider: React.FC<{ children: React.ReactNode }> = ({ chi
           billingCycle: cycleParam ? parseBillingCycleParam(cycleParam) : undefined,
         });
         setCurrentViewState('checkout');
-      } else if (searchParams.get('painel') === '1') {
+      } else if (searchParams.get('painel') === '1' && !isLoginAdminPath()) {
         setCurrentViewState('login');
       }
     } catch {
@@ -1111,13 +1134,23 @@ export const DirectoryProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     const token = authSession.token;
     if (!authSession.isAuthenticated || !token) return;
 
+    if (isLoginAdminPath() && authSession.role === 'admin') {
+      setCurrentViewState('admin');
+    }
+
     void verifySessionViaApi(token).then((res) => {
       if (!active) return;
       if (res.valid && res.session) {
         setAuthSession(res.session);
+        if (isLoginAdminPath() && res.session.role === 'admin') {
+          setCurrentViewState('admin');
+        }
       } else if (!res.networkError) {
         setAuthSession({ isAuthenticated: false, role: null, name: '', email: '' });
         setCurrentBusinessAuth(null);
+        if (isLoginAdminPath()) {
+          setCurrentViewState('admin_login');
+        }
       }
     });
 
@@ -1143,16 +1176,21 @@ export const DirectoryProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     const interval = setInterval(() => {
       if (authSession.isAuthenticated && authSession.expiresAt) {
         if (Date.now() >= authSession.expiresAt) {
+          const expiredRole = authSession.role;
           void logoutViaApi(authSession.token);
           setAuthSession({ isAuthenticated: false, role: null, name: '', email: '' });
           setCurrentBusinessAuth(null);
           setBusinessPortalTab('dashboard');
-          setCurrentView('login');
+          if (expiredRole === 'admin') {
+            setCurrentView(isLoginAdminPath() ? 'admin_login' : 'home', true);
+          } else {
+            setCurrentView('login', true);
+          }
         }
       }
     }, 10000);
     return () => clearInterval(interval);
-  }, [authSession.isAuthenticated, authSession.expiresAt, authSession.token]);
+  }, [authSession.isAuthenticated, authSession.expiresAt, authSession.token, authSession.role]);
 
   // Active Modals
   const [activeModal, setActiveModal] = useState<{
@@ -2094,7 +2132,7 @@ export const DirectoryProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     setAuthSession({ isAuthenticated: false, role: null, name: '', email: '' });
     setCurrentBusinessAuth(null);
     setBusinessPortalTab('dashboard');
-    setCurrentView('home');
+    setCurrentView('home', true);
   };
 
   // Modals with History State for native back button
@@ -2106,7 +2144,7 @@ export const DirectoryProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       if (authSession.isAuthenticated && authSession.role === 'admin') {
         setCurrentView('admin');
       } else {
-        setCurrentView('login');
+        setCurrentView('home');
       }
       return;
     }
@@ -2136,6 +2174,14 @@ export const DirectoryProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     }
 
     const handlePopState = (event: PopStateEvent) => {
+      if (isLoginAdminPath(window.location.pathname)) {
+        setActiveModal({ type: null });
+        setCurrentViewState(
+          authSession.isAuthenticated && authSession.role === 'admin' ? 'admin' : 'admin_login'
+        );
+        return;
+      }
+
       const state = event.state;
       if (state) {
         if (state.modal) {
@@ -2143,7 +2189,7 @@ export const DirectoryProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         } else {
           setActiveModal({ type: null });
         }
-        if (state.view) {
+        if (state.view && state.view !== 'admin_login') {
           setCurrentViewState(state.view);
         } else {
           setCurrentViewState('home');
@@ -2156,7 +2202,7 @@ export const DirectoryProvider: React.FC<{ children: React.ReactNode }> = ({ chi
 
     window.addEventListener('popstate', handlePopState);
     return () => window.removeEventListener('popstate', handlePopState);
-  }, [currentView]);
+  }, [currentView, authSession.isAuthenticated, authSession.role]);
 
   const buildInitialBootstrapPayload = (): DirectoryBootstrapPayload => ({
     cities: initialCities,

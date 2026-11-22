@@ -1,6 +1,6 @@
 import React from 'react';
 import { useDirectory } from '../../context/DirectoryContext';
-import { ShieldCheck, MapPin, Building2, ShoppingBag, Sparkles } from 'lucide-react';
+import { Store, MapPin, Building2, ShoppingBag, Sparkles } from 'lucide-react';
 import { PWAInstallButton } from '../common/PWAInstallButton';
 
 export const Footer: React.FC = () => {
@@ -101,20 +101,23 @@ export const Footer: React.FC = () => {
             </ul>
           </div>
 
-          {/* Painel Administrativo & HostGator */}
+          {/* Portal do Lojista */}
           <div>
             <h4 className="text-xs font-bold text-white uppercase tracking-wider mb-3">
-              Administração & Hospedagem
+              Para Empresas & Lojistas
             </h4>
             <p className="text-[11px] text-slate-400 mb-3">
-              Compatível com hospedagem cPanel HostGator em PHP e banco de dados MySQL.
+              Gerencie os produtos, serviços, horários e promoções da sua loja no portal.
             </p>
             <button
-              onClick={() => openModal('admin')}
+              onClick={() => {
+                setCurrentView('login');
+                window.scrollTo({ top: 0, behavior: 'smooth' });
+              }}
               className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-white font-semibold transition border border-slate-700 cursor-pointer text-xs"
             >
-              <ShieldCheck className="w-3.5 h-3.5 text-orange-400" />
-              <span>Painel Admin & HostGator</span>
+              <Store className="w-3.5 h-3.5 text-orange-400" />
+              <span>Área do Lojista</span>
             </button>
           </div>
 

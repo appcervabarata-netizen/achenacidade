@@ -133,6 +133,7 @@ interface IncomingSmtpConfig {
   host?: string;
   port?: number;
   secure?: boolean;
+  allowSelfSignedCert?: boolean;
   user?: string;
   pass?: string;
 }
@@ -148,8 +149,8 @@ function normalizeSmtpHost(rawHost?: string): string {
     .trim();
 }
 
-function getSmtpTlsOptions() {
-  if (process.env.SMTP_TLS_REJECT_UNAUTHORIZED === 'false') {
+function getSmtpTlsOptions(allowSelfSigned?: boolean) {
+  if (allowSelfSigned || process.env.SMTP_TLS_REJECT_UNAUTHORIZED === 'false') {
     return { tls: { rejectUnauthorized: false } };
   }
   return {};
@@ -167,6 +168,7 @@ function resolveSmtpTransportConfig(clientSmtp?: IncomingSmtpConfig) {
       host: clientHost,
       port: Number(clientSmtp.port || 587),
       secure: Boolean(clientSmtp.secure),
+      allowSelfSignedCert: Boolean(clientSmtp.allowSelfSignedCert),
       auth: {
         user: clientSmtp.user!.trim(),
         pass: clientSmtp.pass!.trim(),
@@ -187,6 +189,7 @@ function resolveSmtpTransportConfig(clientSmtp?: IncomingSmtpConfig) {
       host: envHost,
       port: Number(process.env.SMTP_PORT || 587),
       secure: process.env.SMTP_SECURE === 'true',
+      allowSelfSignedCert: process.env.SMTP_TLS_REJECT_UNAUTHORIZED === 'false',
       auth: {
         user: process.env.SMTP_USER!.trim(),
         pass: process.env.SMTP_PASS!.trim(),
@@ -239,7 +242,7 @@ app.post('/api/email/send', async (req, res) => {
       port: resolved.port,
       secure: resolved.secure,
       auth: resolved.auth,
-      ...getSmtpTlsOptions(),
+      ...getSmtpTlsOptions(resolved.allowSelfSignedCert),
     });
 
     const info = await transporter.sendMail({
@@ -288,7 +291,7 @@ app.post('/api/email/test-smtp', async (req, res) => {
       port: resolved.port,
       secure: resolved.secure,
       auth: resolved.auth,
-      ...getSmtpTlsOptions(),
+      ...getSmtpTlsOptions(resolved.allowSelfSignedCert),
     });
 
     await transporter.verify();

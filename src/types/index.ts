@@ -181,6 +181,7 @@ export type AppView =
   | 'services'
   | 'plans'
   | 'admin'
+  | 'admin_login'
   | 'business_portal'
   | 'login'
   | 'register_store'
@@ -322,6 +323,7 @@ export interface SmtpConfig {
   host: string;
   port: number;
   secure: boolean;
+  allowSelfSignedCert?: boolean;
   user: string;
   pass: string;
   allowLocalFallback: boolean;

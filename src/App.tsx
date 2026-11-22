@@ -18,6 +18,7 @@ import { PlansPage } from './components/pages/PlansPage';
 import { LaunchPage } from './components/pages/LaunchPage';
 import { MaintenancePage } from './components/pages/MaintenancePage';
 import { LoginScreen } from './components/auth/LoginScreen';
+import { AdminLoginScreen } from './components/auth/AdminLoginScreen';
 import { AdminScreen } from './components/admin/AdminScreen';
 import { BusinessPortalScreen } from './components/business/BusinessPortalScreen';
 import { RegisterStoreScreen } from './components/business/RegisterStoreScreen';
@@ -61,13 +62,14 @@ function AppContent() {
   }
 
   const isRestrictedMode = siteModeConfig.mode !== 'normal';
-  const allowedRestrictedViews = ['login', 'admin', 'business_portal', 'plans', 'register_store', 'checkout'];
+  const allowedRestrictedViews = ['login', 'admin_login', 'admin', 'business_portal', 'plans', 'register_store', 'checkout'];
   const showRestrictedLanding = isRestrictedMode && !allowedRestrictedViews.includes(currentView);
-  const hideChrome = isRestrictedMode || currentView === 'checkout';
+  const hideChrome = isRestrictedMode || currentView === 'checkout' || currentView === 'admin_login';
   const showStoreOwnerBottomMenu =
     authSession.isAuthenticated &&
     authSession.role === 'business' &&
-    currentView !== 'checkout';
+    currentView !== 'checkout' &&
+    currentView !== 'admin_login';
 
   if (showRestrictedLanding) {
     return (
@@ -89,6 +91,12 @@ function AppContent() {
 
       {/* Primary Dynamic Screen View */}
       {currentView === 'login' && <LoginScreen />}
+      {currentView === 'admin_login' &&
+        (authSession.isAuthenticated && authSession.role === 'admin' ? (
+          <AdminScreen />
+        ) : (
+          <AdminLoginScreen />
+        ))}
       {currentView === 'admin' &&
         (authSession.isAuthenticated && authSession.role === 'admin' ? (
           <AdminScreen />
