@@ -61,11 +61,32 @@ let schemaPromise: Promise<boolean> | null = null;
 export function getDbConfig(): DbRuntimeConfig {
   const uri = process.env.DATABASE_URL?.trim();
   if (uri && (uri.startsWith('mysql://') || uri.startsWith('mariadb://'))) {
-    return {
-      configured: true,
-      uri,
-      ssl: process.env.DB_SSL === 'true',
-    };
+    try {
+      const parsed = new URL(uri);
+      const sslParam = parsed.searchParams.get('ssl') || parsed.searchParams.get('ssl-mode');
+      const useSsl =
+        process.env.DB_SSL === 'true' ||
+        sslParam === 'true' ||
+        sslParam === 'REQUIRED' ||
+        sslParam === 'VERIFY_CA';
+
+      return {
+        configured: true,
+        uri,
+        host: parsed.hostname || undefined,
+        port: parsed.port ? Number(parsed.port) : 3306,
+        database: parsed.pathname ? decodeURIComponent(parsed.pathname.replace(/^\/+/, '')) : undefined,
+        user: parsed.username ? decodeURIComponent(parsed.username) : undefined,
+        password: parsed.password ? decodeURIComponent(parsed.password) : undefined,
+        ssl: useSsl,
+      };
+    } catch {
+      return {
+        configured: true,
+        uri,
+        ssl: process.env.DB_SSL === 'true',
+      };
+    }
   }
 
   const host = (process.env.DB_HOST || process.env.MYSQL_HOST || '').trim();
@@ -98,9 +119,13 @@ export function getPool(): Pool | null {
   if (!cfg.configured) return null;
 
   if (!pool) {
-    if (cfg.uri) {
+    if (cfg.host && cfg.database && cfg.user) {
       pool = mysql.createPool({
-        uri: cfg.uri,
+        host: cfg.host,
+        port: cfg.port || 3306,
+        database: cfg.database,
+        user: cfg.user,
+        password: cfg.password || '',
         waitForConnections: true,
         connectionLimit: 10,
         queueLimit: 0,
@@ -109,13 +134,9 @@ export function getPool(): Pool | null {
         charset: 'utf8mb4',
         ...(cfg.ssl ? { ssl: { rejectUnauthorized: false } } : {}),
       });
-    } else {
+    } else if (cfg.uri) {
       pool = mysql.createPool({
-        host: cfg.host,
-        port: cfg.port || 3306,
-        database: cfg.database,
-        user: cfg.user,
-        password: cfg.password || '',
+        uri: cfg.uri,
         waitForConnections: true,
         connectionLimit: 10,
         queueLimit: 0,
@@ -137,9 +158,10 @@ export function isTransientConnectionError(err: unknown): boolean {
     code === 'ECONNREFUSED' ||
     code === 'ETIMEDOUT' ||
     code === 'ENOTFOUND' ||
+    code === 'EAI_AGAIN' ||
     code === 'ECONNRESET' ||
     code === 'PROTOCOL_CONNECTION_LOST' ||
-    /ECONNREFUSED|ETIMEDOUT|PROTOCOL_CONNECTION_LOST|Connection lost/i.test(msg)
+    /ECONNREFUSED|ETIMEDOUT|ENOTFOUND|EAI_AGAIN|PROTOCOL_CONNECTION_LOST|Connection lost/i.test(msg)
   );
 }
 
@@ -2752,9 +2774,15 @@ export async function getDatabaseDiagnostics(): Promise<DatabaseDiagnostics> {
     };
   }
 
-  const safeTarget = cfg.uri
-    ? { host: 'via DATABASE_URL', port: 3306, database: '(DATABASE_URL)', user: '(DATABASE_URL)' }
-    : { host: cfg.host, port: cfg.port || 3306, database: cfg.database, user: cfg.user };
+  const safeTarget =
+    cfg.host || cfg.database || cfg.user
+      ? {
+          host: cfg.host || 'via DATABASE_URL',
+          port: cfg.port || 3306,
+          database: cfg.database || '(DATABASE_URL)',
+          user: cfg.user || '(DATABASE_URL)',
+        }
+      : { host: 'via DATABASE_URL', port: 3306, database: '(DATABASE_URL)', user: '(DATABASE_URL)' };
 
   try {
     const activePool = getPool();
