@@ -97,6 +97,8 @@ export const BusinessPortalScreen: React.FC = () => {
     openPaymentModal,
     openCheckoutPage,
     sendTemplatedEmail,
+    sendVerificationCodeEmail,
+    verifyEmailCode,
     paymentTransactions,
     planDiscountConfig,
     preselectedBillingCycle,
@@ -145,6 +147,20 @@ export const BusinessPortalScreen: React.FC = () => {
     confirmLabel?: string;
     onConfirm: () => void;
   } | null>(null);
+
+  const [verifyCodeInput, setVerifyCodeInput] = useState('');
+  const [isVerifyingEmail, setIsVerifyingEmail] = useState(false);
+  const [isResendingVerifyCode, setIsResendingVerifyCode] = useState(false);
+  const [verifyEmailFeedback, setVerifyEmailFeedback] = useState<{
+    type: 'info' | 'success' | 'error';
+    text: string;
+    debugCode?: string;
+  } | null>(null);
+
+  useEffect(() => {
+    setVerifyCodeInput('');
+    setVerifyEmailFeedback(null);
+  }, [activeBusiness?.id]);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -748,6 +764,128 @@ export const BusinessPortalScreen: React.FC = () => {
           </div>
         </div>
       )}
+
+      {/* Post-registration Email Verification Banner */}
+      {activeBusiness && !activeBusiness.emailVerified && (() => {
+        const targetEmail = (activeBusiness.ownerEmail || activeBusiness.email || '').trim();
+        if (!targetEmail) return null;
+        const cityName = cities.find((c) => c.id === activeBusiness.cityId)?.name || 'Alagoinhas';
+
+        return (
+          <div className="max-w-7xl mx-auto w-full px-4 sm:px-6 pt-4">
+            <div className="p-4 sm:p-5 rounded-2xl bg-blue-50 dark:bg-blue-950/40 border border-blue-200 dark:border-blue-800 space-y-3 shadow-xs">
+              <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
+                <div className="flex items-start gap-3">
+                  <div className="p-2 rounded-xl bg-blue-100 dark:bg-blue-900/60 text-blue-700 dark:text-blue-300 shrink-0">
+                    <Mail className="w-5 h-5" />
+                  </div>
+                  <div>
+                    <p className="text-xs sm:text-sm font-extrabold text-blue-950 dark:text-blue-100">
+                      Valide o e-mail cadastrado ({targetEmail})
+                    </p>
+                    <p className="text-xs text-blue-800 dark:text-blue-300 mt-0.5">
+                      Enviamos um código de 6 dígitos para o seu e-mail após o cadastro da empresa. Digite-o ao lado para confirmar a titularidade da conta.
+                    </p>
+                  </div>
+                </div>
+
+                <div className="flex flex-wrap items-center gap-2 shrink-0">
+                  <input
+                    type="text"
+                    inputMode="numeric"
+                    maxLength={6}
+                    value={verifyCodeInput}
+                    onChange={(e) => setVerifyCodeInput(e.target.value.replace(/\D/g, ''))}
+                    placeholder="Código 6 dígitos"
+                    className="w-36 px-3 py-2 rounded-xl border border-blue-300 dark:border-blue-700 bg-white dark:bg-slate-900 text-xs sm:text-sm font-mono tracking-widest text-center text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  />
+                  <button
+                    type="button"
+                    disabled={isVerifyingEmail || verifyCodeInput.trim().length !== 6}
+                    onClick={async () => {
+                      setIsVerifyingEmail(true);
+                      setVerifyEmailFeedback(null);
+                      try {
+                        const res = await verifyEmailCode(targetEmail, verifyCodeInput.trim(), activeBusiness.id);
+                        if (!res.valid) {
+                          setVerifyEmailFeedback({
+                            type: 'error',
+                            text: res.error || 'Código inválido. Verifique os 6 dígitos recebidos.',
+                          });
+                        } else {
+                          setNotification({
+                            type: 'success',
+                            text: 'E-mail validado com sucesso! Sua conta foi confirmada.',
+                          });
+                          setVerifyCodeInput('');
+                        }
+                      } finally {
+                        setIsVerifyingEmail(false);
+                      }
+                    }}
+                    className="px-4 py-2 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-xs font-extrabold transition cursor-pointer disabled:opacity-50"
+                  >
+                    {isVerifyingEmail ? 'Validando...' : 'Confirmar E-mail'}
+                  </button>
+                  <button
+                    type="button"
+                    disabled={isResendingVerifyCode}
+                    onClick={async () => {
+                      setIsResendingVerifyCode(true);
+                      setVerifyEmailFeedback(null);
+                      try {
+                        const res = await sendVerificationCodeEmail({
+                          to: targetEmail,
+                          businessId: activeBusiness.id,
+                          businessName: activeBusiness.name,
+                          cityName,
+                        });
+                        if (!res.success) {
+                          setVerifyEmailFeedback({
+                            type: 'error',
+                            text: res.error || 'Não foi possível reenviar o código.',
+                          });
+                        } else {
+                          setVerifyEmailFeedback({
+                            type: 'info',
+                            text: res.deliveredViaSmtp
+                              ? `Novo código de 6 dígitos enviado para ${targetEmail}.`
+                              : `Código gerado em modo local para ${targetEmail} (SMTP não configurado para envio externo).`,
+                            debugCode: res.deliveredViaSmtp ? undefined : res.code,
+                          });
+                        }
+                      } finally {
+                        setIsResendingVerifyCode(false);
+                      }
+                    }}
+                    className="px-3.5 py-2 rounded-xl bg-white dark:bg-slate-900 border border-blue-300 dark:border-blue-700 text-xs font-bold text-blue-800 dark:text-blue-200 hover:bg-blue-100/70 transition cursor-pointer disabled:opacity-50"
+                  >
+                    {isResendingVerifyCode ? 'Reenviando...' : 'Reenviar Código'}
+                  </button>
+                </div>
+              </div>
+
+              {verifyEmailFeedback && (
+                <div
+                  className={`p-3 rounded-xl text-xs font-medium ${
+                    verifyEmailFeedback.type === 'error'
+                      ? 'bg-rose-50 text-rose-700 border border-rose-200 dark:bg-rose-950/40 dark:text-rose-300 dark:border-rose-900'
+                      : 'bg-white/80 text-blue-900 border border-blue-200 dark:bg-slate-900/80 dark:text-blue-200 dark:border-blue-800'
+                  }`}
+                >
+                  <p>{verifyEmailFeedback.text}</p>
+                  {verifyEmailFeedback.debugCode && (
+                    <p className="mt-1 text-[11px] font-semibold">
+                      Código gerado em modo local:{' '}
+                      <span className="font-mono font-extrabold text-orange-600">{verifyEmailFeedback.debugCode}</span>
+                    </p>
+                  )}
+                </div>
+              )}
+            </div>
+          </div>
+        );
+      })()}
 
       {/* Pending Payment Alert Banner */}
       {activeBusiness?.paymentStatus === 'pending_payment' && activeBusiness?.pendingPlanId && (() => {

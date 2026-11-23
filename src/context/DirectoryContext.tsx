@@ -1,5 +1,5 @@
 import React, { createContext, useContext, useState, useEffect, useRef } from 'react';
-import { City, Category, Plan, Business, Product, Service, AdminTheme, AdBanner, AppView, BusinessPortalTab, StoreProductCategory, SessionConfig, AuthSession, MercadoPagoConfig, PaymentTransaction, PushPreferences, PushAlertLog, SiteMode, SiteModeConfig, LaunchPageConfig, MaintenancePageConfig, SmtpConfig, EmailTemplate, EmailTemplateKey, EmailLogEntry, CheckoutTarget, BillingCycle, PlanDiscountConfig } from '../types';
+import { City, Category, Plan, Business, Product, Service, AdminTheme, AdBanner, AppView, BusinessPortalTab, StoreProductCategory, SessionConfig, AuthSession, MercadoPagoConfig, PaymentTransaction, PushPreferences, PushAlertLog, SiteMode, SiteModeConfig, LaunchPageConfig, MaintenancePageConfig, SmtpConfig, EmailTemplate, EmailTemplateKey, EmailLogEntry, CheckoutTarget, BillingCycle, PlanDiscountConfig, AppGeneralConfig } from '../types';
 import {
   initialCities,
   initialCategories,
@@ -16,7 +16,9 @@ import {
   defaultSmtpConfig,
   defaultEmailTemplates,
   defaultPlanDiscountConfig,
+  defaultAppGeneralConfig,
 } from '../data/initialData';
+import { applySeoToDocumentHead } from '../utils/seoHelper';
 import {
   isPushSupported,
   getNotificationPermissionState,
@@ -49,6 +51,8 @@ import {
   renewSessionViaApi,
   logoutViaApi,
   switchBusinessViaApi,
+  issueVerificationCodeViaApi,
+  verifyEmailCodeViaApi,
   type ApiMutationResult,
   type DirectoryBootstrapPayload,
 } from '../utils/apiSync';
@@ -269,10 +273,15 @@ interface DirectoryContextType {
   }) => Promise<{ logEntry?: EmailLogEntry; deliveredViaSmtp: boolean; skipped?: boolean; error?: string }>;
   sendVerificationCodeEmail: (params: {
     to: string;
+    businessId?: string;
     businessName?: string;
     cityName?: string;
-  }) => Promise<{ success: boolean; code: string; deliveredViaSmtp: boolean; logEntry?: EmailLogEntry }>;
-  verifyEmailCode: (email: string, code: string) => { valid: boolean; error?: string };
+  }) => Promise<{ success: boolean; code?: string; deliveredViaSmtp: boolean; error?: string; logEntry?: EmailLogEntry }>;
+  verifyEmailCode: (
+    email: string,
+    code: string,
+    businessId?: string
+  ) => Promise<{ valid: boolean; error?: string }>;
   checkoutTarget: CheckoutTarget | null;
   openCheckoutPage: (
     businessId: string,
@@ -280,6 +289,11 @@ interface DirectoryContextType {
     token?: string,
     billingCycle?: BillingCycle
   ) => void;
+
+  // General App Config & SEO (Persisted in app_settings)
+  appGeneralConfig: AppGeneralConfig;
+  updateAppGeneralConfig: (updates: Partial<AppGeneralConfig>) => void;
+  resetAppGeneralConfig: () => void;
 
   // MySQL / MariaDB Persistence Status & Controls
   dbSyncStatus: 'checking' | 'connected' | 'local_only' | 'error';
@@ -726,6 +740,32 @@ export const DirectoryProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     trackDbMutation(saveSettingToDb('planDiscountConfig', defaultPlanDiscountConfig));
   };
 
+  // General App Config & SEO (Identity, WhatsApp, WhatsApp Group, Social Links & SEO)
+  const [appGeneralConfig, setAppGeneralConfig] = useState<AppGeneralConfig>(() => {
+    try {
+      const saved = localStorage.getItem('achenacidade_app_general_config');
+      return saved ? { ...defaultAppGeneralConfig, ...JSON.parse(saved) } : defaultAppGeneralConfig;
+    } catch {
+      return defaultAppGeneralConfig;
+    }
+  });
+
+  useEffect(() => {
+    localStorage.setItem('achenacidade_app_general_config', JSON.stringify(appGeneralConfig));
+    applySeoToDocumentHead(appGeneralConfig);
+  }, [appGeneralConfig]);
+
+  const updateAppGeneralConfig = (updates: Partial<AppGeneralConfig>) => {
+    const next: AppGeneralConfig = { ...appGeneralConfig, ...updates };
+    setAppGeneralConfig(next);
+    trackDbMutation(saveSettingToDb('appGeneralConfig', next));
+  };
+
+  const resetAppGeneralConfig = () => {
+    setAppGeneralConfig(defaultAppGeneralConfig);
+    trackDbMutation(saveSettingToDb('appGeneralConfig', defaultAppGeneralConfig));
+  };
+
   // Mercado Pago Configuration
   const [mercadoPagoConfig, setMercadoPagoConfig] = useState<MercadoPagoConfig>(() => {
     try {
@@ -856,8 +896,6 @@ export const DirectoryProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     trackDbMutation(deleteEntityInDb('emailLogs', 'all'));
   };
 
-  const verificationCodesRef = useRef<Record<string, { code: string; expiresAt: number }>>({});
-
   const sendTemplatedEmail = async (params: {
     key: EmailTemplateKey;
     to: string;
@@ -887,47 +925,85 @@ export const DirectoryProvider: React.FC<{ children: React.ReactNode }> = ({ chi
 
   const sendVerificationCodeEmail = async (params: {
     to: string;
+    businessId?: string;
     businessName?: string;
     cityName?: string;
-  }): Promise<{ success: boolean; code: string; deliveredViaSmtp: boolean; logEntry?: EmailLogEntry }> => {
-    const normalizedEmail = params.to.trim().toLowerCase();
-    const code = Math.floor(100000 + Math.random() * 900000).toString();
-    verificationCodesRef.current[normalizedEmail] = {
-      code,
-      expiresAt: Date.now() + 15 * 60 * 1000,
-    };
-
-    const res = await sendTemplatedEmail({
-      key: 'email_verification',
-      to: params.to.trim(),
-      variables: {
-        codigo: code,
-        nome_empresa: params.businessName?.trim() || 'sua empresa',
-        cidade: params.cityName || 'Alagoinhas - BA',
-      },
-      highlightCode: code,
+  }): Promise<{ success: boolean; code?: string; deliveredViaSmtp: boolean; error?: string; logEntry?: EmailLogEntry }> => {
+    const res = await issueVerificationCodeViaApi({
+      email: params.to.trim(),
+      businessId: params.businessId,
+      businessName: params.businessName,
+      cityName: params.cityName,
+      smtp: smtpConfig,
+      template: emailTemplates.email_verification,
     });
 
+    const now = new Date();
+    const deliveryMode: 'smtp' | 'local_fallback' =
+      res.deliveryMode === 'smtp' ? 'smtp' : 'local_fallback';
+    const logEntry: EmailLogEntry = {
+      id: `mail-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
+      to: params.to.trim(),
+      templateKey: 'email_verification',
+      templateName: emailTemplates.email_verification.name,
+      subject: res.subject || 'Código de verificação no achenacidade',
+      htmlBody:
+        deliveryMode === 'smtp'
+          ? `<p>Código de validação enviado via SMTP para ${params.to.trim()}.</p>`
+          : `<p>Código de validação gerado em modo local para ${params.to.trim()}.</p>`,
+      textBody:
+        deliveryMode === 'smtp'
+          ? `Código de validação enviado via SMTP para ${params.to.trim()}.`
+          : `Código de validação gerado em modo local: ${res.debugCode || ''}`,
+      verificationCode: res.debugCode,
+      deliveryMode,
+      status: res.success ? 'sent' : 'failed',
+      errorMessage: res.error,
+      createdAt: `${now.toLocaleDateString('pt-BR')} ${now.toLocaleTimeString('pt-BR')}`,
+    };
+
+    setEmailLogs((prev) => [logEntry, ...prev].slice(0, 60));
+    trackDbMutation(createEntityInDb('emailLogs', logEntry));
+
     return {
-      success: true,
-      code,
-      deliveredViaSmtp: res.deliveredViaSmtp,
-      logEntry: res.logEntry,
+      success: res.success,
+      code: res.debugCode,
+      deliveredViaSmtp: deliveryMode === 'smtp' && res.success,
+      error: res.error,
+      logEntry,
     };
   };
 
-  const verifyEmailCode = (email: string, code: string): { valid: boolean; error?: string } => {
+  const verifyEmailCode = async (
+    email: string,
+    code: string,
+    businessId?: string
+  ): Promise<{ valid: boolean; error?: string }> => {
+    const res = await verifyEmailCodeViaApi({ email, code, businessId });
+    if (!res.valid) {
+      return { valid: false, error: res.error || 'Código inválido.' };
+    }
+
     const normalizedEmail = email.trim().toLowerCase();
-    const record = verificationCodesRef.current[normalizedEmail];
-    if (!record) {
-      return { valid: false, error: 'Solicite um código de verificação para este e-mail primeiro.' };
-    }
-    if (Date.now() > record.expiresAt) {
-      return { valid: false, error: 'Este código expirou. Clique em reenviar para gerar um novo.' };
-    }
-    if (code.trim() !== record.code) {
-      return { valid: false, error: 'Código incorreto. Confira os 6 dígitos enviados ao seu e-mail.' };
-    }
+    const targetId = businessId || res.businessId;
+    setBusinesses((prev) =>
+      prev.map((b) =>
+        b.id === targetId ||
+        b.email?.trim().toLowerCase() === normalizedEmail ||
+        b.ownerEmail?.trim().toLowerCase() === normalizedEmail
+          ? { ...b, emailVerified: true }
+          : b
+      )
+    );
+    setCurrentBusinessAuth((prev) =>
+      prev &&
+      (prev.id === targetId ||
+        prev.email?.trim().toLowerCase() === normalizedEmail ||
+        prev.ownerEmail?.trim().toLowerCase() === normalizedEmail)
+        ? { ...prev, emailVerified: true }
+        : prev
+    );
+
     return { valid: true };
   };
 
@@ -2223,6 +2299,7 @@ export const DirectoryProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       smtpConfig: defaultSmtpConfig,
       emailTemplates: defaultEmailTemplates,
       sessionConfig: defaultSessionConfig,
+      appGeneralConfig: defaultAppGeneralConfig,
     },
   });
 
@@ -2245,6 +2322,7 @@ export const DirectoryProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       smtpConfig,
       emailTemplates,
       sessionConfig,
+      appGeneralConfig,
     },
   });
 
@@ -2301,6 +2379,9 @@ export const DirectoryProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       });
     }
     if (data.settings?.sessionConfig) setSessionConfig(data.settings.sessionConfig);
+    if (data.settings?.appGeneralConfig) {
+      setAppGeneralConfig({ ...defaultAppGeneralConfig, ...data.settings.appGeneralConfig });
+    }
   };
 
   const refreshFromDatabase = async (): Promise<{ success: boolean; error?: string }> => {
@@ -2411,6 +2492,9 @@ export const DirectoryProvider: React.FC<{ children: React.ReactNode }> = ({ chi
 
       if (boot.seeded && boot.data) {
         applyRemoteData(boot.data);
+        if (!boot.data.settings?.appGeneralConfig) {
+          trackDbMutation(saveSettingToDb('appGeneralConfig', appGeneralConfig));
+        }
         setDbSyncStatus('connected');
         setDbLastError(null);
         setDbLastSyncedAt(new Date().toLocaleTimeString('pt-BR'));
@@ -2458,6 +2542,7 @@ export const DirectoryProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     setMercadoPagoConfig(defaultMercadoPagoConfig);
     setPaymentTransactions(initialPaymentTransactions);
     setSiteModeConfig(defaultSiteModeConfig);
+    setAppGeneralConfig(defaultAppGeneralConfig);
     localStorage.clear();
     trackDbMutation(resetDatabaseDemo(buildInitialBootstrapPayload()));
   };
@@ -2659,6 +2744,10 @@ export const DirectoryProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         verifyEmailCode,
         checkoutTarget,
         openCheckoutPage,
+
+        appGeneralConfig,
+        updateAppGeneralConfig,
+        resetAppGeneralConfig,
 
         dbSyncStatus,
         dbLastError,

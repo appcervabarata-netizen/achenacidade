@@ -12,6 +12,7 @@ import {
   HelpCircle,
   X,
   Package,
+  Users,
 } from 'lucide-react';
 
 interface LaunchPageProps {
@@ -26,15 +27,19 @@ export const LaunchPage: React.FC<LaunchPageProps> = ({ isPreview = false, onExi
     setCurrentView,
     setPreselectedPlanId,
     setAdminPreviewMode,
+    appGeneralConfig,
   } = useDirectory();
 
   const [imgError, setImgError] = useState(false);
   const { launch } = siteModeConfig;
 
-  const cleanWhatsapp = launch.whatsappNumber.replace(/\D/g, '');
+  const cleanWhatsapp = (launch.whatsappNumber || appGeneralConfig.whatsappNumber || '').replace(/\D/g, '');
   const whatsappUrl = cleanWhatsapp
-    ? `https://wa.me/55${cleanWhatsapp}?text=${encodeURIComponent(launch.whatsappMessage)}`
+    ? `https://wa.me/55${cleanWhatsapp}?text=${encodeURIComponent(
+        launch.whatsappMessage || appGeneralConfig.whatsappDefaultMessage || ''
+      )}`
     : '';
+  const hasWhatsappGroup = /^https?:\/\//i.test((appGeneralConfig.whatsappGroupUrl || '').trim());
 
   const handleGoToPlans = () => {
     if (isPreview) {
@@ -550,13 +555,26 @@ export const LaunchPage: React.FC<LaunchPageProps> = ({ isPreview = false, onExi
             © {new Date().getFullYear()} achenacidade · Guia Comercial Oficial de Alagoinhas - BA
           </p>
 
-          <button
-            onClick={handleGoToLogin}
-            className="inline-flex items-center gap-1.5 text-slate-500 hover:text-blue-600 dark:hover:text-blue-400 font-medium transition cursor-pointer"
-          >
-            <Lock className="w-3.5 h-3.5" />
-            <span>Área do Lojista</span>
-          </button>
+          <div className="flex items-center gap-4">
+            {hasWhatsappGroup && (
+              <a
+                href={appGeneralConfig.whatsappGroupUrl.trim()}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="inline-flex items-center gap-1.5 text-emerald-600 dark:text-emerald-400 hover:underline font-semibold"
+              >
+                <Users className="w-3.5 h-3.5" />
+                <span>{appGeneralConfig.whatsappGroupLabel || 'Grupo no WhatsApp'}</span>
+              </a>
+            )}
+            <button
+              onClick={handleGoToLogin}
+              className="inline-flex items-center gap-1.5 text-slate-500 hover:text-blue-600 dark:hover:text-blue-400 font-medium transition cursor-pointer"
+            >
+              <Lock className="w-3.5 h-3.5" />
+              <span>Área do Lojista</span>
+            </button>
+          </div>
         </div>
       </footer>
     </div>

@@ -225,6 +225,17 @@ const EXPECTED_TABLE_COLUMNS: Record<string, Array<{ name: string; definition: s
     { name: 'last_activity_at', definition: 'BIGINT NOT NULL DEFAULT 0' },
     { name: 'revoked', definition: 'TINYINT(1) NOT NULL DEFAULT 0' },
   ],
+  auth_codes: [
+    { name: 'purpose', definition: "VARCHAR(32) NOT NULL DEFAULT 'email_verification'" },
+    { name: 'role', definition: "VARCHAR(32) NOT NULL DEFAULT 'business'" },
+    { name: 'email', definition: "VARCHAR(255) NOT NULL DEFAULT ''" },
+    { name: 'business_id', definition: 'VARCHAR(120) NULL' },
+    { name: 'code_hash', definition: "VARCHAR(128) NOT NULL DEFAULT ''" },
+    { name: 'expires_at', definition: 'BIGINT NOT NULL DEFAULT 0' },
+    { name: 'used_at', definition: 'BIGINT NULL' },
+    { name: 'attempts', definition: 'INT NOT NULL DEFAULT 0' },
+    { name: 'created_at', definition: 'BIGINT NOT NULL DEFAULT 0' },
+  ],
   cities: [
     { name: 'name', definition: "VARCHAR(255) NOT NULL DEFAULT ''" },
     { name: 'state', definition: "VARCHAR(32) NOT NULL DEFAULT ''" },
@@ -551,6 +562,22 @@ export async function ensureDatabaseSchema(forceMigrate = false): Promise<boolea
           revoked TINYINT(1) NOT NULL DEFAULT 0,
           KEY idx_auth_expires (expires_at),
           KEY idx_auth_user (role, user_id)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+      `);
+
+      await conn.query(`
+        CREATE TABLE IF NOT EXISTS auth_codes (
+          id VARCHAR(120) PRIMARY KEY,
+          purpose VARCHAR(32) NOT NULL,
+          role VARCHAR(32) NOT NULL DEFAULT 'business',
+          email VARCHAR(255) NOT NULL,
+          business_id VARCHAR(120) NULL,
+          code_hash VARCHAR(128) NOT NULL,
+          expires_at BIGINT NOT NULL,
+          used_at BIGINT NULL,
+          attempts INT NOT NULL DEFAULT 0,
+          created_at BIGINT NOT NULL,
+          KEY idx_auth_codes_lookup (purpose, role, email)
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
       `);
 
@@ -2450,6 +2477,227 @@ export async function changeAdminPasswordInDb(
   return { success: true };
 }
 
+export function hashAuthCode(
+  purpose: 'email_verification' | 'password_reset',
+  role: 'admin' | 'business',
+  email: string,
+  code: string
+): string {
+  return crypto
+    .createHash('sha256')
+    .update(`${purpose}:${role}:${email.trim().toLowerCase()}:${code.trim()}`)
+    .digest('hex');
+}
+
+export async function getSettingFromDb<T = unknown>(key: string): Promise<T | null> {
+  const activePool = getPool();
+  if (!activePool) return null;
+  try {
+    await ensureDatabaseSchema();
+    const [rows] = await activePool.query<RowDataPacket[]>(
+      `SELECT setting_value FROM app_settings WHERE setting_key = ? LIMIT 1`,
+      [key]
+    );
+    if (rows.length === 0) return null;
+    return parseJsonColumn<T>(rows[0].setting_value, null as unknown as T);
+  } catch {
+    return null;
+  }
+}
+
+export async function createAuthCodeInDb(params: {
+  purpose: 'email_verification' | 'password_reset';
+  role: 'admin' | 'business';
+  email: string;
+  businessId?: string;
+  ttlMinutes?: number;
+}): Promise<{ code: string; expiresAt: number }> {
+  const activePool = getPool();
+  if (!activePool) {
+    throw new Error('Banco de dados não configurado.');
+  }
+  await ensureDatabaseSchema();
+
+  const normalizedEmail = params.email.trim().toLowerCase();
+  const code = String(crypto.randomInt(100000, 1000000));
+  const now = Date.now();
+  const expiresAt = now + (params.ttlMinutes || 30) * 60 * 1000;
+  const codeHash = hashAuthCode(params.purpose, params.role, normalizedEmail, code);
+  const id = `code-${now}-${crypto.randomBytes(6).toString('hex')}`;
+
+  await activePool.query(
+    `DELETE FROM auth_codes WHERE purpose = ? AND role = ? AND LOWER(email) = ? AND used_at IS NULL`,
+    [params.purpose, params.role, normalizedEmail]
+  );
+
+  await activePool.query(
+    `INSERT INTO auth_codes (id, purpose, role, email, business_id, code_hash, expires_at, used_at, attempts, created_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, NULL, 0, ?)`,
+    [id, params.purpose, params.role, normalizedEmail, params.businessId || null, codeHash, expiresAt, now]
+  );
+
+  return { code, expiresAt };
+}
+
+export async function verifyAuthCodeInDb(params: {
+  purpose: 'email_verification' | 'password_reset';
+  role: 'admin' | 'business';
+  email: string;
+  code: string;
+  markUsed?: boolean;
+}): Promise<{ valid: boolean; businessId?: string | null; error?: string }> {
+  const activePool = getPool();
+  if (!activePool) {
+    return { valid: false, error: 'Banco de dados não configurado.' };
+  }
+  await ensureDatabaseSchema();
+
+  const normalizedEmail = params.email.trim().toLowerCase();
+  const trimmedCode = params.code.trim();
+  const [rows] = await activePool.query<RowDataPacket[]>(
+    `SELECT * FROM auth_codes
+     WHERE purpose = ? AND role = ? AND LOWER(email) = ? AND used_at IS NULL
+     ORDER BY created_at DESC LIMIT 1`,
+    [params.purpose, params.role, normalizedEmail]
+  );
+
+  if (rows.length === 0) {
+    return {
+      valid: false,
+      error: 'Nenhum código ativo encontrado para este e-mail. Solicite um novo código.',
+    };
+  }
+
+  const record = rows[0];
+  const now = Date.now();
+  if (now > Number(record.expires_at || 0)) {
+    return {
+      valid: false,
+      error: 'Este código expirou. Clique em reenviar para gerar um novo código.',
+    };
+  }
+
+  if (Number(record.attempts || 0) >= 6) {
+    return {
+      valid: false,
+      error: 'Limite de tentativas excedido. Solicite um novo código.',
+    };
+  }
+
+  const expectedHash = String(record.code_hash || '');
+  const actualHash = hashAuthCode(params.purpose, params.role, normalizedEmail, trimmedCode);
+  const aBuf = Buffer.from(actualHash, 'utf8');
+  const eBuf = Buffer.from(expectedHash, 'utf8');
+
+  if (aBuf.length !== eBuf.length || !crypto.timingSafeEqual(aBuf, eBuf)) {
+    await activePool.query(`UPDATE auth_codes SET attempts = attempts + 1 WHERE id = ?`, [record.id]);
+    return {
+      valid: false,
+      error: 'Código incorreto. Confira os 6 dígitos enviados ao seu e-mail.',
+    };
+  }
+
+  if (params.markUsed !== false) {
+    await activePool.query(`UPDATE auth_codes SET used_at = ? WHERE id = ?`, [now, record.id]);
+  }
+
+  return { valid: true, businessId: record.business_id ? String(record.business_id) : null };
+}
+
+export async function markBusinessEmailVerifiedInDb(
+  email: string,
+  businessId?: string | null
+): Promise<void> {
+  const activePool = getPool();
+  if (!activePool) return;
+  await ensureDatabaseSchema();
+  const normalizedEmail = email.trim().toLowerCase();
+  if (businessId) {
+    await activePool.query(
+      `UPDATE businesses SET email_verified = 1 WHERE id = ? OR LOWER(email) = ? OR LOWER(owner_email) = ?`,
+      [businessId, normalizedEmail, normalizedEmail]
+    );
+  } else {
+    await activePool.query(
+      `UPDATE businesses SET email_verified = 1 WHERE LOWER(email) = ? OR LOWER(owner_email) = ?`,
+      [normalizedEmail, normalizedEmail]
+    );
+  }
+}
+
+export async function findAccountForPasswordResetInDb(
+  role: 'admin' | 'business',
+  email: string
+): Promise<{ found: boolean; name?: string; businessId?: string }> {
+  const activePool = getPool();
+  if (!activePool) return { found: false };
+  await ensureDatabaseSchema();
+  const normalizedEmail = email.trim().toLowerCase();
+
+  if (role === 'admin') {
+    const [rows] = await activePool.query<RowDataPacket[]>(
+      `SELECT id, name FROM admin_users WHERE LOWER(email) = ? AND is_active = 1 LIMIT 1`,
+      [normalizedEmail]
+    );
+    if (rows.length === 0) return { found: false };
+    return { found: true, name: String(rows[0].name || 'Administrador') };
+  }
+
+  const [bizRows] = await activePool.query<RowDataPacket[]>(
+    `SELECT id, name FROM businesses WHERE LOWER(owner_email) = ? OR LOWER(email) = ? ORDER BY sort_order ASC, id ASC LIMIT 1`,
+    [normalizedEmail, normalizedEmail]
+  );
+  if (bizRows.length === 0) return { found: false };
+  return {
+    found: true,
+    name: String(bizRows[0].name || 'Lojista'),
+    businessId: String(bizRows[0].id),
+  };
+}
+
+export async function resetPasswordInDb(params: {
+  role: 'admin' | 'business';
+  email: string;
+  newPassword: string;
+}): Promise<{ success: boolean; error?: string }> {
+  const activePool = getPool();
+  if (!activePool) return { success: false, error: 'Banco de dados não configurado.' };
+  await ensureDatabaseSchema();
+
+  const normalizedEmail = params.email.trim().toLowerCase();
+  const newHash = hashPassword(params.newPassword);
+
+  if (params.role === 'admin') {
+    const [res] = await activePool.query(
+      `UPDATE admin_users SET password_hash = ? WHERE LOWER(email) = ? AND is_active = 1`,
+      [newHash, normalizedEmail]
+    );
+    const affected = Number((res as { affectedRows?: number }).affectedRows || 0);
+    if (affected === 0) {
+      return { success: false, error: 'Conta administrativa não encontrada.' };
+    }
+    await activePool.query(
+      `DELETE FROM auth_sessions WHERE role = 'admin' AND LOWER(email) = ?`,
+      [normalizedEmail]
+    );
+    return { success: true };
+  }
+
+  const [res] = await activePool.query(
+    `UPDATE businesses SET password = ? WHERE LOWER(owner_email) = ? OR LOWER(email) = ?`,
+    [newHash, normalizedEmail, normalizedEmail]
+  );
+  const affected = Number((res as { affectedRows?: number }).affectedRows || 0);
+  if (affected === 0) {
+    return { success: false, error: 'Nenhuma loja encontrada para este e-mail.' };
+  }
+  await activePool.query(
+    `DELETE FROM auth_sessions WHERE role = 'business' AND LOWER(email) = ?`,
+    [normalizedEmail]
+  );
+  return { success: true };
+}
+
 export interface DatabaseDiagnostics {
   configured: boolean;
   connected: boolean;
@@ -2538,6 +2786,7 @@ export async function getDatabaseDiagnostics(): Promise<DatabaseDiagnostics> {
     const tables = [
       'admin_users',
       'auth_sessions',
+      'auth_codes',
       'cities',
       'categories',
       'plans',

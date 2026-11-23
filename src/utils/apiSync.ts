@@ -1,6 +1,7 @@
 import type {
   AdBanner,
   AdminTheme,
+  AppGeneralConfig,
   AuthSession,
   Business,
   Category,
@@ -39,6 +40,7 @@ export interface DirectoryBootstrapPayload {
     smtpConfig?: SmtpConfig;
     emailTemplates?: Record<EmailTemplateKey, EmailTemplate>;
     sessionConfig?: SessionConfig;
+    appGeneralConfig?: AppGeneralConfig;
   };
 }
 
@@ -420,6 +422,168 @@ export async function changeAdminPasswordViaApi(params: {
     return {
       success: false,
       error: err instanceof Error ? err.message : 'Erro ao atualizar senha.',
+    };
+  }
+}
+
+export async function issueVerificationCodeViaApi(params: {
+  email: string;
+  businessId?: string;
+  businessName?: string;
+  cityName?: string;
+  smtp?: SmtpConfig;
+  template?: Pick<EmailTemplate, 'subject' | 'heading' | 'body' | 'footerNote'>;
+}): Promise<{
+  success: boolean;
+  deliveryMode?: 'smtp' | 'local_fallback';
+  subject?: string;
+  debugCode?: string;
+  error?: string;
+}> {
+  try {
+    const res = await fetch('/api/auth/verification-code/issue', {
+      method: 'POST',
+      cache: 'no-store',
+      headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+      body: JSON.stringify(params),
+    });
+    const data = (await res.json()) as {
+      success?: boolean;
+      deliveryMode?: 'smtp' | 'local_fallback';
+      subject?: string;
+      debugCode?: string;
+      error?: string;
+    };
+    if (!res.ok || !data.success) {
+      return {
+        success: false,
+        error: data.error || 'Não foi possível enviar o código de validação.',
+      };
+    }
+    return {
+      success: true,
+      deliveryMode: data.deliveryMode || 'local_fallback',
+      subject: data.subject,
+      debugCode: data.debugCode,
+      error: data.error,
+    };
+  } catch (err) {
+    return {
+      success: false,
+      error: err instanceof Error ? err.message : 'Erro de conexão ao emitir código de validação.',
+    };
+  }
+}
+
+export async function verifyEmailCodeViaApi(params: {
+  email: string;
+  code: string;
+  businessId?: string;
+}): Promise<{ valid: boolean; businessId?: string; error?: string }> {
+  try {
+    const res = await fetch('/api/auth/verification-code/verify', {
+      method: 'POST',
+      cache: 'no-store',
+      headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+      body: JSON.stringify(params),
+    });
+    const data = (await res.json()) as {
+      success?: boolean;
+      businessId?: string;
+      error?: string;
+    };
+    if (!res.ok || !data.success) {
+      return {
+        valid: false,
+        error: data.error || 'Código de validação inválido.',
+      };
+    }
+    return { valid: true, businessId: data.businessId };
+  } catch (err) {
+    return {
+      valid: false,
+      error: err instanceof Error ? err.message : 'Erro de conexão ao validar código.',
+    };
+  }
+}
+
+export async function requestPasswordResetViaApi(params: {
+  loginType: 'admin' | 'business';
+  email: string;
+  smtp?: SmtpConfig;
+}): Promise<{
+  success: boolean;
+  deliveryMode?: 'smtp' | 'local_fallback';
+  message?: string;
+  debugCode?: string;
+  error?: string;
+}> {
+  try {
+    const res = await fetch('/api/auth/forgot-password', {
+      method: 'POST',
+      cache: 'no-store',
+      headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+      body: JSON.stringify(params),
+    });
+    const data = (await res.json()) as {
+      success?: boolean;
+      deliveryMode?: 'smtp' | 'local_fallback';
+      message?: string;
+      debugCode?: string;
+      error?: string;
+    };
+    if (!res.ok || !data.success) {
+      return {
+        success: false,
+        error: data.error || 'Não foi possível solicitar a redefinição de senha.',
+      };
+    }
+    return {
+      success: true,
+      deliveryMode: data.deliveryMode,
+      message: data.message,
+      debugCode: data.debugCode,
+    };
+  } catch (err) {
+    return {
+      success: false,
+      error: err instanceof Error ? err.message : 'Erro de conexão ao solicitar recuperação de senha.',
+    };
+  }
+}
+
+export async function confirmPasswordResetViaApi(params: {
+  loginType: 'admin' | 'business';
+  email: string;
+  code: string;
+  newPassword: string;
+}): Promise<{ success: boolean; message?: string; error?: string }> {
+  try {
+    const res = await fetch('/api/auth/reset-password', {
+      method: 'POST',
+      cache: 'no-store',
+      headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+      body: JSON.stringify(params),
+    });
+    const data = (await res.json()) as {
+      success?: boolean;
+      message?: string;
+      error?: string;
+    };
+    if (!res.ok || !data.success) {
+      return {
+        success: false,
+        error: data.error || 'Não foi possível redefinir a senha.',
+      };
+    }
+    return {
+      success: true,
+      message: data.message || 'Senha redefinida com sucesso!',
+    };
+  } catch (err) {
+    return {
+      success: false,
+      error: err instanceof Error ? err.message : 'Erro de conexão ao redefinir senha.',
     };
   }
 }

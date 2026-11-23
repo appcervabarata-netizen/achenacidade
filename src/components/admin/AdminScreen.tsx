@@ -49,6 +49,7 @@ import { SocialCreativesStudio } from './SocialCreativesStudio';
 import { AdminSiteModeTab } from './AdminSiteModeTab';
 import { AdminEmailTab } from './AdminEmailTab';
 import { AdminDatabaseTab } from './AdminDatabaseTab';
+import { AdminGeneralSettingsTab } from './AdminGeneralSettingsTab';
 import { generateHostGatorPackage, downloadFile } from '../../utils/hostgatorGenerator';
 import { changeAdminPasswordViaApi } from '../../utils/apiSync';
 import {
@@ -107,7 +108,7 @@ export const AdminScreen: React.FC = () => {
 
   // Active admin tab
   const [activeTab, setActiveTab] = useState<
-    'dashboard' | 'cities' | 'categories' | 'plans' | 'businesses' | 'banners' | 'payments' | 'emails' | 'creatives' | 'sitemode' | 'theme' | 'security' | 'database' | 'hostgator'
+    'dashboard' | 'cities' | 'categories' | 'plans' | 'businesses' | 'banners' | 'payments' | 'emails' | 'creatives' | 'sitemode' | 'theme' | 'general_seo' | 'security' | 'database' | 'hostgator'
   >('dashboard');
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(true);
 
@@ -673,6 +674,7 @@ export const AdminScreen: React.FC = () => {
           { id: 'creatives', label: 'Criativos', icon: Instagram },
           { id: 'sitemode', label: 'L & M', icon: Rocket },
           { id: 'theme', label: 'Cores', icon: Palette },
+          { id: 'general_seo', label: 'Geral & SEO', icon: Globe },
           { id: 'security', label: 'Login & Sessão', icon: Lock },
           { id: 'database', label: 'Banco MySQL', icon: Database },
           { id: 'hostgator', label: 'HostGator', icon: Server },
@@ -3049,6 +3051,11 @@ export const AdminScreen: React.FC = () => {
               </ul>
             </div>
           </div>
+        )}
+
+        {/* TAB: CONFIGURAÇÕES GERAIS, WHATSAPP, REDES SOCIAIS & SEO */}
+        {activeTab === 'general_seo' && (
+          <AdminGeneralSettingsTab onNotify={(msg) => showAdminToast(msg)} />
         )}
 
         {/* TAB: BANCO DE DADOS MYSQL */}

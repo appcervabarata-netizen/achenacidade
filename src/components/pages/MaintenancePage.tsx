@@ -7,6 +7,7 @@ import {
   MessageCircle,
   Lock,
   ShieldCheck,
+  Users,
 } from 'lucide-react';
 
 interface MaintenancePageProps {
@@ -18,15 +19,17 @@ export const MaintenancePage: React.FC<MaintenancePageProps> = ({
   isPreview = false,
   onExitPreview,
 }) => {
-  const { siteModeConfig, setCurrentView, setAdminPreviewMode } = useDirectory();
+  const { siteModeConfig, setCurrentView, setAdminPreviewMode, appGeneralConfig } = useDirectory();
   const { maintenance } = siteModeConfig;
 
-  const cleanWhatsapp = maintenance.whatsappNumber.replace(/\D/g, '');
+  const cleanWhatsapp = (maintenance.whatsappNumber || appGeneralConfig.whatsappNumber || '').replace(/\D/g, '');
   const whatsappUrl = cleanWhatsapp
     ? `https://wa.me/55${cleanWhatsapp}?text=${encodeURIComponent(
-        'Olá! Vi a página de manutenção do achenacidade e gostaria de tirar uma dúvida sobre o cadastro da minha empresa.'
+        appGeneralConfig.whatsappDefaultMessage ||
+          'Olá! Vi a página de manutenção do achenacidade e gostaria de tirar uma dúvida sobre o cadastro da minha empresa.'
       )}`
     : '';
+  const hasWhatsappGroup = /^https?:\/\//i.test((appGeneralConfig.whatsappGroupUrl || '').trim());
 
   const handleGoToPlans = () => {
     if (isPreview) {
@@ -141,6 +144,18 @@ export const MaintenancePage: React.FC<MaintenancePageProps> = ({
                 >
                   <MessageCircle className="w-4 h-4 text-emerald-600" />
                   <span>Suporte WhatsApp</span>
+                </a>
+              )}
+
+              {hasWhatsappGroup && (
+                <a
+                  href={appGeneralConfig.whatsappGroupUrl.trim()}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="py-4 px-5 rounded-xl border border-emerald-300 dark:border-emerald-800 bg-emerald-50 dark:bg-emerald-950/30 hover:bg-emerald-100 text-emerald-800 dark:text-emerald-200 text-sm font-bold transition flex items-center justify-center gap-2 whitespace-nowrap"
+                >
+                  <Users className="w-4 h-4 text-emerald-600" />
+                  <span>Grupo WhatsApp</span>
                 </a>
               )}
             </div>

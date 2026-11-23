@@ -59,6 +59,20 @@ CREATE TABLE IF NOT EXISTS `auth_sessions` (
   KEY `idx_auth_user` (`role`, `user_id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
+CREATE TABLE IF NOT EXISTS `auth_codes` (
+  `id` VARCHAR(120) PRIMARY KEY,
+  `purpose` VARCHAR(32) NOT NULL,
+  `role` VARCHAR(32) NOT NULL DEFAULT 'business',
+  `email` VARCHAR(255) NOT NULL,
+  `business_id` VARCHAR(120) NULL,
+  `code_hash` VARCHAR(128) NOT NULL,
+  `expires_at` BIGINT NOT NULL,
+  `used_at` BIGINT NULL,
+  `attempts` INT NOT NULL DEFAULT 0,
+  `created_at` BIGINT NOT NULL,
+  KEY `idx_auth_codes_lookup` (`purpose`, `role`, `email`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
 CREATE TABLE IF NOT EXISTS `cities` (
   `id` VARCHAR(120) PRIMARY KEY,
   `name` VARCHAR(255) NOT NULL,

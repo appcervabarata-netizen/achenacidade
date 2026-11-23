@@ -352,4 +352,32 @@ export interface CheckoutTarget {
   token?: string;
 }
 
+export interface AppGeneralConfig {
+  // Identidade Geral, Contato & WhatsApp
+  appName: string;
+  tagline: string;
+  cityLabel: string;
+  contactEmail: string;
+  whatsappNumber: string;
+  whatsappDefaultMessage: string;
+  whatsappGroupUrl: string;
+  whatsappGroupLabel: string;
 
+  // Redes Sociais Oficiais
+  instagramUrl: string;
+  facebookUrl: string;
+  youtubeUrl: string;
+  tiktokUrl: string;
+  linkedinUrl: string;
+  websiteUrl: string;
+
+  // SEO & Metadados Sociais
+  seoTitle: string;
+  seoDescription: string;
+  seoKeywords: string;
+  ogImageUrl: string;
+  canonicalUrl: string;
+  twitterHandle: string;
+  googleSiteVerification: string;
+  robotsIndex: boolean;
+}

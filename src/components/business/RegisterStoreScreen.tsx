@@ -24,9 +24,7 @@ import {
   CreditCard,
   Plus,
   ShieldCheck,
-  Check,
   Sparkles,
-  Send,
 } from 'lucide-react';
 
 const initialWeeklySchedule: DaySchedule[] = [
@@ -53,7 +51,6 @@ export const RegisterStoreScreen: React.FC = () => {
     planDiscountConfig,
     siteModeConfig,
     sendVerificationCodeEmail,
-    verifyEmailCode,
     sendTemplatedEmail,
     openCheckoutPage,
   } = useDirectory();
@@ -84,17 +81,6 @@ export const RegisterStoreScreen: React.FC = () => {
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
-
-  // 6-digit Email Verification State
-  const [verificationCodeSentTo, setVerificationCodeSentTo] = useState<string | null>(null);
-  const [verificationInput, setVerificationInput] = useState('');
-  const [verifiedEmail, setVerifiedEmail] = useState<string | null>(null);
-  const [isSendingCode, setIsSendingCode] = useState(false);
-  const [emailStatusMsg, setEmailStatusMsg] = useState<{
-    type: 'info' | 'success' | 'error';
-    text: string;
-    testCodeHint?: string;
-  } | null>(null);
 
   const [billingCycle, setBillingCycle] = useState<BillingCycle>(preselectedBillingCycle || 'monthly');
 
@@ -129,63 +115,6 @@ export const RegisterStoreScreen: React.FC = () => {
 
   const normalizedFormEmail = form.email.trim().toLowerCase();
   const isEmailValidFormat = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalizedFormEmail);
-  const isCurrentEmailVerified = Boolean(verifiedEmail && verifiedEmail === normalizedFormEmail);
-
-  const handleSendVerificationCode = async () => {
-    setErrorMsg(null);
-    if (!isEmailValidFormat) {
-      setEmailStatusMsg({
-        type: 'error',
-        text: 'Informe um endereço de e-mail válido antes de solicitar o código de validação.',
-      });
-      return;
-    }
-
-    setIsSendingCode(true);
-    try {
-      const cityName = cities.find((c) => c.id === form.cityId)?.name || 'Alagoinhas';
-      const result = await sendVerificationCodeEmail({
-        to: form.email.trim(),
-        businessName: form.name.trim(),
-        cityName,
-      });
-
-      setVerificationCodeSentTo(normalizedFormEmail);
-      setVerificationInput('');
-      setEmailStatusMsg({
-        type: 'info',
-        text: result.deliveredViaSmtp
-          ? `Enviamos um código de 6 dígitos para ${form.email.trim()}. Confira sua caixa de entrada.`
-          : `Código de 6 dígitos registrado na Caixa de Saída local para ${form.email.trim()} (SMTP não configurado para envio externo).`,
-        testCodeHint: result.deliveredViaSmtp ? undefined : result.code,
-      });
-    } catch {
-      setEmailStatusMsg({
-        type: 'error',
-        text: 'Não foi possível gerar o código de validação. Tente novamente.',
-      });
-    } finally {
-      setIsSendingCode(false);
-    }
-  };
-
-  const handleConfirmVerificationCode = () => {
-    setErrorMsg(null);
-    const check = verifyEmailCode(form.email, verificationInput);
-    if (!check.valid) {
-      setEmailStatusMsg({
-        type: 'error',
-        text: check.error || 'Código inválido.',
-      });
-      return;
-    }
-
-    setVerifiedEmail(normalizedFormEmail);
-    setEmailStatusMsg({
-      type: 'success',
-      text: 'E-mail validado com sucesso! Você já pode concluir o cadastro da sua empresa.',
-    });
-  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -201,10 +130,6 @@ export const RegisterStoreScreen: React.FC = () => {
     }
     if (!isEmailValidFormat) {
       setErrorMsg('Por favor, informe um e-mail válido para login e contato.');
-      return;
-    }
-    if (!isCurrentEmailVerified) {
-      setErrorMsg('Valide seu e-mail com o código de 6 dígitos antes de finalizar o cadastro.');
       return;
     }
     if (!form.password) {
@@ -258,7 +183,7 @@ export const RegisterStoreScreen: React.FC = () => {
         website: form.website.trim(),
         password: form.password,
         isVerified: false,
-        emailVerified: true,
+        emailVerified: false,
         paymentStatus: isPaidPlan ? ('pending_payment' as const) : ('active' as const),
         pendingPlanId: isPaidPlan ? chosenPlan.id : undefined,
         pendingBillingCycle: isPaidPlan ? billingCycle : undefined,
@@ -276,6 +201,17 @@ export const RegisterStoreScreen: React.FC = () => {
       const newId = regRes.businessId;
       const cityName = cities.find((c) => c.id === form.cityId)?.name || 'Alagoinhas';
       const origin = typeof window !== 'undefined' ? window.location.origin : '';
+
+      try {
+        await sendVerificationCodeEmail({
+          to: form.email.trim(),
+          businessId: newId,
+          businessName: newBizData.name,
+          cityName,
+        });
+      } catch {
+        // Non-blocking: user can also resend inside the Business Portal
+      }
 
       if (isPaidPlan && chosenPlan) {
         const paymentLink = `${origin}/?checkout=1&businessId=${encodeURIComponent(
@@ -640,13 +576,7 @@ export const RegisterStoreScreen: React.FC = () => {
                     type="email"
                     required
                     value={form.email}
-                    onChange={(e) => {
-                      const val = e.target.value;
-                      setForm({ ...form, email: val });
-                      if (verifiedEmail && verifiedEmail !== val.trim().toLowerCase()) {
-                        setVerifiedEmail(null);
-                      }
-                    }}
+                    onChange={(e) => setForm({ ...form, email: e.target.value })}
                     placeholder="contato@minhaloja.com.br"
                     className="w-full pl-9 pr-3 py-2.5 rounded-xl border border-slate-300 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-xs sm:text-sm text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
                   />
@@ -702,85 +632,11 @@ export const RegisterStoreScreen: React.FC = () => {
               </div>
             </div>
 
-            {/* Verificação Obrigatória de E-mail com Código de 6 Dígitos */}
-            <div className="p-4 rounded-2xl bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 space-y-3">
-              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-                <div>
-                  <p className="text-xs font-bold text-slate-900 dark:text-white">
-                    Validação do E-mail (Código de 6 Dígitos)
-                  </p>
-                  <p className="text-[11px] text-slate-500 dark:text-slate-400">
-                    {isCurrentEmailVerified
-                      ? `E-mail ${form.email} validado com sucesso.`
-                      : 'Confirme que o e-mail é seu antes de concluir o cadastro.'}
-                  </p>
-                </div>
-
-                {isCurrentEmailVerified ? (
-                  <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-emerald-100 dark:bg-emerald-950/60 text-emerald-700 dark:text-emerald-300 text-xs font-bold self-start sm:self-auto">
-                    <Check className="w-4 h-4" />
-                    <span>E-mail Validado</span>
-                  </span>
-                ) : (
-                  <button
-                    type="button"
-                    disabled={isSendingCode}
-                    onClick={handleSendVerificationCode}
-                    className="px-4 py-2 rounded-xl bg-blue-700 hover:bg-blue-800 text-white text-xs font-bold flex items-center gap-1.5 cursor-pointer shrink-0 self-start sm:self-auto disabled:opacity-50"
-                  >
-                    <Send className="w-3.5 h-3.5" />
-                    <span>
-                      {isSendingCode
-                        ? 'Enviando...'
-                        : verificationCodeSentTo === form.email.trim().toLowerCase()
-                        ? 'Reenviar Código'
-                        : 'Enviar Código de Validação'}
-                    </span>
-                  </button>
-                )}
-              </div>
-
-              {!isCurrentEmailVerified && verificationCodeSentTo && (
-                <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2.5 pt-1">
-                  <input
-                    type="text"
-                    maxLength={6}
-                    value={verificationInput}
-                    onChange={(e) => setVerificationInput(e.target.value.replace(/\D/g, ''))}
-                    placeholder="Digite o código de 6 dígitos"
-                    className="flex-1 px-3.5 py-2 rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 text-sm font-mono tracking-widest text-slate-900 dark:text-white"
-                  />
-                  <button
-                    type="button"
-                    onClick={handleConfirmVerificationCode}
-                    className="px-4 py-2 rounded-xl bg-orange-600 hover:bg-orange-700 text-white text-xs font-extrabold cursor-pointer shrink-0"
-                  >
-                    Validar Código
-                  </button>
-                </div>
-              )}
-
-              {emailStatusMsg && (
-                <div
-                  className={`p-3 rounded-xl text-xs font-medium ${
-                    emailStatusMsg.type === 'success'
-                      ? 'bg-emerald-50 text-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-300'
-                      : emailStatusMsg.type === 'error'
-                      ? 'bg-rose-50 text-rose-700 dark:bg-rose-950/40 dark:text-rose-300'
-                      : 'bg-blue-50 text-blue-800 dark:bg-blue-950/40 dark:text-blue-300'
-                  }`}
-                >
-                  <p>{emailStatusMsg.text}</p>
-                  {emailStatusMsg.testCodeHint && (
-                    <p className="mt-1 text-[11px] font-semibold">
-                      Código gerado em modo de teste local:{' '}
-                      <span className="font-mono font-extrabold text-orange-600">
-                        {emailStatusMsg.testCodeHint}
-                      </span>
-                    </p>
-                  )}
-                </div>
-              )}
+            <div className="p-3.5 rounded-2xl bg-blue-50/70 dark:bg-blue-950/30 border border-blue-200/80 dark:border-blue-900 flex items-start gap-2.5 text-xs text-blue-900 dark:text-blue-200">
+              <Mail className="w-4 h-4 text-blue-600 shrink-0 mt-0.5" />
+              <p>
+                Após finalizar o cadastro, enviaremos automaticamente um código de validação de 6 dígitos para este e-mail. Você poderá confirmá-lo diretamente no Painel do Lojista.
+              </p>
             </div>
           </div>
 
@@ -938,12 +794,12 @@ export const RegisterStoreScreen: React.FC = () => {
               </h3>
               <p className="text-xs text-white/90 max-w-xl mt-0.5 leading-relaxed">
                 {isPaidSelectedPlan
-                  ? `Após validar seu e-mail, sua empresa será cadastrada como Pendente de Pagamento. Você será direcionado para pagar ${formatBRL(
+                  ? `Ao finalizar, sua empresa será cadastrada como Pendente de Pagamento, enviaremos o código de validação para o seu e-mail e você seguirá para pagar ${formatBRL(
                       selectedPricing.totalAmount
                     )} (PIX ou Cartão${
                       selectedPricing.months > 1 ? ' em até 12x' : ''
-                    }) e receberá o link por e-mail.`
-                  : 'Ao clicar abaixo após validar seu e-mail, sua empresa será cadastrada, enviaremos o e-mail de boas-vindas e você será direcionado imediatamente para o painel da sua loja para cadastrar seus produtos e serviços.'}
+                    }).`
+                  : 'Ao clicar abaixo, sua empresa será cadastrada, enviaremos o código de validação e as boas-vindas por e-mail e você acessará o painel da sua loja imediatamente.'}
               </p>
             </div>
 

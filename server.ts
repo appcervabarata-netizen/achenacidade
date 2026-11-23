@@ -33,6 +33,12 @@ import {
   revokeSessionTokenInDb,
   switchBusinessSessionInDb,
   changeAdminPasswordInDb,
+  getSettingFromDb,
+  createAuthCodeInDb,
+  verifyAuthCodeInDb,
+  markBusinessEmailVerifiedInDb,
+  findAccountForPasswordResetInDb,
+  resetPasswordInDb,
   type DbAuthSessionPayload,
 } from './server/db.ts';
 
@@ -99,8 +105,159 @@ let localSessionConfig = {
 const localSessions = new Map<string, DbAuthSessionPayload>();
 const localBusinessUsers = new Map<
   string,
-  { id: string; name: string; email: string; ownerEmail: string; passwordHash: string }
+  { id: string; name: string; email: string; ownerEmail: string; passwordHash: string; emailVerified?: boolean }
 >();
+
+interface LocalAuthCodeRecord {
+  purpose: 'email_verification' | 'password_reset';
+  role: 'admin' | 'business';
+  email: string;
+  businessId?: string | null;
+  codeHash: string;
+  expiresAt: number;
+  usedAt: number | null;
+  attempts: number;
+}
+const localAuthCodes = new Map<string, LocalAuthCodeRecord>();
+
+function hashLocalAuthCode(
+  purpose: 'email_verification' | 'password_reset',
+  role: 'admin' | 'business',
+  email: string,
+  code: string
+): string {
+  return crypto
+    .createHash('sha256')
+    .update(`${purpose}:${role}:${email.trim().toLowerCase()}:${code.trim()}`)
+    .digest('hex');
+}
+
+function escapeHtml(text: string): string {
+  return text
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#039;');
+}
+
+function interpolateServerVars(templateText: string, variables: Record<string, string>): string {
+  return templateText.replace(/\{\{(\w+)\}\}/g, (match, key) => {
+    return Object.prototype.hasOwnProperty.call(variables, key) ? variables[key] : match;
+  });
+}
+
+function buildServerStyledEmailHtml(params: {
+  heading: string;
+  body: string;
+  codeLabel?: string;
+  highlightCode?: string;
+  footerNote?: string;
+}): string {
+  const paragraphs = params.body
+    .split('\n')
+    .map((line) => line.trim())
+    .map((line) =>
+      line
+        ? `<p style="margin:0 0 12px 0;color:#334155;font-size:15px;line-height:1.6;">${escapeHtml(line)}</p>`
+        : '<div style="height:8px;"></div>'
+    )
+    .join('');
+
+  const codeBlock = params.highlightCode
+    ? `<div style="margin:24px 0;padding:18px;border-radius:14px;background:#eff6ff;border:1px solid #bfdbfe;text-align:center;">
+         <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:1.2px;color:#1d4ed8;margin-bottom:6px;">${escapeHtml(params.codeLabel || 'Código de Verificação')}</div>
+         <div style="font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:32px;font-weight:800;letter-spacing:8px;color:#0f172a;">${escapeHtml(params.highlightCode)}</div>
+       </div>`
+    : '';
+
+  const footerBlock = params.footerNote
+    ? `<div style="margin-top:24px;padding-top:18px;border-top:1px solid #e2e8f0;font-size:12px;color:#64748b;line-height:1.5;">
+         ${escapeHtml(params.footerNote)}
+       </div>`
+    : '';
+
+  return `
+  <div style="font-family:'DM Sans',-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;background:#f1f5f9;padding:32px 16px;">
+    <div style="max-width:580px;margin:0 auto;background:#ffffff;border-radius:20px;overflow:hidden;border:1px solid #e2e8f0;">
+      <div style="background:linear-gradient(135deg,#0f172a 0%,#1d4ed8 100%);padding:24px 28px;color:#ffffff;">
+        <div style="font-size:20px;font-weight:800;letter-spacing:-0.4px;">
+          achena<span style="color:#fb923c;">cidade</span>
+        </div>
+        <div style="font-size:12px;color:#bfdbfe;margin-top:4px;">Guia Comercial · Alagoinhas - BA</div>
+      </div>
+      <div style="padding:28px;">
+        <h1 style="margin:0 0 16px 0;font-size:22px;font-weight:800;color:#0f172a;line-height:1.3;">
+          ${escapeHtml(params.heading)}
+        </h1>
+        ${paragraphs}
+        ${codeBlock}
+        ${footerBlock}
+      </div>
+    </div>
+  </div>`;
+}
+
+async function issueAuthCode(params: {
+  purpose: 'email_verification' | 'password_reset';
+  role: 'admin' | 'business';
+  email: string;
+  businessId?: string;
+  ttlMinutes?: number;
+}): Promise<{ code: string; expiresAt: number }> {
+  if (isDatabaseConfigured()) {
+    return createAuthCodeInDb(params);
+  }
+  const normalizedEmail = params.email.trim().toLowerCase();
+  const code = String(crypto.randomInt(100000, 1000000));
+  const expiresAt = Date.now() + (params.ttlMinutes || 30) * 60 * 1000;
+  localAuthCodes.set(`${params.purpose}:${params.role}:${normalizedEmail}`, {
+    purpose: params.purpose,
+    role: params.role,
+    email: normalizedEmail,
+    businessId: params.businessId || null,
+    codeHash: hashLocalAuthCode(params.purpose, params.role, normalizedEmail, code),
+    expiresAt,
+    usedAt: null,
+    attempts: 0,
+  });
+  return { code, expiresAt };
+}
+
+async function validateAuthCode(params: {
+  purpose: 'email_verification' | 'password_reset';
+  role: 'admin' | 'business';
+  email: string;
+  code: string;
+  markUsed?: boolean;
+}): Promise<{ valid: boolean; businessId?: string | null; error?: string }> {
+  if (isDatabaseConfigured()) {
+    return verifyAuthCodeInDb(params);
+  }
+  const normalizedEmail = params.email.trim().toLowerCase();
+  const key = `${params.purpose}:${params.role}:${normalizedEmail}`;
+  const rec = localAuthCodes.get(key);
+  if (!rec || rec.usedAt) {
+    return { valid: false, error: 'Nenhum código ativo encontrado para este e-mail. Solicite um novo código.' };
+  }
+  if (Date.now() > rec.expiresAt) {
+    return { valid: false, error: 'Este código expirou. Clique em reenviar para gerar um novo código.' };
+  }
+  if (rec.attempts >= 6) {
+    return { valid: false, error: 'Limite de tentativas excedido. Solicite um novo código.' };
+  }
+  const actualHash = hashLocalAuthCode(params.purpose, params.role, normalizedEmail, params.code.trim());
+  const aBuf = Buffer.from(actualHash, 'utf8');
+  const eBuf = Buffer.from(rec.codeHash, 'utf8');
+  if (aBuf.length !== eBuf.length || !crypto.timingSafeEqual(aBuf, eBuf)) {
+    rec.attempts += 1;
+    return { valid: false, error: 'Código incorreto. Confira os 6 dígitos enviados ao seu e-mail.' };
+  }
+  if (params.markUsed !== false) {
+    rec.usedAt = Date.now();
+  }
+  return { valid: true, businessId: rec.businessId || null };
+}
 
 function extractSessionToken(req: express.Request): string {
   const authHeader = req.headers.authorization;
@@ -202,6 +359,19 @@ function resolveSmtpTransportConfig(clientSmtp?: IncomingSmtpConfig) {
   return null;
 }
 
+async function resolveEffectiveSmtpTransportConfig(clientSmtp?: IncomingSmtpConfig) {
+  const direct = resolveSmtpTransportConfig(clientSmtp);
+  if (direct) return direct;
+
+  if (isDatabaseConfigured()) {
+    const dbSmtp = await getSettingFromDb<IncomingSmtpConfig>('smtpConfig');
+    if (dbSmtp) {
+      return resolveSmtpTransportConfig(dbSmtp);
+    }
+  }
+  return null;
+}
+
 app.get('/api/email/status', (_req, res) => {
   const hasEnvSmtp = Boolean(
     normalizeSmtpHost(process.env.SMTP_HOST) && process.env.SMTP_USER?.trim() && process.env.SMTP_PASS?.trim()
@@ -226,7 +396,7 @@ app.post('/api/email/send', async (req, res) => {
     return;
   }
 
-  const resolved = resolveSmtpTransportConfig(smtp);
+  const resolved = await resolveEffectiveSmtpTransportConfig(smtp);
   if (!resolved) {
     res.json({
       success: true,
@@ -873,6 +1043,405 @@ app.post('/api/auth/change-password', async (req, res) => {
   } catch (err) {
     const message = err instanceof Error ? err.message : 'Erro ao alterar senha.';
     res.status(500).json({ success: false, error: message });
+  }
+});
+
+// Post-registration Email Verification Code (Issue & Verify)
+app.post('/api/auth/verification-code/issue', async (req, res) => {
+  const { email, businessId, businessName, cityName, smtp, template } = req.body as {
+    email?: string;
+    businessId?: string;
+    businessName?: string;
+    cityName?: string;
+    smtp?: IncomingSmtpConfig;
+    template?: {
+      subject?: string;
+      heading?: string;
+      body?: string;
+      footerNote?: string;
+    };
+  };
+
+  const normalizedEmail = (email || '').trim().toLowerCase();
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalizedEmail)) {
+    res.status(400).json({ success: false, error: 'Informe um e-mail válido.' });
+    return;
+  }
+
+  const ip = getClientIp(req);
+  const rateKey = `verify-issue:${ip}:${normalizedEmail}`;
+  const rateCheck = checkLoginRateLimit(rateKey);
+  if (!rateCheck.allowed) {
+    res.status(429).json({
+      success: false,
+      error: `Muitas solicitações de código. Aguarde ${rateCheck.retryAfterMinutes} minuto(s).`,
+    });
+    return;
+  }
+  recordFailedLoginAttempt(rateKey);
+
+  try {
+    const { code } = await issueAuthCode({
+      purpose: 'email_verification',
+      role: 'business',
+      email: normalizedEmail,
+      businessId,
+      ttlMinutes: 30,
+    });
+
+    const dbTemplates = isDatabaseConfigured()
+      ? await getSettingFromDb<Record<string, { subject?: string; heading?: string; body?: string; footerNote?: string }>>('emailTemplates')
+      : null;
+    const tpl = template || dbTemplates?.email_verification || {};
+
+    const vars = {
+      codigo: code,
+      nome_empresa: (businessName || '').trim() || 'sua empresa',
+      cidade: (cityName || '').trim() || 'Alagoinhas - BA',
+    };
+
+    const subject = interpolateServerVars(
+      tpl.subject || '{{codigo}} é o seu código de verificação no achenacidade',
+      vars
+    );
+    const heading = interpolateServerVars(
+      tpl.heading || 'Confirme o e-mail da sua empresa cadastrada',
+      vars
+    );
+    const body = interpolateServerVars(
+      tpl.body ||
+        'Olá, {{nome_empresa}}!\n\nSeu cadastro no achenacidade ({{cidade}}) foi registrado! Para confirmar a titularidade do seu e-mail, acesse o Painel do Lojista e informe o código de 6 dígitos abaixo.\n\nO código expira em 30 minutos por segurança.',
+      vars
+    );
+    const footerNote = interpolateServerVars(
+      tpl.footerNote || 'Se você não realizou este cadastro no achenacidade, basta ignorar esta mensagem.',
+      vars
+    );
+
+    const htmlBody = buildServerStyledEmailHtml({
+      heading,
+      body,
+      codeLabel: 'Código de Validação de E-mail',
+      highlightCode: code,
+      footerNote,
+    });
+    const textBody = `${heading}\n\n${body}\n\nCódigo: ${code}\n\n${footerNote}`;
+
+    const resolved = await resolveEffectiveSmtpTransportConfig(smtp);
+    let deliveryMode: 'smtp' | 'local_fallback' = 'local_fallback';
+    let smtpError: string | undefined;
+
+    if (resolved) {
+      try {
+        const transporter = nodemailer.createTransport({
+          host: resolved.host,
+          port: resolved.port,
+          secure: resolved.secure,
+          auth: resolved.auth,
+          ...getSmtpTlsOptions(resolved.allowSelfSignedCert),
+        });
+        await transporter.sendMail({
+          from: resolved.from,
+          replyTo: resolved.replyTo,
+          to: normalizedEmail,
+          subject,
+          text: textBody,
+          html: htmlBody,
+        });
+        deliveryMode = 'smtp';
+      } catch (err) {
+        smtpError = err instanceof Error ? err.message : 'Falha ao enviar e-mail via SMTP.';
+      }
+    }
+
+    res.json({
+      success: true,
+      deliveryMode,
+      subject,
+      error: smtpError,
+      ...(deliveryMode === 'local_fallback' && !resolved ? { debugCode: code } : {}),
+    });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : 'Erro ao emitir código de validação.';
+    res.status(500).json({ success: false, error: message });
+  }
+});
+
+app.post('/api/auth/verification-code/verify', async (req, res) => {
+  const { email, code, businessId } = req.body as {
+    email?: string;
+    code?: string;
+    businessId?: string;
+  };
+
+  const normalizedEmail = (email || '').trim().toLowerCase();
+  const trimmedCode = (code || '').trim();
+
+  if (!normalizedEmail || !/^\d{6}$/.test(trimmedCode)) {
+    res.status(400).json({ success: false, error: 'Informe um e-mail válido e o código de 6 dígitos.' });
+    return;
+  }
+
+  try {
+    const verification = await validateAuthCode({
+      purpose: 'email_verification',
+      role: 'business',
+      email: normalizedEmail,
+      code: trimmedCode,
+      markUsed: true,
+    });
+
+    if (!verification.valid) {
+      res.status(400).json({ success: false, error: verification.error || 'Código inválido.' });
+      return;
+    }
+
+    const targetBizId = businessId || verification.businessId || undefined;
+    if (isDatabaseConfigured()) {
+      await markBusinessEmailVerifiedInDb(normalizedEmail, targetBizId);
+    } else if (targetBizId && localBusinessUsers.has(targetBizId)) {
+      const existing = localBusinessUsers.get(targetBizId)!;
+      localBusinessUsers.set(targetBizId, { ...existing, emailVerified: true });
+    }
+
+    res.json({ success: true, businessId: targetBizId });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : 'Erro ao validar código.';
+    res.status(500).json({ success: false, error: message });
+  }
+});
+
+// Forgot Password & Reset Password (Business and Admin)
+app.post('/api/auth/forgot-password', async (req, res) => {
+  const { loginType, email, smtp } = req.body as {
+    loginType?: 'admin' | 'business';
+    email?: string;
+    smtp?: IncomingSmtpConfig;
+  };
+
+  const role: 'admin' | 'business' = loginType === 'admin' ? 'admin' : 'business';
+  const normalizedEmail = (email || '').trim().toLowerCase();
+
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalizedEmail)) {
+    res.status(400).json({ success: false, error: 'Informe um endereço de e-mail válido.' });
+    return;
+  }
+
+  const ip = getClientIp(req);
+  const rateKey = `forgot:${ip}:${role}:${normalizedEmail}`;
+  const rateCheck = checkLoginRateLimit(rateKey);
+  if (!rateCheck.allowed) {
+    res.status(429).json({
+      success: false,
+      error: `Muitas solicitações de recuperação. Aguarde ${rateCheck.retryAfterMinutes} minuto(s) e tente novamente.`,
+    });
+    return;
+  }
+  recordFailedLoginAttempt(rateKey);
+
+  try {
+    let account: { found: boolean; name?: string; businessId?: string } = { found: false };
+    if (isDatabaseConfigured()) {
+      account = await findAccountForPasswordResetInDb(role, normalizedEmail);
+    } else if (role === 'admin') {
+      if (normalizedEmail === DEFAULT_ADMIN_EMAIL.toLowerCase()) {
+        account = { found: true, name: 'Administrador Master' };
+      }
+    } else {
+      const localBiz = Array.from(localBusinessUsers.values()).find(
+        (b) => b.ownerEmail.toLowerCase() === normalizedEmail || b.email.toLowerCase() === normalizedEmail
+      );
+      if (localBiz) {
+        account = { found: true, name: localBiz.name, businessId: localBiz.id };
+      }
+    }
+
+    const resolved = await resolveEffectiveSmtpTransportConfig(smtp);
+
+    if (!account.found) {
+      res.json({
+        success: true,
+        deliveryMode: resolved ? 'smtp' : 'local_fallback',
+        message: 'Se este e-mail estiver cadastrado em nossa base, enviaremos um código de 6 dígitos para redefinir sua senha.',
+      });
+      return;
+    }
+
+    const { code } = await issueAuthCode({
+      purpose: 'password_reset',
+      role,
+      email: normalizedEmail,
+      businessId: account.businessId,
+      ttlMinutes: 15,
+    });
+
+    const accountLabel = role === 'admin' ? 'Acesso Administrativo' : 'Painel do Lojista';
+    const subject = `${code} é o seu código de recuperação de senha — achenacidade`;
+    const heading = 'Recuperação de Senha';
+    const body = `Olá, ${account.name || 'usuário'}!\n\nRecebemos uma solicitação para redefinir a senha do seu ${accountLabel} no achenacidade.\n\nInforme o código de 6 dígitos abaixo na tela de recuperação de senha. Este código expira em 15 minutos.`;
+    const footerNote = 'Se você não solicitou a alteração de senha, ignore este e-mail — sua senha atual permanecerá segura.';
+
+    const htmlBody = buildServerStyledEmailHtml({
+      heading,
+      body,
+      codeLabel: 'Código de Recuperação de Senha',
+      highlightCode: code,
+      footerNote,
+    });
+    const textBody = `${heading}\n\n${body}\n\nCódigo: ${code}\n\n${footerNote}`;
+
+    if (resolved) {
+      try {
+        const transporter = nodemailer.createTransport({
+          host: resolved.host,
+          port: resolved.port,
+          secure: resolved.secure,
+          auth: resolved.auth,
+          ...getSmtpTlsOptions(resolved.allowSelfSignedCert),
+        });
+        await transporter.sendMail({
+          from: resolved.from,
+          replyTo: resolved.replyTo,
+          to: normalizedEmail,
+          subject,
+          text: textBody,
+          html: htmlBody,
+        });
+
+        res.json({
+          success: true,
+          deliveryMode: 'smtp',
+          message: `Enviamos um código de recuperação de 6 dígitos para ${normalizedEmail}. Verifique sua caixa de entrada e spam.`,
+        });
+        return;
+      } catch (err) {
+        const message = err instanceof Error ? err.message : 'Erro ao enviar e-mail via SMTP.';
+        res.status(502).json({
+          success: false,
+          error: `Não foi possível enviar o código de recuperação via SMTP: ${message}`,
+        });
+        return;
+      }
+    }
+
+    res.json({
+      success: true,
+      deliveryMode: 'local_fallback',
+      debugCode: code,
+      message: 'Servidor SMTP não configurado neste ambiente. Utilize o código de teste exibido abaixo para redefinir sua senha.',
+    });
+  } catch (err) {
+    const rawMessage = err instanceof Error ? err.message : 'Erro ao processar recuperação de senha.';
+    if (isTransientConnectionError(err)) {
+      await closePool().catch(() => {});
+      res.status(503).json({ success: false, error: `Falha temporária de conexão com o banco: ${rawMessage}` });
+      return;
+    }
+    res.status(500).json({ success: false, error: rawMessage });
+  }
+});
+
+app.post('/api/auth/reset-password', async (req, res) => {
+  const { loginType, email, code, newPassword } = req.body as {
+    loginType?: 'admin' | 'business';
+    email?: string;
+    code?: string;
+    newPassword?: string;
+  };
+
+  const role: 'admin' | 'business' = loginType === 'admin' ? 'admin' : 'business';
+  const normalizedEmail = (email || '').trim().toLowerCase();
+  const trimmedCode = (code || '').trim();
+  const rawNewPassword = typeof newPassword === 'string' ? newPassword : '';
+
+  if (!normalizedEmail || !/^\d{6}$/.test(trimmedCode)) {
+    res.status(400).json({ success: false, error: 'Informe o e-mail e o código de 6 dígitos recebido.' });
+    return;
+  }
+
+  if (rawNewPassword.length < 6) {
+    res.status(400).json({ success: false, error: 'A nova senha deve ter no mínimo 6 caracteres.' });
+    return;
+  }
+
+  const ip = getClientIp(req);
+  const resetRateKey = `reset:${ip}:${role}:${normalizedEmail}`;
+  const rateCheck = checkLoginRateLimit(resetRateKey);
+  if (!rateCheck.allowed) {
+    res.status(429).json({
+      success: false,
+      error: `Muitas tentativas inválidas. Aguarde ${rateCheck.retryAfterMinutes} minuto(s).`,
+    });
+    return;
+  }
+
+  try {
+    const verification = await validateAuthCode({
+      purpose: 'password_reset',
+      role,
+      email: normalizedEmail,
+      code: trimmedCode,
+      markUsed: true,
+    });
+
+    if (!verification.valid) {
+      recordFailedLoginAttempt(resetRateKey);
+      res.status(400).json({ success: false, error: verification.error || 'Código de recuperação inválido.' });
+      return;
+    }
+
+    if (isDatabaseConfigured()) {
+      const resetRes = await resetPasswordInDb({
+        role,
+        email: normalizedEmail,
+        newPassword: rawNewPassword,
+      });
+      if (!resetRes.success) {
+        res.status(404).json({ success: false, error: resetRes.error || 'Conta não encontrada.' });
+        return;
+      }
+    } else if (role === 'admin') {
+      if (normalizedEmail !== DEFAULT_ADMIN_EMAIL.toLowerCase()) {
+        res.status(404).json({ success: false, error: 'Conta administrativa não encontrada.' });
+        return;
+      }
+      localAdminPasswordHash = hashPassword(rawNewPassword);
+      for (const [token, sess] of localSessions.entries()) {
+        if (sess.role === 'admin' && sess.email.toLowerCase() === normalizedEmail) {
+          localSessions.delete(token);
+        }
+      }
+    } else {
+      let updated = false;
+      const newHash = hashPassword(rawNewPassword);
+      for (const [id, biz] of localBusinessUsers.entries()) {
+        if (biz.ownerEmail.toLowerCase() === normalizedEmail || biz.email.toLowerCase() === normalizedEmail) {
+          localBusinessUsers.set(id, { ...biz, passwordHash: newHash });
+          updated = true;
+        }
+      }
+      if (!updated) {
+        res.status(404).json({ success: false, error: 'Nenhuma loja encontrada para este e-mail.' });
+        return;
+      }
+      for (const [token, sess] of localSessions.entries()) {
+        if (sess.role === 'business' && sess.email.toLowerCase() === normalizedEmail) {
+          localSessions.delete(token);
+        }
+      }
+    }
+
+    clearLoginAttempts(resetRateKey);
+    clearLoginAttempts(`${ip}:${role}:${normalizedEmail}`);
+    clearLoginAttempts(`forgot:${ip}:${role}:${normalizedEmail}`);
+
+    res.json({
+      success: true,
+      message: 'Senha redefinida com sucesso! Faça login usando sua nova senha.',
+    });
+  } catch (err) {
+    const rawMessage = err instanceof Error ? err.message : 'Erro ao redefinir senha.';
+    res.status(500).json({ success: false, error: rawMessage });
   }
 });
 

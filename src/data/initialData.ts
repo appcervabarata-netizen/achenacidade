@@ -1,4 +1,4 @@
-import { City, Category, Plan, Business, Product, Service, AdminTheme, AdBanner, StoreProductCategory, MercadoPagoConfig, PaymentTransaction, SiteModeConfig, SmtpConfig, EmailTemplate, EmailTemplateKey, PlanDiscountConfig } from '../types';
+import { City, Category, Plan, Business, Product, Service, AdminTheme, AdBanner, StoreProductCategory, MercadoPagoConfig, PaymentTransaction, SiteModeConfig, SmtpConfig, EmailTemplate, EmailTemplateKey, PlanDiscountConfig, AppGeneralConfig } from '../types';
 import serviceTechRepairImg from '../assets/images/service_tech_repair_1794881238745.jpg';
 import servicePetGroomingImg from '../assets/images/service_pet_grooming_1794881240613.jpg';
 import serviceCoffeeCateringImg from '../assets/images/service_coffee_catering_1794881242678.jpg';
@@ -856,13 +856,13 @@ export const defaultEmailTemplates: Record<EmailTemplateKey, EmailTemplate> = {
   email_verification: {
     key: 'email_verification',
     name: 'Validação de E-mail (Código 6 Dígitos)',
-    description: 'Enviado antes de concluir o cadastro para validar a titularidade do e-mail do lojista.',
+    description: 'Enviado automaticamente após o cadastro da empresa para validar a titularidade do e-mail no Painel do Lojista.',
     enabled: true,
     subject: '{{codigo}} é o seu código de verificação no achenacidade',
-    heading: 'Confirme seu e-mail para cadastrar sua empresa',
-    body: 'Olá, {{nome_empresa}}!\n\nRecebemos sua solicitação de cadastro no achenacidade ({{cidade}}). Digite o código de 6 dígitos abaixo no formulário de cadastro para confirmar que este endereço de e-mail pertence a você.\n\nO código expira em 15 minutos por segurança.',
+    heading: 'Confirme o e-mail da sua empresa cadastrada',
+    body: 'Olá, {{nome_empresa}}!\n\nSeu cadastro no achenacidade ({{cidade}}) foi registrado! Para confirmar a titularidade do seu e-mail e garantir a segurança da sua conta, acesse o Painel do Lojista e informe o código de 6 dígitos abaixo.\n\nO código expira em 30 minutos por segurança.',
     buttonText: '',
-    footerNote: 'Se você não solicitou este cadastro no achenacidade, basta ignorar esta mensagem.',
+    footerNote: 'Se você não realizou este cadastro no achenacidade, basta ignorar esta mensagem.',
     availableVariables: ['{{codigo}}', '{{nome_empresa}}', '{{cidade}}'],
   },
   payment_link: {
@@ -916,5 +916,27 @@ export const defaultPlanDiscountConfig: PlanDiscountConfig = {
   triennial: 35,
 };
 
-
-
+export const defaultAppGeneralConfig: AppGeneralConfig = {
+  appName: 'achenacidade',
+  tagline: 'Guia Comercial & Vitrine de Lojas Locais',
+  cityLabel: 'Alagoinhas - BA',
+  contactEmail: 'contato@achenacidade.com.br',
+  whatsappNumber: '75999990000',
+  whatsappDefaultMessage: 'Olá! Vim pelo portal achenacidade e gostaria de atendimento.',
+  whatsappGroupUrl: '',
+  whatsappGroupLabel: 'Entrar no Grupo de Ofertas no WhatsApp',
+  instagramUrl: 'https://instagram.com/achenacidade',
+  facebookUrl: 'https://facebook.com/achenacidade',
+  youtubeUrl: '',
+  tiktokUrl: '',
+  linkedinUrl: '',
+  websiteUrl: 'https://achenacidade.com.br',
+  seoTitle: 'achenacidade — Guia Comercial, Lojas e Ofertas Locais',
+  seoDescription: 'Encontre empresas, produtos e serviços na sua cidade. Fale direto pelo WhatsApp com lojas locais e aproveite ofertas exclusivas.',
+  seoKeywords: 'achenacidade, guia comercial, empresas em alagoinhas, lojas locais, produtos, serviços, ofertas whatsapp',
+  ogImageUrl: '/logo.png',
+  canonicalUrl: '',
+  twitterHandle: '@achenacidade',
+  googleSiteVerification: '',
+  robotsIndex: true,
+};
