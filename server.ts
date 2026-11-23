@@ -39,7 +39,20 @@ import {
   markBusinessEmailVerifiedInDb,
   findAccountForPasswordResetInDb,
   resetPasswordInDb,
+  recordBusinessMetricInDb,
+  getBusinessMetricsFromDb,
+  getSaoPauloDateKey,
+  buildLast7DaysKeys,
+  listPlanInvitesFromDb,
+  createPlanInviteInDb,
+  revokePlanInviteInDb,
+  deletePlanInviteInDb,
+  validatePlanInviteInDb,
+  redeemPlanInviteInDb,
   type DbAuthSessionPayload,
+  type DbBusinessMetricEventType,
+  type DbBusinessMetricsSummary,
+  type DbPlanInvite,
 } from './server/db.ts';
 
 dotenv.config();
@@ -119,6 +132,116 @@ interface LocalAuthCodeRecord {
   attempts: number;
 }
 const localAuthCodes = new Map<string, LocalAuthCodeRecord>();
+const localBusinessMetrics = new Map<
+  string,
+  Map<string, { views: number; whatsappClicks: number; showcaseClicks: number }>
+>();
+const localPlanInvites = new Map<string, DbPlanInvite>();
+
+function computeLocalInviteStatus(invite: DbPlanInvite): DbPlanInvite['status'] {
+  if (invite.status === 'revoked') return 'revoked';
+  if (invite.expiresAt) {
+    const today = getSaoPauloDateKey();
+    if (invite.expiresAt < today) return 'expired';
+  }
+  if (invite.usedCount >= invite.maxUses) return 'used';
+  return 'active';
+}
+
+function generateRandomInviteCode(): string {
+  const alphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+  let part1 = '';
+  let part2 = '';
+  for (let i = 0; i < 4; i++) {
+    part1 += alphabet[crypto.randomInt(0, alphabet.length)];
+    part2 += alphabet[crypto.randomInt(0, alphabet.length)];
+  }
+  return `VIP6M-${part1}-${part2}`;
+}
+
+async function resolveSessionFromRequest(req: express.Request): Promise<DbAuthSessionPayload | null> {
+  const token = extractSessionToken(req);
+  if (!token) return null;
+  if (!isDatabaseConfigured()) {
+    const localSess = localSessions.get(token);
+    if (!localSess || Date.now() >= localSess.expiresAt) return null;
+    return localSess;
+  }
+  try {
+    const dbSess = await verifySessionTokenInDb(token);
+    if (dbSess) return dbSess;
+  } catch (err) {
+    if (isTransientConnectionError(err)) {
+      await closePool().catch(() => {});
+      const localSess = localSessions.get(token);
+      if (localSess && Date.now() < localSess.expiresAt) return localSess;
+    }
+  }
+  return null;
+}
+
+async function requireAdminSession(
+  req: express.Request,
+  res: express.Response
+): Promise<DbAuthSessionPayload | null> {
+  const session = await resolveSessionFromRequest(req);
+  if (!session || session.role !== 'admin') {
+    res.status(403).json({
+      success: false,
+      error: 'Acesso restrito ao administrador autenticado.',
+    });
+    return null;
+  }
+  return session;
+}
+
+function recordLocalBusinessMetric(businessId: string, eventType: DbBusinessMetricEventType) {
+  if (!businessId) return;
+  const dateKey = getSaoPauloDateKey();
+  let bizMap = localBusinessMetrics.get(businessId);
+  if (!bizMap) {
+    bizMap = new Map();
+    localBusinessMetrics.set(businessId, bizMap);
+  }
+  const current = bizMap.get(dateKey) || { views: 0, whatsappClicks: 0, showcaseClicks: 0 };
+  if (eventType === 'view') current.views += 1;
+  else if (eventType === 'whatsapp_click') current.whatsappClicks += 1;
+  else if (eventType === 'showcase_click') current.showcaseClicks += 1;
+  bizMap.set(dateKey, current);
+}
+
+function getLocalBusinessMetrics(businessId: string): DbBusinessMetricsSummary {
+  const days = buildLast7DaysKeys();
+  const bizMap = localBusinessMetrics.get(businessId);
+  let viewsTotal = 0;
+  let whatsappClicks = 0;
+  let showcaseClicks = 0;
+
+  if (bizMap) {
+    for (const dayStats of bizMap.values()) {
+      viewsTotal += dayStats.views;
+      whatsappClicks += dayStats.whatsappClicks;
+      showcaseClicks += dayStats.showcaseClicks;
+    }
+  }
+
+  return {
+    viewsTotal,
+    whatsappClicks,
+    showcaseClicks,
+    conversionRate: viewsTotal > 0 ? `${((whatsappClicks / viewsTotal) * 100).toFixed(1)}%` : '0%',
+    daily: days.map((d) => {
+      const hit = bizMap?.get(d.date);
+      return {
+        date: d.date,
+        label: d.label,
+        views: hit?.views || 0,
+        whatsappClicks: hit?.whatsappClicks || 0,
+        showcaseClicks: hit?.showcaseClicks || 0,
+      };
+    }),
+  };
+}
 
 function hashLocalAuthCode(
   purpose: 'email_verification' | 'password_reset',
@@ -660,8 +783,17 @@ app.post('/api/bootstrap/sync-all', async (req, res) => {
 
 app.post('/api/entities/:resource', async (req, res) => {
   const { resource } = req.params;
-  if (resource === 'businesses' && req.body && req.body.id) {
-    const b = req.body;
+  const payloadBody = req.body ? { ...req.body } : {};
+
+  if (resource === 'businesses' && payloadBody.id) {
+    if (payloadBody.planId === 'plan-invite-premium-6m') {
+      const adminSess = await resolveSessionFromRequest(req);
+      if (!adminSess || adminSess.role !== 'admin') {
+        payloadBody.planId = 'plan-free';
+        delete payloadBody.inviteCode;
+      }
+    }
+    const b = payloadBody;
     const rawPwd = typeof b.password === 'string' ? b.password.trim() : '';
     if (rawPwd) {
       localBusinessUsers.set(String(b.id), {
@@ -680,7 +812,7 @@ app.post('/api/entities/:resource', async (req, res) => {
   }
 
   try {
-    await upsertEntity(resource, req.body);
+    await upsertEntity(resource, payloadBody);
     res.json({ success: true, databaseEnabled: true });
   } catch (err) {
     const message = err instanceof Error ? err.message : 'Entity create/upsert error.';
@@ -691,15 +823,24 @@ app.post('/api/entities/:resource', async (req, res) => {
 
 app.put('/api/entities/:resource/:id', async (req, res) => {
   const { resource, id } = req.params;
-  if (resource === 'businesses' && req.body) {
+  const updateBody = req.body ? { ...req.body } : {};
+
+  if (resource === 'businesses' && updateBody) {
+    if (updateBody.planId === 'plan-invite-premium-6m') {
+      const adminSess = await resolveSessionFromRequest(req);
+      if (!adminSess || adminSess.role !== 'admin') {
+        delete updateBody.planId;
+        delete updateBody.inviteCode;
+      }
+    }
     const existing = localBusinessUsers.get(id);
-    const rawPwd = typeof req.body.password === 'string' ? req.body.password.trim() : '';
+    const rawPwd = typeof updateBody.password === 'string' ? updateBody.password.trim() : '';
     if (existing || rawPwd) {
       localBusinessUsers.set(id, {
         id,
-        name: String(req.body.name ?? existing?.name ?? ''),
-        email: String(req.body.email ?? existing?.email ?? ''),
-        ownerEmail: String(req.body.ownerEmail ?? existing?.ownerEmail ?? ''),
+        name: String(updateBody.name ?? existing?.name ?? ''),
+        email: String(updateBody.email ?? existing?.email ?? ''),
+        ownerEmail: String(updateBody.ownerEmail ?? existing?.ownerEmail ?? ''),
         passwordHash: rawPwd ? hashPassword(rawPwd) : (existing?.passwordHash || ''),
       });
     }
@@ -711,7 +852,7 @@ app.put('/api/entities/:resource/:id', async (req, res) => {
   }
 
   try {
-    const result = await updateEntityById(resource, id, req.body || {});
+    const result = await updateEntityById(resource, id, updateBody);
     res.json({ success: true, updated: result.updated, databaseEnabled: true });
   } catch (err) {
     const message = err instanceof Error ? err.message : 'Entity update error.';
@@ -724,6 +865,7 @@ app.delete('/api/entities/:resource/:id', async (req, res) => {
   const { resource, id } = req.params;
   if (resource === 'businesses') {
     localBusinessUsers.delete(id);
+    localBusinessMetrics.delete(id);
   }
 
   if (!isDatabaseConfigured()) {
@@ -1531,6 +1673,384 @@ app.post('/api/banners/:id/click', async (req, res) => {
     res.json({ success: true, databaseEnabled: true });
   } catch (err) {
     const message = err instanceof Error ? err.message : 'Banner click error.';
+    res.status(500).json({ success: false, error: message });
+  }
+});
+
+app.post('/api/metrics/track', async (req, res) => {
+  const { businessId, eventType } = req.body as {
+    businessId?: string;
+    eventType?: DbBusinessMetricEventType;
+  };
+
+  if (
+    !businessId ||
+    typeof businessId !== 'string' ||
+    (eventType !== 'view' && eventType !== 'whatsapp_click' && eventType !== 'showcase_click')
+  ) {
+    res.status(400).json({ success: false, error: 'Parâmetros de métrica inválidos.' });
+    return;
+  }
+
+  if (!isDatabaseConfigured()) {
+    recordLocalBusinessMetric(businessId, eventType);
+    res.json({ success: true, databaseEnabled: false });
+    return;
+  }
+
+  try {
+    await recordBusinessMetricInDb(businessId, eventType);
+    res.json({ success: true, databaseEnabled: true });
+  } catch (err) {
+    if (isTransientConnectionError(err)) {
+      await closePool().catch(() => {});
+      recordLocalBusinessMetric(businessId, eventType);
+      res.json({ success: true, databaseEnabled: false });
+      return;
+    }
+    const message = err instanceof Error ? err.message : 'Business metric track error.';
+    res.status(500).json({ success: false, error: message });
+  }
+});
+
+app.get('/api/metrics/:businessId', async (req, res) => {
+  const { businessId } = req.params;
+  if (!businessId) {
+    res.status(400).json({ success: false, error: 'ID da loja é obrigatório.' });
+    return;
+  }
+
+  if (!isDatabaseConfigured()) {
+    res.json({
+      success: true,
+      databaseEnabled: false,
+      metrics: getLocalBusinessMetrics(businessId),
+    });
+    return;
+  }
+
+  try {
+    const metrics = await getBusinessMetricsFromDb(businessId);
+    res.json({ success: true, databaseEnabled: true, metrics });
+  } catch (err) {
+    if (isTransientConnectionError(err)) {
+      await closePool().catch(() => {});
+      res.json({
+        success: true,
+        databaseEnabled: false,
+        metrics: getLocalBusinessMetrics(businessId),
+      });
+      return;
+    }
+    const message = err instanceof Error ? err.message : 'Business metrics fetch error.';
+    res.status(500).json({ success: false, error: message });
+  }
+});
+
+// ========================================================
+// Plan Invites (Convite Premium 6 Meses Grátis) Endpoints
+// ========================================================
+
+app.get('/api/plan-invites', async (req, res) => {
+  const adminSess = await requireAdminSession(req, res);
+  if (!adminSess) return;
+
+  if (!isDatabaseConfigured()) {
+    const invites = Array.from(localPlanInvites.values())
+      .map((inv) => ({ ...inv, status: computeLocalInviteStatus(inv) }))
+      .sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || ''));
+    res.json({ success: true, databaseEnabled: false, invites });
+    return;
+  }
+
+  try {
+    const invites = await listPlanInvitesFromDb();
+    res.json({ success: true, databaseEnabled: true, invites });
+  } catch (err) {
+    if (isTransientConnectionError(err)) {
+      await closePool().catch(() => {});
+      const invites = Array.from(localPlanInvites.values()).map((inv) => ({
+        ...inv,
+        status: computeLocalInviteStatus(inv),
+      }));
+      res.json({ success: true, databaseEnabled: false, invites });
+      return;
+    }
+    const message = err instanceof Error ? err.message : 'Erro ao listar convites.';
+    res.status(500).json({ success: false, error: message });
+  }
+});
+
+app.post('/api/plan-invites', async (req, res) => {
+  const adminSess = await requireAdminSession(req, res);
+  if (!adminSess) return;
+
+  const { code, planId, maxUses, recipientHint, expiresAt } = req.body as {
+    code?: string;
+    planId?: string;
+    maxUses?: number;
+    recipientHint?: string;
+    expiresAt?: string;
+  };
+
+  const normalizedCode = (code || '').trim().toUpperCase().replace(/[^A-Z0-9_-]/g, '') || generateRandomInviteCode();
+  const parsedMaxUses = Math.max(1, Math.min(500, Math.round(Number(maxUses || 1))));
+  const cleanRecipient = recipientHint ? String(recipientHint).trim().slice(0, 200) : undefined;
+  const cleanExpiresAt = expiresAt && /^\d{4}-\d{2}-\d{2}$/.test(expiresAt.trim()) ? expiresAt.trim() : undefined;
+
+  const newInvite: DbPlanInvite = {
+    id: `inv-${Date.now()}-${crypto.randomBytes(2).toString('hex')}`,
+    code: normalizedCode,
+    planId: planId && typeof planId === 'string' ? planId : 'plan-invite-premium-6m',
+    maxUses: parsedMaxUses,
+    usedCount: 0,
+    recipientHint: cleanRecipient,
+    expiresAt: cleanExpiresAt,
+    status: 'active',
+    createdAt: getSaoPauloDateKey(),
+  };
+
+  if (!isDatabaseConfigured()) {
+    const duplicate = Array.from(localPlanInvites.values()).some(
+      (i) => i.code.toUpperCase() === newInvite.code
+    );
+    if (duplicate) {
+      res.status(409).json({
+        success: false,
+        error: `Já existe um convite cadastrado com o código "${newInvite.code}".`,
+      });
+      return;
+    }
+    localPlanInvites.set(newInvite.id, newInvite);
+    res.json({ success: true, databaseEnabled: false, invite: newInvite });
+    return;
+  }
+
+  try {
+    const created = await createPlanInviteInDb(newInvite);
+    res.json({ success: true, databaseEnabled: true, invite: created });
+  } catch (err) {
+    if (isTransientConnectionError(err)) {
+      await closePool().catch(() => {});
+      localPlanInvites.set(newInvite.id, newInvite);
+      res.json({ success: true, databaseEnabled: false, invite: newInvite });
+      return;
+    }
+    const message = err instanceof Error ? err.message : 'Erro ao criar convite.';
+    res.status(400).json({ success: false, error: message });
+  }
+});
+
+app.post('/api/plan-invites/:id/revoke', async (req, res) => {
+  const adminSess = await requireAdminSession(req, res);
+  if (!adminSess) return;
+
+  const { id } = req.params;
+  const existingLocal = localPlanInvites.get(id);
+  if (existingLocal) {
+    localPlanInvites.set(id, { ...existingLocal, status: 'revoked' });
+  }
+
+  if (!isDatabaseConfigured()) {
+    res.json({ success: true, databaseEnabled: false });
+    return;
+  }
+
+  try {
+    await revokePlanInviteInDb(id);
+    res.json({ success: true, databaseEnabled: true });
+  } catch (err) {
+    if (isTransientConnectionError(err)) {
+      await closePool().catch(() => {});
+      res.json({ success: true, databaseEnabled: false });
+      return;
+    }
+    const message = err instanceof Error ? err.message : 'Erro ao revogar convite.';
+    res.status(500).json({ success: false, error: message });
+  }
+});
+
+app.delete('/api/plan-invites/:id', async (req, res) => {
+  const adminSess = await requireAdminSession(req, res);
+  if (!adminSess) return;
+
+  const { id } = req.params;
+  localPlanInvites.delete(id);
+
+  if (!isDatabaseConfigured()) {
+    res.json({ success: true, databaseEnabled: false });
+    return;
+  }
+
+  try {
+    await deletePlanInviteInDb(id);
+    res.json({ success: true, databaseEnabled: true });
+  } catch (err) {
+    if (isTransientConnectionError(err)) {
+      await closePool().catch(() => {});
+      res.json({ success: true, databaseEnabled: false });
+      return;
+    }
+    const message = err instanceof Error ? err.message : 'Erro ao excluir convite.';
+    res.status(500).json({ success: false, error: message });
+  }
+});
+
+app.post('/api/plan-invites/validate', async (req, res) => {
+  const { code } = req.body as { code?: string };
+  const normalized = (code || '').trim().toUpperCase();
+  if (!normalized) {
+    res.status(400).json({ valid: false, error: 'Informe um código de convite.' });
+    return;
+  }
+
+  const validateLocal = () => {
+    const match = Array.from(localPlanInvites.values()).find(
+      (i) => i.code.toUpperCase() === normalized
+    );
+    if (!match) {
+      return { valid: false, error: 'Código de convite não encontrado. Verifique com o administrador.' };
+    }
+    const status = computeLocalInviteStatus(match);
+    const hydrated = { ...match, status };
+    if (status === 'revoked') {
+      return { valid: false, invite: hydrated, error: 'Este convite foi revogado pelo administrador.' };
+    }
+    if (status === 'expired') {
+      return { valid: false, invite: hydrated, error: 'Este convite está expirado.' };
+    }
+    if (status === 'used') {
+      return { valid: false, invite: hydrated, error: 'Este código de convite já foi utilizado.' };
+    }
+    return { valid: true, invite: hydrated };
+  };
+
+  if (!isDatabaseConfigured()) {
+    const localRes = validateLocal();
+    res.status(localRes.valid ? 200 : 400).json({ ...localRes, databaseEnabled: false });
+    return;
+  }
+
+  try {
+    const result = await validatePlanInviteInDb(normalized);
+    res.status(result.valid ? 200 : 400).json({ ...result, databaseEnabled: true });
+  } catch (err) {
+    if (isTransientConnectionError(err)) {
+      await closePool().catch(() => {});
+      const localRes = validateLocal();
+      res.status(localRes.valid ? 200 : 400).json({ ...localRes, databaseEnabled: false });
+      return;
+    }
+    const message = err instanceof Error ? err.message : 'Erro ao validar convite.';
+    res.status(500).json({ valid: false, error: message });
+  }
+});
+
+app.post('/api/plan-invites/redeem', async (req, res) => {
+  const session = await resolveSessionFromRequest(req);
+  if (!session) {
+    res.status(401).json({
+      success: false,
+      error: 'Faça login ou finalize o cadastro da sua loja antes de resgatar o convite.',
+    });
+    return;
+  }
+
+  const { code, businessId, businessName } = req.body as {
+    code?: string;
+    businessId?: string;
+    businessName?: string;
+  };
+  const normalized = (code || '').trim().toUpperCase();
+  const targetBusinessId = (businessId || session.businessId || '').trim();
+
+  if (!normalized || !targetBusinessId) {
+    res.status(400).json({
+      success: false,
+      error: 'Código de convite e loja vinculada são obrigatórios.',
+    });
+    return;
+  }
+
+  const redeemLocal = () => {
+    const match = Array.from(localPlanInvites.values()).find(
+      (i) => i.code.toUpperCase() === normalized
+    );
+    if (!match) {
+      return { ok: false as const, error: 'Código de convite não encontrado.' };
+    }
+    const status = computeLocalInviteStatus(match);
+    if (status === 'revoked') return { ok: false as const, error: 'Este convite foi revogado pelo administrador.' };
+    if (status === 'expired') return { ok: false as const, error: 'Este convite está expirado.' };
+    if (status === 'used') return { ok: false as const, error: 'Este código de convite já atingiu o limite de uso.' };
+
+    const expiryTarget = new Date();
+    expiryTarget.setMonth(expiryTarget.getMonth() + 6);
+    const planExpiresAt = expiryTarget.toISOString().split('T')[0];
+    const nextUsed = match.usedCount + 1;
+    const nextStatus: DbPlanInvite['status'] = nextUsed >= match.maxUses ? 'used' : 'active';
+    const updated: DbPlanInvite = {
+      ...match,
+      usedCount: nextUsed,
+      status: nextStatus,
+      redeemedByBusinessId: targetBusinessId,
+      redeemedByBusinessName: businessName,
+      redeemedAt: getSaoPauloDateKey(),
+    };
+    localPlanInvites.set(match.id, updated);
+    return {
+      ok: true as const,
+      planId: match.planId,
+      planExpiresAt,
+      invite: updated,
+    };
+  };
+
+  if (!isDatabaseConfigured()) {
+    const localRes = redeemLocal();
+    if (!localRes.ok) {
+      res.status(400).json({ success: false, databaseEnabled: false, error: localRes.error });
+      return;
+    }
+    res.json({
+      success: true,
+      databaseEnabled: false,
+      planId: localRes.planId,
+      planExpiresAt: localRes.planExpiresAt,
+      invite: localRes.invite,
+    });
+    return;
+  }
+
+  try {
+    const result = await redeemPlanInviteInDb({
+      code: normalized,
+      businessId: targetBusinessId,
+      businessName,
+    });
+    if (!result.success) {
+      res.status(400).json({ success: false, databaseEnabled: true, error: result.error });
+      return;
+    }
+    res.json({ ...result, databaseEnabled: true });
+  } catch (err) {
+    if (isTransientConnectionError(err)) {
+      await closePool().catch(() => {});
+      const localRes = redeemLocal();
+      if (!localRes.ok) {
+        res.status(400).json({ success: false, databaseEnabled: false, error: localRes.error });
+        return;
+      }
+      res.json({
+        success: true,
+        databaseEnabled: false,
+        planId: localRes.planId,
+        planExpiresAt: localRes.planExpiresAt,
+        invite: localRes.invite,
+      });
+      return;
+    }
+    const message = err instanceof Error ? err.message : 'Erro ao resgatar convite.';
     res.status(500).json({ success: false, error: message });
   }
 });

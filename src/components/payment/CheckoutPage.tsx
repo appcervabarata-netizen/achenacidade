@@ -7,6 +7,8 @@ import {
   buildMercadoPagoPixPayload,
   calculatePlanPricing,
   formatBRL,
+  isLifetimePlan,
+  isPaidPlan,
 } from '../../utils/planPricing';
 import {
   ArrowLeft,
@@ -48,8 +50,9 @@ export const CheckoutPage: React.FC = () => {
     checkoutTarget?.planId || targetBusiness?.pendingPlanId || targetBusiness?.planId;
   const selectedPlan =
     plans.find((p) => p.id === targetPlanId) ||
-    plans.find((p) => p.priceMonthly > 0) ||
+    plans.find((p) => isPaidPlan(p)) ||
     plans[0];
+  const isLifetime = isLifetimePlan(selectedPlan);
 
   const [billingCycle, setBillingCycle] = useState<BillingCycle>(
     checkoutTarget?.billingCycle || targetBusiness?.pendingBillingCycle || 'monthly'
@@ -326,9 +329,11 @@ export const CheckoutPage: React.FC = () => {
                 </span>
               </div>
               <div className="flex justify-between">
-                <span className="text-slate-500">Ciclo Contratado</span>
+                <span className="text-slate-500">Modalidade / Ciclo</span>
                 <span className="font-semibold text-slate-900 dark:text-white">
-                  {BILLING_CYCLE_META[completedTx.billingCycle || 'monthly'].label}
+                  {isLifetimePlan(plans.find((p) => p.id === completedTx.planId) || selectedPlan)
+                    ? 'Vitalício (Pagamento Único)'
+                    : BILLING_CYCLE_META[completedTx.billingCycle || 'monthly'].label}
                 </span>
               </div>
               {completedTx.discountPercent && completedTx.discountPercent > 0 ? (
@@ -432,29 +437,45 @@ export const CheckoutPage: React.FC = () => {
                   </span>
                 </div>
 
-                {/* Billing Cycle Switcher */}
-                <div className="space-y-2">
-                  <div className="flex items-center justify-between gap-2">
-                    <span className="text-xs font-bold text-slate-700 dark:text-slate-300">
-                      Ciclo de contratação e desconto automático
-                    </span>
-                    {pricing.discountPercent > 0 && (
-                      <span className="text-xs font-mono font-extrabold text-emerald-600 dark:text-emerald-400 tabular-nums">
-                        Economia de {formatBRL(pricing.discountAmount)}
+                {/* Billing Cycle Switcher (hidden for one-time lifetime plans) */}
+                {isLifetime ? (
+                  <div className="p-3.5 rounded-2xl bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800/70 flex items-center justify-between gap-3">
+                    <div>
+                      <span className="text-xs font-extrabold text-amber-900 dark:text-amber-200 block">
+                        Plano Vitalício · Pagamento Único
                       </span>
-                    )}
+                      <span className="text-[11px] text-amber-700 dark:text-amber-300">
+                        Acesso permanente para 1 loja e até {selectedPlan.productLimit} itens, sem mensalidades futuras.
+                      </span>
+                    </div>
+                    <span className="text-xs font-mono font-extrabold text-amber-800 dark:text-amber-200 shrink-0 tabular-nums">
+                      {formatBRL(pricing.totalAmount)}
+                    </span>
                   </div>
-                  <BillingCycleSelector
-                    value={billingCycle}
-                    onChange={(nextCycle) => {
-                      setBillingCycle(nextCycle);
-                      setCardForm((prev) => ({ ...prev, installments: 1 }));
-                    }}
-                    globalDiscounts={planDiscountConfig}
-                    plan={selectedPlan}
-                    compact
-                  />
-                </div>
+                ) : (
+                  <div className="space-y-2">
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="text-xs font-bold text-slate-700 dark:text-slate-300">
+                        Ciclo de contratação e desconto automático
+                      </span>
+                      {pricing.discountPercent > 0 && (
+                        <span className="text-xs font-mono font-extrabold text-emerald-600 dark:text-emerald-400 tabular-nums">
+                          Economia de {formatBRL(pricing.discountAmount)}
+                        </span>
+                      )}
+                    </div>
+                    <BillingCycleSelector
+                      value={billingCycle}
+                      onChange={(nextCycle) => {
+                        setBillingCycle(nextCycle);
+                        setCardForm((prev) => ({ ...prev, installments: 1 }));
+                      }}
+                      globalDiscounts={planDiscountConfig}
+                      plan={selectedPlan}
+                      compact
+                    />
+                  </div>
+                )}
 
                 {/* Method Switcher */}
                 <div className="grid grid-cols-2 gap-2.5">
@@ -487,7 +508,7 @@ export const CheckoutPage: React.FC = () => {
                     <div>
                       <p className="text-xs font-extrabold">Cartão de Crédito</p>
                       <p className="text-[11px] text-slate-500">
-                        {billingCycle === 'monthly' ? 'À vista no cartão' : 'Parcele em até 12x'}
+                        {isLifetime || billingCycle !== 'monthly' ? 'Parcele em até 12x' : 'À vista no cartão'}
                       </p>
                     </div>
                   </button>
@@ -699,9 +720,13 @@ export const CheckoutPage: React.FC = () => {
                   <div className="flex items-baseline justify-between pt-1">
                     <div>
                       <span className="text-xs font-bold text-slate-700 dark:text-slate-200 block">
-                        {billingCycle === 'monthly' ? 'Total Mensal' : 'Total do Ciclo com Desconto'}
+                        {isLifetime
+                          ? 'Total Único (Vitalício)'
+                          : billingCycle === 'monthly'
+                          ? 'Total Mensal'
+                          : 'Total do Ciclo com Desconto'}
                       </span>
-                      {billingCycle !== 'monthly' && (
+                      {!isLifetime && billingCycle !== 'monthly' && (
                         <span className="text-[11px] font-mono tabular-nums text-slate-500">
                           Equivale a {formatBRL(pricing.effectiveMonthly)}/mês
                         </span>

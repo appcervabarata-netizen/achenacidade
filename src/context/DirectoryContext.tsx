@@ -1,5 +1,5 @@
 import React, { createContext, useContext, useState, useEffect, useRef } from 'react';
-import { City, Category, Plan, Business, Product, Service, AdminTheme, AdBanner, AppView, BusinessPortalTab, StoreProductCategory, SessionConfig, AuthSession, MercadoPagoConfig, PaymentTransaction, PushPreferences, PushAlertLog, SiteMode, SiteModeConfig, LaunchPageConfig, MaintenancePageConfig, SmtpConfig, EmailTemplate, EmailTemplateKey, EmailLogEntry, CheckoutTarget, BillingCycle, PlanDiscountConfig, AppGeneralConfig } from '../types';
+import { City, Category, Plan, PlanInvite, Business, Product, Service, AdminTheme, AdBanner, AppView, BusinessPortalTab, StoreProductCategory, SessionConfig, AuthSession, MercadoPagoConfig, PaymentTransaction, PushPreferences, PushAlertLog, SiteMode, SiteModeConfig, LaunchPageConfig, MaintenancePageConfig, SmtpConfig, EmailTemplate, EmailTemplateKey, EmailLogEntry, CheckoutTarget, BillingCycle, PlanDiscountConfig, AppGeneralConfig, BusinessMetricEventType, BusinessMetricsSummary, DailyMetricPoint } from '../types';
 import {
   initialCities,
   initialCategories,
@@ -34,6 +34,8 @@ import {
   calculatePlanPricing,
   calculatePlanExpirationDate,
   clampDiscountPercent,
+  isLifetimePlan,
+  isVipPlan,
   parseBillingCycleParam,
 } from '../utils/planPricing';
 import {
@@ -44,8 +46,11 @@ import {
   createEntityInDb,
   updateEntityInDb,
   deleteEntityInDb,
+  syncCollectionToDb,
   saveSettingToDb,
   recordBannerClickInDb,
+  trackBusinessMetricViaApi,
+  fetchBusinessMetricsViaApi,
   loginViaApi,
   verifySessionViaApi,
   renewSessionViaApi,
@@ -53,6 +58,12 @@ import {
   switchBusinessViaApi,
   issueVerificationCodeViaApi,
   verifyEmailCodeViaApi,
+  fetchPlanInvitesViaApi,
+  createPlanInviteViaApi,
+  revokePlanInviteViaApi,
+  deletePlanInviteViaApi,
+  validatePlanInviteViaApi,
+  redeemPlanInviteViaApi,
   type ApiMutationResult,
   type DirectoryBootstrapPayload,
 } from '../utils/apiSync';
@@ -84,14 +95,38 @@ interface DirectoryContextType {
   updateCategory: (id: string, updates: Partial<Category>) => void;
   deleteCategory: (id: string) => void;
 
-  // Plans & Multi-Year Billing Cycle Discounts
+  // Plans, Multi-Year Discounts & Invite Codes (6-Month Free Premium)
   plans: Plan[];
   addPlan: (plan: Omit<Plan, 'id'>) => void;
   updatePlan: (id: string, updates: Partial<Plan>) => void;
   deletePlan: (id: string) => void;
+  movePlanOrder: (id: string, direction: 'up' | 'down') => void;
+  reorderPlans: (orderedIds: string[]) => void;
   planDiscountConfig: PlanDiscountConfig;
   updatePlanDiscountConfig: (updates: Partial<PlanDiscountConfig>) => void;
   resetPlanDiscountConfig: () => void;
+  planInvites: PlanInvite[];
+  loadPlanInvites: () => Promise<void>;
+  createPlanInvite: (params: {
+    code?: string;
+    planId?: string;
+    maxUses?: number;
+    recipientHint?: string;
+    expiresAt?: string;
+  }) => Promise<{ success: boolean; invite?: PlanInvite; error?: string }>;
+  revokePlanInvite: (id: string) => Promise<{ success: boolean; error?: string }>;
+  deletePlanInvite: (id: string) => Promise<{ success: boolean; error?: string }>;
+  activeInviteCode: string | null;
+  validatedInvite: PlanInvite | null;
+  inviteValidationError: string | null;
+  validateInviteCode: (code: string) => Promise<{ valid: boolean; invite?: PlanInvite; error?: string }>;
+  clearActiveInvite: () => void;
+  applyInviteCodeToBusiness: (
+    code: string,
+    businessId: string,
+    tokenOverride?: string
+  ) => Promise<{ success: boolean; planExpiresAt?: string; error?: string }>;
+  cancelBusinessSubscription: (businessId: string, mode: 'free' | 'pause') => void;
 
   // Businesses
   businesses: Business[];
@@ -295,6 +330,11 @@ interface DirectoryContextType {
   updateAppGeneralConfig: (updates: Partial<AppGeneralConfig>) => void;
   resetAppGeneralConfig: () => void;
 
+  // Real Business Metrics (Persisted in MySQL & localStorage, starts at 0)
+  trackBusinessMetric: (businessId: string, eventType: BusinessMetricEventType) => void;
+  getBusinessMetrics: (businessId: string) => BusinessMetricsSummary;
+  loadBusinessMetricsFromDb: (businessId: string) => Promise<void>;
+
   // MySQL / MariaDB Persistence Status & Controls
   dbSyncStatus: 'checking' | 'connected' | 'local_only' | 'error';
   dbLastError: string | null;
@@ -308,10 +348,126 @@ interface DirectoryContextType {
 
 const DirectoryContext = createContext<DirectoryContextType | undefined>(undefined);
 
+const METRICS_STORAGE_KEY = 'achenacidade_business_metrics_v1';
+const METRIC_WEEKDAYS = ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb'];
+
+type LocalBusinessMetricsStore = Record<
+  string,
+  Record<string, { views: number; whatsappClicks: number; showcaseClicks: number }>
+>;
+
+function getClientSaoPauloDateKey(date = new Date()): string {
+  try {
+    return new Intl.DateTimeFormat('en-CA', {
+      timeZone: 'America/Sao_Paulo',
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+    }).format(date);
+  } catch {
+    return date.toISOString().slice(0, 10);
+  }
+}
+
+function buildClientLast7Days(referenceDate = new Date()): Array<{ date: string; label: string }> {
+  const todayKey = getClientSaoPauloDateKey(referenceDate);
+  const [y, m, d] = todayKey.split('-').map(Number);
+  const baseUtc = new Date(Date.UTC(y, m - 1, d, 12, 0, 0));
+  const result: Array<{ date: string; label: string }> = [];
+  for (let offset = 6; offset >= 0; offset--) {
+    const dt = new Date(baseUtc.getTime() - offset * 86400000);
+    const key = dt.toISOString().slice(0, 10);
+    const label = METRIC_WEEKDAYS[dt.getUTCDay()];
+    result.push({ date: key, label });
+  }
+  return result;
+}
+
 function isLoginAdminPath(
   pathname = typeof window !== 'undefined' ? window.location.pathname : ''
 ): boolean {
   return pathname.replace(/\/+$/, '').toLowerCase() === '/loginadmin';
+}
+
+function isFounderSalesPath(
+  pathname: string = typeof window !== 'undefined' ? window.location.pathname : '/'
+): boolean {
+  return pathname.replace(/\/+$/, '').toLowerCase() === '/socio-fundador';
+}
+
+function sortPlansList(list: Plan[]): Plan[] {
+  return list
+    .map((plan, index) => ({ plan, index }))
+    .sort((a, b) => {
+      const ao = typeof a.plan.sortOrder === 'number' && a.plan.sortOrder > 0 ? a.plan.sortOrder : a.index + 1000;
+      const bo = typeof b.plan.sortOrder === 'number' && b.plan.sortOrder > 0 ? b.plan.sortOrder : b.index + 1000;
+      if (ao !== bo) return ao - bo;
+      return a.index - b.index;
+    })
+    .map((entry) => entry.plan);
+}
+
+function mergePlansWithSystemDefaults(existingPlans: Plan[]): {
+  merged: Plan[];
+  addedMissing: Plan[];
+} {
+  const byId = new Map<string, Plan>();
+  for (let i = 0; i < existingPlans.length; i++) {
+    const p = existingPlans[i];
+    const sys = initialPlans.find((ip) => ip.id === p.id);
+    if (sys) {
+      const resolvedInviteOnly = p.isInviteOnly !== undefined ? p.isInviteOnly : sys.isInviteOnly;
+      byId.set(p.id, {
+        ...sys,
+        ...p,
+        billingType: p.billingType || sys.billingType,
+        priceOnce: p.priceOnce !== undefined ? p.priceOnce : sys.priceOnce,
+        trialMonths: p.trialMonths !== undefined ? p.trialMonths : sys.trialMonths,
+        isInviteOnly: resolvedInviteOnly,
+        vipTier: p.vipTier || sys.vipTier,
+        sortOrder: typeof p.sortOrder === 'number' && p.sortOrder > 0 ? p.sortOrder : i + 1,
+        showOnHome: resolvedInviteOnly
+          ? false
+          : p.showOnHome !== undefined
+          ? p.showOnHome
+          : sys.showOnHome ?? true,
+      });
+    } else {
+      const resolvedInviteOnly = Boolean(p.isInviteOnly);
+      byId.set(p.id, {
+        ...p,
+        billingType: p.billingType || 'recurring',
+        vipTier: p.vipTier || (p.highlighted ? 'premium' : 'none'),
+        sortOrder: typeof p.sortOrder === 'number' && p.sortOrder > 0 ? p.sortOrder : i + 1,
+        showOnHome: resolvedInviteOnly ? false : p.showOnHome !== undefined ? p.showOnHome : true,
+      });
+    }
+  }
+
+  const addedMissing: Plan[] = [];
+  for (const sysPlan of initialPlans) {
+    if (!byId.has(sysPlan.id)) {
+      byId.set(sysPlan.id, {
+        ...sysPlan,
+        sortOrder: existingPlans.length + addedMissing.length + 1,
+      });
+      addedMissing.push(sysPlan);
+    }
+  }
+
+  // Keep existing order, append any newly introduced system plans, then respect explicit sortOrder
+  const orderedIds = existingPlans.map((p) => p.id);
+  for (const sysPlan of initialPlans) {
+    if (!orderedIds.includes(sysPlan.id)) {
+      orderedIds.push(sysPlan.id);
+    }
+  }
+
+  const combined = orderedIds.map((id) => byId.get(id)!).filter(Boolean);
+  return {
+    merged: sortPlansList(combined),
+    addedMissing,
+  };
 }
 
 export const DirectoryProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
@@ -393,24 +549,38 @@ export const DirectoryProvider: React.FC<{ children: React.ReactNode }> = ({ chi
 
   const [plans, setPlans] = useState<Plan[]>(() => {
     try {
-      const migrated = localStorage.getItem('achenacidade_services_quota_v1');
+      const migrated = localStorage.getItem('achenacidade_plans_v3_founder_invite');
       const saved = localStorage.getItem('achenacidade_plans');
-      if (!saved) return initialPlans;
-      const parsed: Plan[] = JSON.parse(saved);
-      if (!migrated) {
-        const updated = parsed.map((p) => {
-          const def = initialPlans.find((ip) => ip.id === p.id);
-          return def ? { ...p, features: def.features } : p;
-        });
-        localStorage.setItem('achenacidade_plans', JSON.stringify(updated));
-        localStorage.setItem('achenacidade_services_quota_v1', 'true');
-        return updated;
+      if (!saved) {
+        localStorage.setItem('achenacidade_plans_v3_founder_invite', 'true');
+        return initialPlans;
       }
-      return parsed;
+      const parsed: Plan[] = JSON.parse(saved);
+      const { merged } = mergePlansWithSystemDefaults(parsed);
+      if (!migrated) {
+        localStorage.setItem('achenacidade_plans', JSON.stringify(merged));
+        localStorage.setItem('achenacidade_plans_v3_founder_invite', 'true');
+      }
+      return merged;
     } catch {
       return initialPlans;
     }
   });
+
+  // Plan Invites (Admin-generated codes/links for Convite Premium 6 Meses)
+  const [planInvites, setPlanInvites] = useState<PlanInvite[]>([]);
+  const [activeInviteCode, setActiveInviteCode] = useState<string | null>(() => {
+    try {
+      if (typeof window === 'undefined') return null;
+      const params = new URLSearchParams(window.location.search);
+      const code = params.get('convite');
+      return code ? code.trim().toUpperCase() : null;
+    } catch {
+      return null;
+    }
+  });
+  const [validatedInvite, setValidatedInvite] = useState<PlanInvite | null>(null);
+  const [inviteValidationError, setInviteValidationError] = useState<string | null>(null);
 
   const [businesses, setBusinesses] = useState<Business[]>(() => {
     try {
@@ -568,7 +738,7 @@ export const DirectoryProvider: React.FC<{ children: React.ReactNode }> = ({ chi
 
   // Full Screen Navigation State with History Support for Mobile Back Button
   const [currentView, setCurrentViewState] = useState<AppView>(() =>
-    isLoginAdminPath() ? 'admin_login' : 'home'
+    isLoginAdminPath() ? 'admin_login' : isFounderSalesPath() ? 'founder_sales' : 'home'
   );
   const [businessPortalTab, setBusinessPortalTab] = useState<BusinessPortalTab>('dashboard');
 
@@ -577,7 +747,9 @@ export const DirectoryProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       const targetUrl =
         view === 'admin_login'
           ? '/loginadmin'
-          : isLoginAdminPath() && view !== 'admin'
+          : view === 'founder_sales'
+          ? '/socio-fundador'
+          : (isLoginAdminPath() && view !== 'admin') || isFounderSalesPath()
           ? '/'
           : null;
 
@@ -1020,7 +1192,7 @@ export const DirectoryProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
-  // Support deep-links sent in Payment Link or Welcome emails (?checkout=1&businessId=...&planId=...&cycle=...&token=...)
+  // Support deep-links sent in Payment Link, Welcome emails, or Invite links (?convite=CODIGO)
   useEffect(() => {
     try {
       const searchParams = new URLSearchParams(window.location.search);
@@ -1029,6 +1201,7 @@ export const DirectoryProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       const pId = searchParams.get('planId');
       const token = searchParams.get('token') || undefined;
       const cycleParam = searchParams.get('cycle');
+      const inviteParam = searchParams.get('convite');
 
       if (isCheckout && bizId && pId) {
         setCheckoutTarget({
@@ -1038,6 +1211,47 @@ export const DirectoryProvider: React.FC<{ children: React.ReactNode }> = ({ chi
           billingCycle: cycleParam ? parseBillingCycleParam(cycleParam) : undefined,
         });
         setCurrentViewState('checkout');
+      } else if (inviteParam && inviteParam.trim() && !isLoginAdminPath()) {
+        const normalizedCode = inviteParam.trim().toUpperCase();
+        setActiveInviteCode(normalizedCode);
+        setPreselectedPlanId('plan-invite-premium-6m');
+        void validatePlanInviteViaApi(normalizedCode).then((res) => {
+          if (res.valid && res.invite) {
+            setValidatedInvite(res.invite);
+            setInviteValidationError(null);
+            setPreselectedPlanId(res.invite.planId || 'plan-invite-premium-6m');
+          } else {
+            setValidatedInvite(null);
+            setInviteValidationError(res.error || 'Código de convite inválido ou expirado.');
+          }
+        });
+        // Route logged-in merchant directly to Plan tab, otherwise to Store Registration with invite preloaded
+        let isBizLoggedIn = false;
+        try {
+          const rawAuth = localStorage.getItem('achenacidade_auth');
+          if (rawAuth) {
+            const parsedAuth = JSON.parse(rawAuth);
+            isBizLoggedIn = Boolean(
+              parsedAuth?.isAuthenticated &&
+                parsedAuth?.role === 'business' &&
+                (!parsedAuth?.expiresAt || Date.now() < parsedAuth.expiresAt)
+            );
+          }
+        } catch {
+          isBizLoggedIn = false;
+        }
+        if (isBizLoggedIn) {
+          setCurrentViewState('business_portal');
+          setBusinessPortalTab('plans');
+        } else {
+          setCurrentViewState('register_store');
+        }
+      } else if (
+        (searchParams.get('socio-fundador') === '1' ||
+          searchParams.get('plano') === 'socio-fundador') &&
+        !isLoginAdminPath()
+      ) {
+        setCurrentViewState('founder_sales');
       } else if (searchParams.get('painel') === '1' && !isLoginAdminPath()) {
         setCurrentViewState('login');
       }
@@ -1075,12 +1289,14 @@ export const DirectoryProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     const effectiveCycle: BillingCycle =
       params.billingCycle || targetBusiness.pendingBillingCycle || 'monthly';
     const pricing = calculatePlanPricing(targetPlan, effectiveCycle, planDiscountConfig);
-    const planLabelWithCycle =
-      pricing.months > 1
-        ? `${targetPlan.name} (${pricing.shortLabel}${
-            pricing.discountPercent > 0 ? ` · ${pricing.discountPercent}% OFF` : ''
-          })`
-        : targetPlan.name;
+    const lifetime = isLifetimePlan(targetPlan);
+    const planLabelWithCycle = lifetime
+      ? `${targetPlan.name} (Vitalício · Pagamento Único)`
+      : pricing.months > 1
+      ? `${targetPlan.name} (${pricing.shortLabel}${
+          pricing.discountPercent > 0 ? ` · ${pricing.discountPercent}% OFF` : ''
+        })`
+      : targetPlan.name;
 
     const mpPaymentId = 'MP-' + Math.floor(1000000000 + Math.random() * 9000000000).toString();
     const txId = `tx-${Date.now()}`;
@@ -1120,14 +1336,28 @@ export const DirectoryProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     const wasPendingPaid = targetBusiness.paymentStatus === 'pending_payment';
 
     // 1. Instantly activate store, unlock chosen paid plan, and save active billing cycle + expiration
-    updateBusiness(targetBusiness.id, {
+    const businessUpdates: Partial<Business> = {
       planId: targetPlan.id,
       billingCycle: effectiveCycle,
-      planExpiresAt: calculatePlanExpirationDate(pricing.months),
+      planExpiresAt: lifetime ? undefined : calculatePlanExpirationDate(pricing.months),
       paymentStatus: 'active',
+      subscriptionStatus: 'active',
       pendingPlanId: undefined,
       pendingBillingCycle: undefined,
-    });
+    };
+
+    setBusinesses((prev) => prev.map((b) => (b.id === targetBusiness.id ? { ...b, ...businessUpdates } : b)));
+    if (currentBusinessAuth?.id === targetBusiness.id) {
+      setCurrentBusinessAuth((prev) => (prev ? { ...prev, ...businessUpdates } : null));
+    }
+    trackDbMutation(
+      updateEntityInDb('businesses', targetBusiness.id, {
+        ...businessUpdates,
+        planExpiresAt: lifetime ? null : businessUpdates.planExpiresAt,
+        pendingPlanId: null,
+        pendingBillingCycle: null,
+      })
+    );
 
     // 2. Add to transaction history & persist immediately
     setPaymentTransactions((prev) => [newTransaction, ...prev]);
@@ -1446,30 +1676,46 @@ export const DirectoryProvider: React.FC<{ children: React.ReactNode }> = ({ chi
   // Find active city
   const selectedCity = cities.find((c) => c.id === selectedCityId);
 
-  // Filtered Businesses
-  const filteredBusinesses = businesses.filter((biz) => {
-    // City filter
-    if (selectedCityId !== 'all' && biz.cityId !== selectedCityId) {
-      return false;
-    }
-    // Category filter
-    if (selectedCategoryId !== 'all' && biz.categoryId !== selectedCategoryId) {
-      return false;
-    }
-    // Search query for companies (independent!)
-    if (searchCompanyQuery.trim()) {
-      const q = searchCompanyQuery.toLowerCase();
-      const matchName = biz.name.toLowerCase().includes(q);
-      const matchDesc = biz.description.toLowerCase().includes(q);
-      const matchNeigh = biz.neighborhood.toLowerCase().includes(q);
-      if (!matchName && !matchDesc && !matchNeigh) return false;
-    }
-    return true;
-  });
+  // Helper for active public businesses (excludes cancelled subscriptions)
+  const publicVisibleBusinessIds = new Set(
+    businesses.filter((b) => b.subscriptionStatus !== 'cancelled').map((b) => b.id)
+  );
+
+  // Filtered Businesses (VIP plans prioritized first)
+  const filteredBusinesses = businesses
+    .filter((biz) => {
+      if (biz.subscriptionStatus === 'cancelled') {
+        return false;
+      }
+      // City filter
+      if (selectedCityId !== 'all' && biz.cityId !== selectedCityId) {
+        return false;
+      }
+      // Category filter
+      if (selectedCategoryId !== 'all' && biz.categoryId !== selectedCategoryId) {
+        return false;
+      }
+      // Search query for companies (independent!)
+      if (searchCompanyQuery.trim()) {
+        const q = searchCompanyQuery.toLowerCase();
+        const matchName = biz.name.toLowerCase().includes(q);
+        const matchDesc = biz.description.toLowerCase().includes(q);
+        const matchNeigh = biz.neighborhood.toLowerCase().includes(q);
+        if (!matchName && !matchDesc && !matchNeigh) return false;
+      }
+      return true;
+    })
+    .sort((a, b) => {
+      const planA = plans.find((p) => p.id === a.planId);
+      const planB = plans.find((p) => p.id === b.planId);
+      const vipA = isVipPlan(planA) ? 1 : 0;
+      const vipB = isVipPlan(planB) ? 1 : 0;
+      return vipB - vipA;
+    });
 
   // Filtered Products
   const filteredProducts = products.filter((prod) => {
-    if (!prod.isActive) return false;
+    if (!prod.isActive || !publicVisibleBusinessIds.has(prod.businessId)) return false;
     // City filter
     if (selectedCityId !== 'all' && prod.cityId !== selectedCityId) {
       return false;
@@ -1487,7 +1733,7 @@ export const DirectoryProvider: React.FC<{ children: React.ReactNode }> = ({ chi
 
   // Filtered Services
   const filteredServices = services.filter((serv) => {
-    if (!serv.isActive) return false;
+    if (!serv.isActive || !publicVisibleBusinessIds.has(serv.businessId)) return false;
     // City filter
     if (selectedCityId !== 'all' && serv.cityId !== selectedCityId) {
       return false;
@@ -1597,22 +1843,289 @@ export const DirectoryProvider: React.FC<{ children: React.ReactNode }> = ({ chi
 
   // Plan Actions
   const addPlan = (planData: Omit<Plan, 'id'>) => {
-    const newPlan: Plan = {
-      ...planData,
-      id: `plan-${Date.now()}`,
-    };
-    setPlans((prev) => [...prev, newPlan]);
-    trackDbMutation(createEntityInDb('plans', newPlan));
+    setPlans((prev) => {
+      const maxOrder = prev.reduce(
+        (max, p, idx) => Math.max(max, typeof p.sortOrder === 'number' && p.sortOrder > 0 ? p.sortOrder : idx + 1),
+        0
+      );
+      const newPlan: Plan = {
+        ...planData,
+        id: `plan-${Date.now()}`,
+        sortOrder:
+          typeof planData.sortOrder === 'number' && planData.sortOrder > 0
+            ? planData.sortOrder
+            : maxOrder + 1,
+        showOnHome: planData.isInviteOnly ? false : planData.showOnHome ?? true,
+      };
+      const next = sortPlansList([...prev, newPlan]);
+      trackDbMutation(createEntityInDb('plans', newPlan));
+      return next;
+    });
   };
 
   const updatePlan = (id: string, updates: Partial<Plan>) => {
-    setPlans((prev) => prev.map((p) => (p.id === id ? { ...p, ...updates } : p)));
-    trackDbMutation(updateEntityInDb('plans', id, updates as Record<string, unknown>));
+    setPlans((prev) => {
+      const next = sortPlansList(
+        prev.map((p) => {
+          if (p.id !== id) return p;
+          const merged: Plan = { ...p, ...updates };
+          if (merged.isInviteOnly) {
+            merged.showOnHome = false;
+          }
+          return merged;
+        })
+      );
+      const normalizedUpdates = { ...updates };
+      if (normalizedUpdates.isInviteOnly) {
+        normalizedUpdates.showOnHome = false;
+      }
+      trackDbMutation(updateEntityInDb('plans', id, normalizedUpdates as Record<string, unknown>));
+      return next;
+    });
   };
 
   const deletePlan = (id: string) => {
     setPlans((prev) => prev.filter((p) => p.id !== id));
     trackDbMutation(deleteEntityInDb('plans', id));
+  };
+
+  const reorderPlans = (orderedIds: string[]) => {
+    setPlans((prev) => {
+      const byId = new Map(prev.map((p) => [p.id, p]));
+      const arranged: Plan[] = [];
+      for (const id of orderedIds) {
+        const hit = byId.get(id);
+        if (hit) {
+          arranged.push(hit);
+          byId.delete(id);
+        }
+      }
+      for (const remaining of byId.values()) {
+        arranged.push(remaining);
+      }
+      const normalized = arranged.map((plan, index) => ({
+        ...plan,
+        sortOrder: index + 1,
+      }));
+      trackDbMutation(syncCollectionToDb('plans', normalized));
+      return normalized;
+    });
+  };
+
+  const movePlanOrder = (id: string, direction: 'up' | 'down') => {
+    setPlans((prev) => {
+      const idx = prev.findIndex((p) => p.id === id);
+      if (idx === -1) return prev;
+      const targetIdx = direction === 'up' ? idx - 1 : idx + 1;
+      if (targetIdx < 0 || targetIdx >= prev.length) return prev;
+      const copy = [...prev];
+      const [moved] = copy.splice(idx, 1);
+      copy.splice(targetIdx, 0, moved);
+      const normalized = copy.map((plan, index) => ({
+        ...plan,
+        sortOrder: index + 1,
+      }));
+      trackDbMutation(syncCollectionToDb('plans', normalized));
+      return normalized;
+    });
+  };
+
+  // Plan Invites & Subscription Management Actions
+  const loadPlanInvites = async (): Promise<void> => {
+    if (!authSession.isAuthenticated || authSession.role !== 'admin' || !authSession.token) return;
+    const res = await fetchPlanInvitesViaApi(authSession.token);
+    if (res.success && res.invites) {
+      setPlanInvites(res.invites);
+    }
+  };
+
+  useEffect(() => {
+    if (authSession.isAuthenticated && authSession.role === 'admin' && authSession.token) {
+      void loadPlanInvites();
+    }
+  }, [authSession.isAuthenticated, authSession.role, authSession.token]);
+
+  const createPlanInvite = async (params: {
+    code?: string;
+    planId?: string;
+    maxUses?: number;
+    recipientHint?: string;
+    expiresAt?: string;
+  }): Promise<{ success: boolean; invite?: PlanInvite; error?: string }> => {
+    if (!authSession.token) {
+      return { success: false, error: 'Sessão administrativa ausente.' };
+    }
+    const res = await createPlanInviteViaApi(authSession.token, {
+      ...params,
+      planId: params.planId || 'plan-invite-premium-6m',
+    });
+    if (res.success && res.invite) {
+      setPlanInvites((prev) => [res.invite!, ...prev]);
+      return { success: true, invite: res.invite };
+    }
+    return { success: false, error: res.error || 'Erro ao gerar código de convite.' };
+  };
+
+  const revokePlanInvite = async (id: string): Promise<{ success: boolean; error?: string }> => {
+    if (!authSession.token) {
+      return { success: false, error: 'Sessão administrativa ausente.' };
+    }
+    const res = await revokePlanInviteViaApi(authSession.token, id);
+    if (res.success) {
+      setPlanInvites((prev) =>
+        prev.map((inv) => (inv.id === id ? { ...inv, status: 'revoked' } : inv))
+      );
+      return { success: true };
+    }
+    return { success: false, error: res.error };
+  };
+
+  const deletePlanInvite = async (id: string): Promise<{ success: boolean; error?: string }> => {
+    if (!authSession.token) {
+      return { success: false, error: 'Sessão administrativa ausente.' };
+    }
+    const res = await deletePlanInviteViaApi(authSession.token, id);
+    if (res.success) {
+      setPlanInvites((prev) => prev.filter((inv) => inv.id !== id));
+      return { success: true };
+    }
+    return { success: false, error: res.error };
+  };
+
+  const validateInviteCode = async (
+    code: string
+  ): Promise<{ valid: boolean; invite?: PlanInvite; error?: string }> => {
+    const normalized = code.trim().toUpperCase();
+    if (!normalized) {
+      setValidatedInvite(null);
+      setInviteValidationError('Informe um código de convite.');
+      return { valid: false, error: 'Informe um código de convite.' };
+    }
+    const res = await validatePlanInviteViaApi(normalized);
+    if (res.valid && res.invite) {
+      setActiveInviteCode(normalized);
+      setValidatedInvite(res.invite);
+      setInviteValidationError(null);
+      setPreselectedPlanId(res.invite.planId || 'plan-invite-premium-6m');
+      return { valid: true, invite: res.invite };
+    }
+    setValidatedInvite(null);
+    setInviteValidationError(res.error || 'Código de convite inválido ou expirado.');
+    return { valid: false, invite: res.invite, error: res.error };
+  };
+
+  const clearActiveInvite = () => {
+    setActiveInviteCode(null);
+    setValidatedInvite(null);
+    setInviteValidationError(null);
+    if (preselectedPlanId === 'plan-invite-premium-6m') {
+      setPreselectedPlanId(null);
+    }
+  };
+
+  const applyInviteCodeToBusiness = async (
+    code: string,
+    businessId: string,
+    tokenOverride?: string
+  ): Promise<{ success: boolean; planExpiresAt?: string; error?: string }> => {
+    const token = tokenOverride || authSession.token || '';
+    const biz = businesses.find((b) => b.id === businessId);
+    const normalized = code.trim().toUpperCase();
+    if (!token) {
+      return { success: false, error: 'Faça login na sua loja para resgatar o convite.' };
+    }
+
+    const res = await redeemPlanInviteViaApi(token, {
+      code: normalized,
+      businessId,
+      businessName: biz?.name,
+    });
+
+    if (!res.success) {
+      return { success: false, error: res.error || 'Não foi possível ativar o convite.' };
+    }
+
+    const activatedPlanId = res.planId || 'plan-invite-premium-6m';
+    const activatedExpiry = res.planExpiresAt || calculatePlanExpirationDate(6);
+
+    const updates: Partial<Business> = {
+      planId: activatedPlanId,
+      billingCycle: 'monthly',
+      planExpiresAt: activatedExpiry,
+      inviteCode: normalized,
+      paymentStatus: 'active',
+      subscriptionStatus: 'active',
+      pendingPlanId: undefined,
+      pendingBillingCycle: undefined,
+    };
+
+    setBusinesses((prev) => prev.map((b) => (b.id === businessId ? { ...b, ...updates } : b)));
+    if (currentBusinessAuth?.id === businessId) {
+      setCurrentBusinessAuth((prev) => (prev ? { ...prev, ...updates } : null));
+    }
+
+    if (res.databaseEnabled === false) {
+      trackDbMutation(
+        updateEntityInDb('businesses', businessId, {
+          ...updates,
+          pendingPlanId: null,
+          pendingBillingCycle: null,
+        })
+      );
+    }
+
+    if (res.invite) {
+      setPlanInvites((prev) => {
+        const exists = prev.some((i) => i.id === res.invite!.id);
+        return exists
+          ? prev.map((i) => (i.id === res.invite!.id ? res.invite! : i))
+          : [res.invite!, ...prev];
+      });
+    }
+
+    clearActiveInvite();
+    return { success: true, planExpiresAt: activatedExpiry };
+  };
+
+  const cancelBusinessSubscription = (businessId: string, mode: 'free' | 'pause') => {
+    if (mode === 'free') {
+      const updates: Partial<Business> = {
+        planId: 'plan-free',
+        billingCycle: 'monthly',
+        planExpiresAt: undefined,
+        inviteCode: undefined,
+        paymentStatus: 'active',
+        subscriptionStatus: 'active',
+        pendingPlanId: undefined,
+        pendingBillingCycle: undefined,
+      };
+      setBusinesses((prev) => prev.map((b) => (b.id === businessId ? { ...b, ...updates } : b)));
+      if (currentBusinessAuth?.id === businessId) {
+        setCurrentBusinessAuth((prev) => (prev ? { ...prev, ...updates } : null));
+      }
+      trackDbMutation(
+        updateEntityInDb('businesses', businessId, {
+          planId: 'plan-free',
+          billingCycle: 'monthly',
+          planExpiresAt: null,
+          inviteCode: null,
+          paymentStatus: 'active',
+          subscriptionStatus: 'active',
+          pendingPlanId: null,
+          pendingBillingCycle: null,
+        })
+      );
+      return;
+    }
+
+    const updates: Partial<Business> = {
+      subscriptionStatus: 'cancelled',
+    };
+    setBusinesses((prev) => prev.map((b) => (b.id === businessId ? { ...b, ...updates } : b)));
+    if (currentBusinessAuth?.id === businessId) {
+      setCurrentBusinessAuth((prev) => (prev ? { ...prev, ...updates } : null));
+    }
+    trackDbMutation(updateEntityInDb('businesses', businessId, { subscriptionStatus: 'cancelled' }));
   };
 
   // Business Actions
@@ -1663,11 +2176,161 @@ export const DirectoryProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     trackDbMutation(updateEntityInDb('businesses', id, updates as Record<string, unknown>));
   };
 
+  // Real Business Metrics Store (Zeroed by default for new stores)
+  const [localMetricsStore, setLocalMetricsStore] = useState<LocalBusinessMetricsStore>(() => {
+    try {
+      const saved = localStorage.getItem(METRICS_STORAGE_KEY);
+      return saved ? JSON.parse(saved) : {};
+    } catch {
+      return {};
+    }
+  });
+  const [remoteMetricsByBusiness, setRemoteMetricsByBusiness] = useState<
+    Record<string, BusinessMetricsSummary>
+  >({});
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(METRICS_STORAGE_KEY, JSON.stringify(localMetricsStore));
+    } catch {
+      // Ignore storage quota errors
+    }
+  }, [localMetricsStore]);
+
+  const trackBusinessMetric = (businessId: string, eventType: BusinessMetricEventType) => {
+    if (!businessId) return;
+    const dateKey = getClientSaoPauloDateKey();
+
+    setLocalMetricsStore((prev) => {
+      const bizDays = prev[businessId] ? { ...prev[businessId] } : {};
+      const dayStats = bizDays[dateKey]
+        ? { ...bizDays[dateKey] }
+        : { views: 0, whatsappClicks: 0, showcaseClicks: 0 };
+
+      if (eventType === 'view') dayStats.views += 1;
+      else if (eventType === 'whatsapp_click') dayStats.whatsappClicks += 1;
+      else if (eventType === 'showcase_click') dayStats.showcaseClicks += 1;
+
+      bizDays[dateKey] = dayStats;
+      return { ...prev, [businessId]: bizDays };
+    });
+
+    setRemoteMetricsByBusiness((prev) => {
+      const existing = prev[businessId];
+      if (!existing) return prev;
+      const viewsTotal = existing.viewsTotal + (eventType === 'view' ? 1 : 0);
+      const whatsappClicks = existing.whatsappClicks + (eventType === 'whatsapp_click' ? 1 : 0);
+      const showcaseClicks = existing.showcaseClicks + (eventType === 'showcase_click' ? 1 : 0);
+      const conversionRate =
+        viewsTotal > 0 ? `${((whatsappClicks / viewsTotal) * 100).toFixed(1)}%` : '0%';
+      const updatedDaily = existing.daily.map((d) =>
+        d.date === dateKey
+          ? {
+              ...d,
+              views: d.views + (eventType === 'view' ? 1 : 0),
+              whatsappClicks: d.whatsappClicks + (eventType === 'whatsapp_click' ? 1 : 0),
+              showcaseClicks: d.showcaseClicks + (eventType === 'showcase_click' ? 1 : 0),
+            }
+          : d
+      );
+      return {
+        ...prev,
+        [businessId]: {
+          viewsTotal,
+          whatsappClicks,
+          showcaseClicks,
+          conversionRate,
+          daily: updatedDaily,
+        },
+      };
+    });
+
+    void trackBusinessMetricViaApi(businessId, eventType);
+  };
+
+  const getLocalMetricsSummary = (businessId: string): BusinessMetricsSummary => {
+    const days = buildClientLast7Days();
+    const bizDays = localMetricsStore[businessId] || {};
+    let viewsTotal = 0;
+    let whatsappClicks = 0;
+    let showcaseClicks = 0;
+
+    for (const dayStats of Object.values(bizDays)) {
+      viewsTotal += Number(dayStats?.views || 0);
+      whatsappClicks += Number(dayStats?.whatsappClicks || 0);
+      showcaseClicks += Number(dayStats?.showcaseClicks || 0);
+    }
+
+    const conversionRate =
+      viewsTotal > 0 ? `${((whatsappClicks / viewsTotal) * 100).toFixed(1)}%` : '0%';
+
+    const daily: DailyMetricPoint[] = days.map((d) => {
+      const hit = bizDays[d.date];
+      return {
+        date: d.date,
+        label: d.label,
+        views: Number(hit?.views || 0),
+        whatsappClicks: Number(hit?.whatsappClicks || 0),
+        showcaseClicks: Number(hit?.showcaseClicks || 0),
+      };
+    });
+
+    return {
+      viewsTotal,
+      whatsappClicks,
+      showcaseClicks,
+      conversionRate,
+      daily,
+    };
+  };
+
+  const getBusinessMetrics = (businessId: string): BusinessMetricsSummary => {
+    if (!businessId) {
+      return getLocalMetricsSummary('');
+    }
+    const localSummary = getLocalMetricsSummary(businessId);
+    const remoteSummary = remoteMetricsByBusiness[businessId];
+    if (!remoteSummary) return localSummary;
+
+    const remoteSum =
+      remoteSummary.viewsTotal + remoteSummary.whatsappClicks + remoteSummary.showcaseClicks;
+    const localSum =
+      localSummary.viewsTotal + localSummary.whatsappClicks + localSummary.showcaseClicks;
+    if (remoteSum === 0 && localSum > 0) {
+      return localSummary;
+    }
+    return remoteSummary;
+  };
+
+  const loadBusinessMetricsFromDb = async (businessId: string): Promise<void> => {
+    if (!businessId) return;
+    const res = await fetchBusinessMetricsViaApi(businessId);
+    if (res.ok && res.metrics) {
+      const m = res.metrics;
+      setRemoteMetricsByBusiness((prev) => ({
+        ...prev,
+        [businessId]: m,
+      }));
+    }
+  };
+
   const deleteBusiness = (id: string) => {
     setBusinesses((prev) => prev.filter((b) => b.id !== id));
     setProducts((prev) => prev.filter((p) => p.businessId !== id));
     setServices((prev) => prev.filter((s) => s.businessId !== id));
     setStoreProductCategories((prev) => prev.filter((c) => c.businessId !== id));
+    setLocalMetricsStore((prev) => {
+      if (!prev[id]) return prev;
+      const copy = { ...prev };
+      delete copy[id];
+      return copy;
+    });
+    setRemoteMetricsByBusiness((prev) => {
+      if (!prev[id]) return prev;
+      const copy = { ...prev };
+      delete copy[id];
+      return copy;
+    });
     if (currentBusinessAuth?.id === id) {
       setCurrentBusinessAuth(null);
     }
@@ -2120,7 +2783,14 @@ export const DirectoryProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     bizData: Omit<Business, 'id' | 'slug' | 'createdAt'>,
     navigateToPortal: boolean = true
   ): Promise<{ success: boolean; businessId?: string; business?: Business; error?: string }> => {
-    const newBiz = buildBusinessObject(bizData);
+    const requestedInviteCode = bizData.inviteCode?.trim().toUpperCase();
+    const isInviteSignup = bizData.planId === 'plan-invite-premium-6m' && Boolean(requestedInviteCode);
+
+    const newBiz = buildBusinessObject(
+      isInviteSignup
+        ? { ...bizData, planId: 'plan-free', inviteCode: undefined, subscriptionStatus: 'active' }
+        : { ...bizData, subscriptionStatus: bizData.subscriptionStatus || 'active' }
+    );
     const safeBiz = sanitizeBusinessForState(newBiz);
     setBusinesses((prev) => [safeBiz, ...prev]);
 
@@ -2134,40 +2804,65 @@ export const DirectoryProvider: React.FC<{ children: React.ReactNode }> = ({ chi
 
     const loginEmail = (newBiz.ownerEmail || newBiz.email || '').trim();
     const rawPassword = (newBiz.password || '').trim();
+    let activeToken = authSession.token;
+
     if (authSession.isAuthenticated && authSession.role === 'business' && authSession.token) {
       const switchRes = await switchBusinessViaApi(authSession.token, safeBiz.id);
       if (switchRes.success && switchRes.session) {
+        activeToken = switchRes.session.token;
         setCurrentBusinessAuth(safeBiz);
         setAuthSession(switchRes.session);
-        if (navigateToPortal) {
-          setCurrentView('business_portal');
-          setBusinessPortalTab('dashboard');
-        }
-        return { success: true, businessId: safeBiz.id, business: safeBiz };
       }
-    }
-
-    if (loginEmail && rawPassword) {
+    } else if (loginEmail && rawPassword) {
       const loginRes = await loginViaApi({
         loginType: 'business',
         email: loginEmail,
         password: rawPassword,
       });
       if (loginRes.success && loginRes.session) {
+        activeToken = loginRes.session.token;
         setCurrentBusinessAuth(safeBiz);
         setAuthSession(loginRes.session);
-        if (navigateToPortal) {
-          setCurrentView('business_portal');
-          setBusinessPortalTab('dashboard');
-        }
-        return { success: true, businessId: safeBiz.id, business: safeBiz };
       }
+    }
+
+    let finalBiz = safeBiz;
+    if (isInviteSignup && requestedInviteCode && activeToken) {
+      const redeemRes = await redeemPlanInviteViaApi(activeToken, {
+        code: requestedInviteCode,
+        businessId: safeBiz.id,
+        businessName: safeBiz.name,
+      });
+      if (redeemRes.success) {
+        const activatedPlanId = redeemRes.planId || 'plan-invite-premium-6m';
+        const activatedExpiry = redeemRes.planExpiresAt || calculatePlanExpirationDate(6);
+        const activatedUpdates: Partial<Business> = {
+          planId: activatedPlanId,
+          billingCycle: 'monthly',
+          planExpiresAt: activatedExpiry,
+          inviteCode: requestedInviteCode,
+          paymentStatus: 'active',
+          subscriptionStatus: 'active',
+        };
+        finalBiz = { ...safeBiz, ...activatedUpdates };
+        setBusinesses((prev) => prev.map((b) => (b.id === safeBiz.id ? finalBiz : b)));
+        setCurrentBusinessAuth(finalBiz);
+        if (redeemRes.databaseEnabled === false) {
+          trackDbMutation(updateEntityInDb('businesses', safeBiz.id, activatedUpdates as Record<string, unknown>));
+        }
+        clearActiveInvite();
+      }
+    }
+
+    if (navigateToPortal && activeToken) {
+      setCurrentView('business_portal');
+      setBusinessPortalTab('dashboard');
     }
 
     return {
       success: true,
-      businessId: safeBiz.id,
-      business: safeBiz,
+      businessId: finalBiz.id,
+      business: finalBiz,
     };
   };
 
@@ -2232,6 +2927,19 @@ export const DirectoryProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       }
       return;
     }
+    if (type === 'business_detail' && id) {
+      trackBusinessMetric(id, 'view');
+    } else if (type === 'product_detail' && id) {
+      const prod = products.find((p) => p.id === id);
+      if (prod?.businessId) {
+        trackBusinessMetric(prod.businessId, 'showcase_click');
+      }
+    } else if (type === 'service_detail' && id) {
+      const serv = services.find((s) => s.id === id);
+      if (serv?.businessId) {
+        trackBusinessMetric(serv.businessId, 'showcase_click');
+      }
+    }
     setActiveModal({ type, id });
     window.history.pushState({ view: currentView, modal: type, modalId: id }, '');
   };
@@ -2255,6 +2963,12 @@ export const DirectoryProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         setCurrentViewState(
           authSession.isAuthenticated && authSession.role === 'admin' ? 'admin' : 'admin_login'
         );
+        return;
+      }
+
+      if (isFounderSalesPath(window.location.pathname)) {
+        setActiveModal({ type: null });
+        setCurrentViewState('founder_sales');
         return;
       }
 
@@ -2340,7 +3054,15 @@ export const DirectoryProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       }
     }
     if (data.categories) setCategories(data.categories);
-    if (data.plans) setPlans(data.plans);
+    if (data.plans) {
+      const { merged, addedMissing } = mergePlansWithSystemDefaults(data.plans);
+      setPlans(merged);
+      if (addedMissing.length > 0) {
+        for (const missingPlan of addedMissing) {
+          trackDbMutation(createEntityInDb('plans', missingPlan));
+        }
+      }
+    }
     if (data.businesses) setBusinesses(data.businesses);
     if (data.products) setProducts(data.products);
     if (data.services) setServices(data.services);
@@ -2543,6 +3265,8 @@ export const DirectoryProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     setPaymentTransactions(initialPaymentTransactions);
     setSiteModeConfig(defaultSiteModeConfig);
     setAppGeneralConfig(defaultAppGeneralConfig);
+    setLocalMetricsStore({});
+    setRemoteMetricsByBusiness({});
     localStorage.clear();
     trackDbMutation(resetDatabaseDemo(buildInitialBootstrapPayload()));
   };
@@ -2607,9 +3331,23 @@ export const DirectoryProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         addPlan,
         updatePlan,
         deletePlan,
+        movePlanOrder,
+        reorderPlans,
         planDiscountConfig,
         updatePlanDiscountConfig,
         resetPlanDiscountConfig,
+        planInvites,
+        loadPlanInvites,
+        createPlanInvite,
+        revokePlanInvite,
+        deletePlanInvite,
+        activeInviteCode,
+        validatedInvite,
+        inviteValidationError,
+        validateInviteCode,
+        clearActiveInvite,
+        applyInviteCodeToBusiness,
+        cancelBusinessSubscription,
 
         businesses,
         filteredBusinesses,
@@ -2748,6 +3486,10 @@ export const DirectoryProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         appGeneralConfig,
         updateAppGeneralConfig,
         resetAppGeneralConfig,
+
+        trackBusinessMetric,
+        getBusinessMetrics,
+        loadBusinessMetricsFromDb,
 
         dbSyncStatus,
         dbLastError,

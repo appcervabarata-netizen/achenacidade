@@ -11,6 +11,8 @@ import {
   Heart,
 } from 'lucide-react';
 
+import { normalizeWhatsappUrl } from '../../utils/seoHelper';
+
 export const ProductDetailModal: React.FC = () => {
   const {
     activeModal,
@@ -21,6 +23,7 @@ export const ProductDetailModal: React.FC = () => {
     openModal,
     toggleFavoriteProduct,
     isProductFavorite,
+    trackBusinessMetric,
   } = useDirectory();
 
   if (activeModal.type !== 'product_detail' || !activeModal.id) {
@@ -41,12 +44,13 @@ export const ProductDetailModal: React.FC = () => {
   };
 
   const whatsappLink = business
-    ? `https://wa.me/${business.whatsapp.replace(/\D/g, '')}?text=${encodeURIComponent(
+    ? normalizeWhatsappUrl(
+        business.whatsapp,
         `Olá ${business.name}! Vi o anúncio do produto "${product.name}" (${formatPrice(
           product.price
         )}) no portal achenacidade e gostaria de mais informações.`
-      )}`
-    : '#';
+      )
+    : '';
 
   const isFav = isProductFavorite(product.id);
 
@@ -166,11 +170,12 @@ export const ProductDetailModal: React.FC = () => {
             )}
 
             {/* Direct WhatsApp Call to Action */}
-            {business && (
+            {business && whatsappLink && (
               <a
                 href={whatsappLink}
                 target="_blank"
                 rel="noopener noreferrer"
+                onClick={() => trackBusinessMetric(business.id, 'whatsapp_click')}
                 className="w-full flex items-center justify-center gap-2 py-3.5 px-4 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-sm shadow-md hover:shadow-lg transition cursor-pointer"
               >
                 <MessageCircle className="w-5 h-5" />

@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { useDirectory } from '../../context/DirectoryContext';
 import { formatServicePrice, getServiceModeLabel } from '../../utils/serviceFormatters';
+import { normalizeWhatsappUrl } from '../../utils/seoHelper';
 import { ConfirmModal } from '../common/ConfirmModal';
 import {
   X,
@@ -33,6 +34,7 @@ export const FavoritesModal: React.FC = () => {
     setCurrentView,
     pushPreferences,
     enablePushNotifications,
+    trackBusinessMetric,
   } = useDirectory();
 
   const [activeTab, setActiveTab] = useState<'businesses' | 'products' | 'services'>('businesses');
@@ -237,11 +239,13 @@ export const FavoritesModal: React.FC = () => {
                         </button>
 
                         <a
-                          href={`https://wa.me/${biz.whatsapp.replace(/\D/g, '')}?text=${encodeURIComponent(
-                            `Olá! Vi sua empresa nos meus favoritos do achenacidade e gostaria de tirar uma dúvida.`
-                          )}`}
+                          href={normalizeWhatsappUrl(
+                            biz.whatsapp,
+                            'Olá! Vi sua empresa nos meus favoritos do achenacidade e gostaria de tirar uma dúvida.'
+                          )}
                           target="_blank"
                           rel="noopener noreferrer"
+                          onClick={() => trackBusinessMetric(biz.id, 'whatsapp_click')}
                           className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-semibold transition shadow-xs"
                         >
                           <MessageCircle className="w-3.5 h-3.5" />

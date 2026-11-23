@@ -30,6 +30,7 @@ export const ProductsPage: React.FC = () => {
     toggleFavoriteProduct,
     isProductFavorite,
     setCurrentView,
+    trackBusinessMetric,
   } = useDirectory();
 
   const [sortBy, setSortBy] = useState<'default' | 'price_asc' | 'price_desc'>('default');
@@ -46,6 +47,7 @@ export const ProductsPage: React.FC = () => {
     e.stopPropagation();
     const biz = getBusiness(product.businessId);
     if (!biz) return;
+    trackBusinessMetric(biz.id, 'whatsapp_click');
     const cleanNumber = biz.whatsapp.replace(/\D/g, '');
     const message = encodeURIComponent(
       `Olá! Vi o produto "${product.name}" (${formatCurrency(product.price)}) no Achenacidade e tenho interesse!`

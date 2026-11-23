@@ -24,6 +24,8 @@ import {
   buildMercadoPagoPixPayload,
   calculatePlanPricing,
   formatBRL,
+  isLifetimePlan,
+  isPaidPlan,
 } from '../../utils/planPricing';
 
 interface PlanPaymentModalProps {
@@ -76,7 +78,9 @@ export const PlanPaymentModal: React.FC<PlanPaymentModalProps> = ({
   });
 
   // Target plan and business
-  const selectedPlan = plans.find((p) => p.id === planId) || plans[1] || plans[0];
+  const selectedPlan =
+    plans.find((p) => p.id === planId) || plans.find((p) => isPaidPlan(p)) || plans[0];
+  const isLifetime = isLifetimePlan(selectedPlan);
   const targetBusiness =
     businesses.find((b) => b.id === businessId) ||
     currentBusinessAuth ||
@@ -306,9 +310,12 @@ export const PlanPaymentModal: React.FC<PlanPaymentModalProps> = ({
                     <strong className="text-slate-900 dark:text-white">{completedTx.businessName}</strong>
                   </div>
                   <div>
-                    <span className="text-slate-500 block text-[11px]">Plano & Ciclo:</span>
+                    <span className="text-slate-500 block text-[11px]">Plano & Modalidade:</span>
                     <strong className="text-slate-900 dark:text-white">
-                      {completedTx.planName} · {BILLING_CYCLE_META[completedTx.billingCycle || 'monthly'].shortLabel}
+                      {completedTx.planName} ·{' '}
+                      {isLifetimePlan(plans.find((p) => p.id === completedTx.planId) || selectedPlan)
+                        ? 'Vitalício (Único)'
+                        : BILLING_CYCLE_META[completedTx.billingCycle || 'monthly'].shortLabel}
                     </strong>
                   </div>
                   <div>
@@ -344,7 +351,7 @@ export const PlanPaymentModal: React.FC<PlanPaymentModalProps> = ({
                 <div className="p-3 bg-blue-50 dark:bg-blue-950/40 border border-blue-200 dark:border-blue-900 rounded-xl text-blue-900 dark:text-blue-300 text-xs flex items-center gap-2">
                   <Sparkles className="w-4 h-4 text-amber-500 shrink-0" />
                   <span>
-                    A cota da sua loja foi atualizada para até <strong>{selectedPlan.productLimit} produtos</strong> na vitrine comercial!
+                    A cota da sua loja foi atualizada para até <strong>{selectedPlan.productLimit} produtos e serviços</strong> na vitrine comercial!
                   </span>
                 </div>
               </div>
@@ -413,16 +420,23 @@ export const PlanPaymentModal: React.FC<PlanPaymentModalProps> = ({
                   </div>
                 </div>
 
-                <BillingCycleSelector
-                  value={billingCycle}
-                  onChange={(nextCycle) => {
-                    setBillingCycle(nextCycle);
-                    setCardForm((prev) => ({ ...prev, installments: 1 }));
-                  }}
-                  globalDiscounts={planDiscountConfig}
-                  plan={selectedPlan}
-                  compact
-                />
+                {!isLifetime ? (
+                  <BillingCycleSelector
+                    value={billingCycle}
+                    onChange={(nextCycle) => {
+                      setBillingCycle(nextCycle);
+                      setCardForm((prev) => ({ ...prev, installments: 1 }));
+                    }}
+                    globalDiscounts={planDiscountConfig}
+                    plan={selectedPlan}
+                    compact
+                  />
+                ) : (
+                  <div className="px-3.5 py-2 rounded-xl bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-800/70 text-[11px] font-semibold text-amber-800 dark:text-amber-200 flex items-center justify-between gap-2">
+                    <span>Pagamento Único · Acesso Vitalício para 1 loja</span>
+                    <span>Sem mensalidade futura</span>
+                  </div>
+                )}
               </div>
 
               {/* Erro se houver */}
@@ -487,7 +501,9 @@ export const PlanPaymentModal: React.FC<PlanPaymentModalProps> = ({
                         <span className="text-xs font-extrabold text-slate-900 dark:text-white">Cartão de Crédito</span>
                       </div>
                       <span className="text-[11px] text-slate-500 mt-0.5 block">
-                        {billingCycle === 'monthly' ? 'À vista no Mercado Pago' : 'Até 12x sem juros no ciclo'}
+                        {isLifetime || billingCycle !== 'monthly'
+                          ? 'Até 12x sem juros no Mercado Pago'
+                          : 'À vista no Mercado Pago'}
                       </span>
                     </div>
                   </button>

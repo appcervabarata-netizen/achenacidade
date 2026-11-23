@@ -7,6 +7,7 @@ import React from 'react';
 import { DirectoryProvider, useDirectory } from './context/DirectoryContext';
 import { Navbar } from './components/layout/Navbar';
 import { HeroBanner } from './components/home/HeroBanner';
+import { PlansSection } from './components/home/PlansSection';
 import { RotatingBanner } from './components/common/RotatingBanner';
 import { Footer } from './components/layout/Footer';
 import { BottomNav } from './components/layout/BottomNav';
@@ -15,6 +16,7 @@ import { StoresPage } from './components/pages/StoresPage';
 import { ProductsPage } from './components/pages/ProductsPage';
 import { ServicesPage } from './components/pages/ServicesPage';
 import { PlansPage } from './components/pages/PlansPage';
+import { FounderSalesPage } from './components/pages/FounderSalesPage';
 import { LaunchPage } from './components/pages/LaunchPage';
 import { MaintenancePage } from './components/pages/MaintenancePage';
 import { LoginScreen } from './components/auth/LoginScreen';
@@ -62,9 +64,9 @@ function AppContent() {
   }
 
   const isRestrictedMode = siteModeConfig.mode !== 'normal';
-  const allowedRestrictedViews = ['login', 'admin_login', 'admin', 'business_portal', 'plans', 'register_store', 'checkout'];
+  const allowedRestrictedViews = ['login', 'admin_login', 'admin', 'business_portal', 'plans', 'founder_sales', 'register_store', 'checkout'];
   const showRestrictedLanding = isRestrictedMode && !allowedRestrictedViews.includes(currentView);
-  const hideChrome = isRestrictedMode || currentView === 'checkout' || currentView === 'admin_login';
+  const hideChrome = isRestrictedMode || currentView === 'checkout' || currentView === 'admin_login' || currentView === 'founder_sales';
   const showStoreOwnerBottomMenu =
     authSession.isAuthenticated &&
     authSession.role === 'business' &&
@@ -116,6 +118,7 @@ function AppContent() {
       {currentView === 'products' && <ProductsPage />}
       {currentView === 'services' && <ServicesPage />}
       {currentView === 'plans' && <PlansPage />}
+      {currentView === 'founder_sales' && <FounderSalesPage />}
       {currentView === 'home' && (
         <main className="flex-1">
           {/* Banner Rotativo Superior (acima dos campos de pesquisa) */}
@@ -124,7 +127,10 @@ function AppContent() {
           {/* Campos de Pesquisa Tripla: Empresas, Produtos e Serviços */}
           <HeroBanner />
 
-          {/* Banner Rotativo Inferior (abaixo da pesquisa) */}
+          {/* Planos Selecionados pelo Admin para Exibição na Página Inicial */}
+          <PlansSection />
+
+          {/* Banner Rotativo Inferior (abaixo dos planos) */}
           <RotatingBanner position="bottom" />
         </main>
       )}

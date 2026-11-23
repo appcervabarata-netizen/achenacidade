@@ -281,6 +281,11 @@ const EXPECTED_TABLE_COLUMNS: Record<string, Array<{ name: string; definition: s
   plans: [
     { name: 'name', definition: "VARCHAR(255) NOT NULL DEFAULT ''" },
     { name: 'price_monthly', definition: 'DECIMAL(10,2) NOT NULL DEFAULT 0' },
+    { name: 'price_once', definition: 'DECIMAL(10,2) NULL DEFAULT 0' },
+    { name: 'billing_type', definition: "VARCHAR(32) NOT NULL DEFAULT 'recurring'" },
+    { name: 'trial_months', definition: 'INT NULL' },
+    { name: 'is_invite_only', definition: 'TINYINT(1) NOT NULL DEFAULT 0' },
+    { name: 'vip_tier', definition: "VARCHAR(32) NOT NULL DEFAULT 'none'" },
     { name: 'product_limit', definition: 'INT NOT NULL DEFAULT 3' },
     { name: 'business_limit', definition: 'INT NOT NULL DEFAULT 1' },
     { name: 'badge', definition: "VARCHAR(120) NOT NULL DEFAULT ''" },
@@ -289,6 +294,7 @@ const EXPECTED_TABLE_COLUMNS: Record<string, Array<{ name: string; definition: s
     { name: 'color', definition: "VARCHAR(32) NOT NULL DEFAULT '#1D4ED8'" },
     { name: 'use_custom_discounts', definition: 'TINYINT(1) NOT NULL DEFAULT 0' },
     { name: 'cycle_discounts', definition: 'JSON NULL' },
+    { name: 'show_on_home', definition: 'TINYINT(1) NOT NULL DEFAULT 1' },
     { name: 'sort_order', definition: 'INT NOT NULL DEFAULT 0' },
     { name: 'updated_at', definition: 'TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP' },
   ],
@@ -320,6 +326,8 @@ const EXPECTED_TABLE_COLUMNS: Record<string, Array<{ name: string; definition: s
     { name: 'pending_billing_cycle', definition: 'VARCHAR(32) NULL' },
     { name: 'billing_cycle', definition: 'VARCHAR(32) NULL' },
     { name: 'plan_expires_at', definition: 'VARCHAR(64) NULL' },
+    { name: 'invite_code', definition: 'VARCHAR(64) NULL' },
+    { name: 'subscription_status', definition: "VARCHAR(32) NOT NULL DEFAULT 'active'" },
     { name: 'payment_token', definition: 'VARCHAR(255) NULL' },
     { name: 'created_at', definition: "VARCHAR(64) NOT NULL DEFAULT ''" },
     { name: 'sort_order', definition: 'INT NOT NULL DEFAULT 0' },
@@ -422,6 +430,27 @@ const EXPECTED_TABLE_COLUMNS: Record<string, Array<{ name: string; definition: s
   ],
   app_settings: [
     { name: 'setting_value', definition: 'JSON NULL' },
+    { name: 'updated_at', definition: 'TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP' },
+  ],
+  business_metrics_daily: [
+    { name: 'views_count', definition: 'INT NOT NULL DEFAULT 0' },
+    { name: 'whatsapp_clicks', definition: 'INT NOT NULL DEFAULT 0' },
+    { name: 'showcase_clicks', definition: 'INT NOT NULL DEFAULT 0' },
+    { name: 'updated_at', definition: 'TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP' },
+  ],
+  plan_invites: [
+    { name: 'code', definition: "VARCHAR(64) NOT NULL DEFAULT ''" },
+    { name: 'plan_id', definition: "VARCHAR(120) NOT NULL DEFAULT 'plan-invite-premium-6m'" },
+    { name: 'max_uses', definition: 'INT NOT NULL DEFAULT 1' },
+    { name: 'used_count', definition: 'INT NOT NULL DEFAULT 0' },
+    { name: 'recipient_hint', definition: 'VARCHAR(255) NULL' },
+    { name: 'expires_at', definition: 'VARCHAR(64) NULL' },
+    { name: 'status', definition: "VARCHAR(32) NOT NULL DEFAULT 'active'" },
+    { name: 'redeemed_by_business_id', definition: 'VARCHAR(120) NULL' },
+    { name: 'redeemed_by_business_name', definition: 'VARCHAR(255) NULL' },
+    { name: 'redeemed_at', definition: 'VARCHAR(64) NULL' },
+    { name: 'created_at', definition: "VARCHAR(64) NOT NULL DEFAULT ''" },
+    { name: 'sort_order', definition: 'INT NOT NULL DEFAULT 0' },
     { name: 'updated_at', definition: 'TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP' },
   ],
 };
@@ -636,6 +665,11 @@ export async function ensureDatabaseSchema(forceMigrate = false): Promise<boolea
           id VARCHAR(120) PRIMARY KEY,
           name VARCHAR(255) NOT NULL,
           price_monthly DECIMAL(10,2) NOT NULL DEFAULT 0,
+          price_once DECIMAL(10,2) NULL DEFAULT 0,
+          billing_type VARCHAR(32) NOT NULL DEFAULT 'recurring',
+          trial_months INT NULL,
+          is_invite_only TINYINT(1) NOT NULL DEFAULT 0,
+          vip_tier VARCHAR(32) NOT NULL DEFAULT 'none',
           product_limit INT NOT NULL DEFAULT 3,
           business_limit INT NOT NULL DEFAULT 1,
           badge VARCHAR(120) NOT NULL,
@@ -644,6 +678,7 @@ export async function ensureDatabaseSchema(forceMigrate = false): Promise<boolea
           color VARCHAR(32) NOT NULL,
           use_custom_discounts TINYINT(1) NOT NULL DEFAULT 0,
           cycle_discounts JSON NULL,
+          show_on_home TINYINT(1) NOT NULL DEFAULT 1,
           sort_order INT NOT NULL DEFAULT 0,
           updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
@@ -679,6 +714,8 @@ export async function ensureDatabaseSchema(forceMigrate = false): Promise<boolea
           pending_billing_cycle VARCHAR(32) NULL,
           billing_cycle VARCHAR(32) NULL,
           plan_expires_at VARCHAR(64) NULL,
+          invite_code VARCHAR(64) NULL,
+          subscription_status VARCHAR(32) NOT NULL DEFAULT 'active',
           payment_token VARCHAR(255) NULL,
           created_at VARCHAR(64) NOT NULL,
           sort_order INT NOT NULL DEFAULT 0,
@@ -813,6 +850,38 @@ export async function ensureDatabaseSchema(forceMigrate = false): Promise<boolea
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
       `);
 
+      await conn.query(`
+        CREATE TABLE IF NOT EXISTS business_metrics_daily (
+          business_id VARCHAR(120) NOT NULL,
+          metric_date DATE NOT NULL,
+          views_count INT NOT NULL DEFAULT 0,
+          whatsapp_clicks INT NOT NULL DEFAULT 0,
+          showcase_clicks INT NOT NULL DEFAULT 0,
+          updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+          PRIMARY KEY (business_id, metric_date)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+      `);
+
+      await conn.query(`
+        CREATE TABLE IF NOT EXISTS plan_invites (
+          id VARCHAR(120) PRIMARY KEY,
+          code VARCHAR(64) NOT NULL,
+          plan_id VARCHAR(120) NOT NULL DEFAULT 'plan-invite-premium-6m',
+          max_uses INT NOT NULL DEFAULT 1,
+          used_count INT NOT NULL DEFAULT 0,
+          recipient_hint VARCHAR(255) NULL,
+          expires_at VARCHAR(64) NULL,
+          status VARCHAR(32) NOT NULL DEFAULT 'active',
+          redeemed_by_business_id VARCHAR(120) NULL,
+          redeemed_by_business_name VARCHAR(255) NULL,
+          redeemed_at VARCHAR(64) NULL,
+          created_at VARCHAR(64) NOT NULL,
+          sort_order INT NOT NULL DEFAULT 0,
+          updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+          UNIQUE KEY uniq_plan_invite_code (code)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+      `);
+
       const addedColumns = await ensureMissingColumns(conn);
       if (addedColumns.length > 0) {
         lastMigratedColumns = addedColumns;
@@ -907,6 +976,11 @@ export async function readAllDirectoryData(connOrPool?: Pool | PoolConnection): 
       id: r.id,
       name: r.name,
       priceMonthly: toNumber(r.price_monthly, 0),
+      ...(toOptionalNumber(r.price_once) !== undefined ? { priceOnce: toOptionalNumber(r.price_once) } : {}),
+      billingType: r.billing_type || (r.id === 'plan-founder' ? 'lifetime' : r.id === 'plan-invite-premium-6m' ? 'invite_trial' : 'recurring'),
+      ...(toOptionalNumber(r.trial_months) !== undefined ? { trialMonths: toOptionalNumber(r.trial_months) } : {}),
+      isInviteOnly: Boolean(r.is_invite_only),
+      vipTier: r.vip_tier || (r.id === 'plan-founder' ? 'founder' : r.id === 'plan-premium' || r.id === 'plan-invite-premium-6m' ? 'premium' : r.id === 'plan-pro' ? 'pro' : 'none'),
       productLimit: toNumber(r.product_limit, 3),
       businessLimit: toNumber(r.business_limit, 1),
       badge: r.badge,
@@ -915,6 +989,11 @@ export async function readAllDirectoryData(connOrPool?: Pool | PoolConnection): 
       color: r.color,
       useCustomDiscounts: Boolean(r.use_custom_discounts),
       ...(r.cycle_discounts ? { cycleDiscounts: parseJsonColumn(r.cycle_discounts, undefined) } : {}),
+      sortOrder: toNumber(r.sort_order, 0),
+      showOnHome:
+        r.show_on_home === undefined || r.show_on_home === null
+          ? !Boolean(r.is_invite_only)
+          : Boolean(r.show_on_home),
     })),
     businesses: bizRows.map((r) => ({
       id: r.id,
@@ -945,6 +1024,8 @@ export async function readAllDirectoryData(connOrPool?: Pool | PoolConnection): 
       ...(r.pending_billing_cycle ? { pendingBillingCycle: r.pending_billing_cycle } : {}),
       ...(r.billing_cycle ? { billingCycle: r.billing_cycle } : {}),
       ...(r.plan_expires_at ? { planExpiresAt: r.plan_expires_at } : {}),
+      ...(r.invite_code ? { inviteCode: r.invite_code } : {}),
+      subscriptionStatus: r.subscription_status || 'active',
       ...(r.payment_token ? { paymentToken: r.payment_token } : {}),
       createdAt: r.created_at,
     })),
@@ -1075,13 +1156,20 @@ export async function replaceCollectionInConn(conn: PoolConnection, collection: 
       await conn.query(`DELETE FROM plans`);
       for (let i = 0; i < safeItems.length; i++) {
         const p = safeItems[i];
+        const showOnHomeVal = p.isInviteOnly ? 0 : p.showOnHome === false ? 0 : 1;
+        const sortOrderVal = toOptionalNumber(p.sortOrder) ?? i + 1;
         await conn.query(
-          `INSERT INTO plans (id, name, price_monthly, product_limit, business_limit, badge, features, highlighted, color, use_custom_discounts, cycle_discounts, sort_order)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          `INSERT INTO plans (id, name, price_monthly, price_once, billing_type, trial_months, is_invite_only, vip_tier, product_limit, business_limit, badge, features, highlighted, color, use_custom_discounts, cycle_discounts, show_on_home, sort_order)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
           [
             p.id,
             p.name || '',
             toNumber(p.priceMonthly, 0),
+            toOptionalNumber(p.priceOnce) ?? 0,
+            p.billingType || 'recurring',
+            toOptionalNumber(p.trialMonths) ?? null,
+            p.isInviteOnly ? 1 : 0,
+            p.vipTier || 'none',
             toNumber(p.productLimit, 3),
             toNumber(p.businessLimit, 1),
             p.badge || '',
@@ -1090,7 +1178,8 @@ export async function replaceCollectionInConn(conn: PoolConnection, collection: 
             p.color || '#1D4ED8',
             p.useCustomDiscounts ? 1 : 0,
             p.cycleDiscounts ? JSON.stringify(p.cycleDiscounts) : null,
-            i,
+            showOnHomeVal,
+            sortOrderVal,
           ]
         );
       }
@@ -1114,8 +1203,8 @@ export async function replaceCollectionInConn(conn: PoolConnection, collection: 
              id, name, slug, city_id, category_id, plan_id, description, phone, whatsapp, email, owner_email,
              address, neighborhood, opening_hours, weekly_schedule, logo_url, cover_url, instagram, facebook,
              website, password, is_verified, email_verified, payment_status, pending_plan_id,
-             pending_billing_cycle, billing_cycle, plan_expires_at, payment_token, created_at, sort_order
-           ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+             pending_billing_cycle, billing_cycle, plan_expires_at, invite_code, subscription_status, payment_token, created_at, sort_order
+           ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
           [
             b.id,
             b.name || '',
@@ -1145,6 +1234,8 @@ export async function replaceCollectionInConn(conn: PoolConnection, collection: 
             b.pendingBillingCycle || null,
             b.billingCycle || null,
             b.planExpiresAt || null,
+            b.inviteCode || null,
+            b.subscriptionStatus || 'active',
             b.paymentToken || null,
             b.createdAt || new Date().toISOString().split('T')[0],
             i,
@@ -1522,12 +1613,19 @@ export async function upsertEntity(resource: string, item: any): Promise<void> {
       }
 
       case 'plans': {
+        const showOnHomeVal = item.isInviteOnly ? 0 : item.showOnHome === false ? 0 : 1;
+        const sortOrderVal = toNumber(item.sortOrder, 0);
         await conn.query(
-          `INSERT INTO plans (id, name, price_monthly, product_limit, business_limit, badge, features, highlighted, color, use_custom_discounts, cycle_discounts, sort_order)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          `INSERT INTO plans (id, name, price_monthly, price_once, billing_type, trial_months, is_invite_only, vip_tier, product_limit, business_limit, badge, features, highlighted, color, use_custom_discounts, cycle_discounts, show_on_home, sort_order)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
            ON DUPLICATE KEY UPDATE
              name = VALUES(name),
              price_monthly = VALUES(price_monthly),
+             price_once = VALUES(price_once),
+             billing_type = VALUES(billing_type),
+             trial_months = VALUES(trial_months),
+             is_invite_only = VALUES(is_invite_only),
+             vip_tier = VALUES(vip_tier),
              product_limit = VALUES(product_limit),
              business_limit = VALUES(business_limit),
              badge = VALUES(badge),
@@ -1535,11 +1633,18 @@ export async function upsertEntity(resource: string, item: any): Promise<void> {
              highlighted = VALUES(highlighted),
              color = VALUES(color),
              use_custom_discounts = VALUES(use_custom_discounts),
-             cycle_discounts = VALUES(cycle_discounts)`,
+             cycle_discounts = VALUES(cycle_discounts),
+             show_on_home = VALUES(show_on_home),
+             sort_order = VALUES(sort_order)`,
           [
             item.id,
             item.name || '',
             toNumber(item.priceMonthly, 0),
+            toOptionalNumber(item.priceOnce) ?? 0,
+            item.billingType || 'recurring',
+            toOptionalNumber(item.trialMonths) ?? null,
+            item.isInviteOnly ? 1 : 0,
+            item.vipTier || 'none',
             toNumber(item.productLimit, 3),
             toNumber(item.businessLimit, 1),
             item.badge || '',
@@ -1548,7 +1653,8 @@ export async function upsertEntity(resource: string, item: any): Promise<void> {
             item.color || '#1D4ED8',
             item.useCustomDiscounts ? 1 : 0,
             item.cycleDiscounts ? JSON.stringify(item.cycleDiscounts) : null,
-            0,
+            showOnHomeVal,
+            sortOrderVal,
           ]
         );
         break;
@@ -1561,8 +1667,8 @@ export async function upsertEntity(resource: string, item: any): Promise<void> {
              id, name, slug, city_id, category_id, plan_id, description, phone, whatsapp, email, owner_email,
              address, neighborhood, opening_hours, weekly_schedule, logo_url, cover_url, instagram, facebook,
              website, password, is_verified, email_verified, payment_status, pending_plan_id,
-             pending_billing_cycle, billing_cycle, plan_expires_at, payment_token, created_at, sort_order
-           ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+             pending_billing_cycle, billing_cycle, plan_expires_at, invite_code, subscription_status, payment_token, created_at, sort_order
+           ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
            ON DUPLICATE KEY UPDATE
              name = VALUES(name),
              slug = VALUES(slug),
@@ -1591,6 +1697,8 @@ export async function upsertEntity(resource: string, item: any): Promise<void> {
              pending_billing_cycle = VALUES(pending_billing_cycle),
              billing_cycle = VALUES(billing_cycle),
              plan_expires_at = VALUES(plan_expires_at),
+             invite_code = VALUES(invite_code),
+             subscription_status = VALUES(subscription_status),
              payment_token = VALUES(payment_token)`,
           [
             item.id,
@@ -1621,6 +1729,8 @@ export async function upsertEntity(resource: string, item: any): Promise<void> {
             item.pendingBillingCycle || null,
             item.billingCycle || null,
             item.planExpiresAt || null,
+            item.inviteCode || null,
+            item.subscriptionStatus || 'active',
             item.paymentToken || null,
             item.createdAt || new Date().toISOString().split('T')[0],
             0,
@@ -1868,6 +1978,11 @@ const RESOURCE_FIELD_MAPS: Record<string, Record<string, FieldDef>> = {
   plans: {
     name: { col: 'name', transform: strTransform },
     priceMonthly: { col: 'price_monthly', transform: numTransform },
+    priceOnce: { col: 'price_once', transform: optNumTransform },
+    billingType: { col: 'billing_type', transform: strTransform },
+    trialMonths: { col: 'trial_months', transform: optNumTransform },
+    isInviteOnly: { col: 'is_invite_only', transform: boolTransform },
+    vipTier: { col: 'vip_tier', transform: strTransform },
     productLimit: { col: 'product_limit', transform: numTransform },
     businessLimit: { col: 'business_limit', transform: numTransform },
     badge: { col: 'badge', transform: strTransform },
@@ -1876,6 +1991,8 @@ const RESOURCE_FIELD_MAPS: Record<string, Record<string, FieldDef>> = {
     color: { col: 'color', transform: strTransform },
     useCustomDiscounts: { col: 'use_custom_discounts', transform: boolTransform },
     cycleDiscounts: { col: 'cycle_discounts', transform: jsonTransform },
+    showOnHome: { col: 'show_on_home', transform: boolTransform },
+    sortOrder: { col: 'sort_order', transform: numTransform },
   },
   businesses: {
     name: { col: 'name', transform: strTransform },
@@ -1905,6 +2022,8 @@ const RESOURCE_FIELD_MAPS: Record<string, Record<string, FieldDef>> = {
     pendingBillingCycle: { col: 'pending_billing_cycle', transform: nullableStr },
     billingCycle: { col: 'billing_cycle', transform: nullableStr },
     planExpiresAt: { col: 'plan_expires_at', transform: nullableStr },
+    inviteCode: { col: 'invite_code', transform: nullableStr },
+    subscriptionStatus: { col: 'subscription_status', transform: strTransform },
     paymentToken: { col: 'payment_token', transform: nullableStr },
   },
   products: {
@@ -2035,6 +2154,7 @@ export async function deleteEntityById(resource: string, id: string): Promise<{ 
       await conn.query(`DELETE FROM products WHERE business_id = ?`, [id]);
       await conn.query(`DELETE FROM services WHERE business_id = ?`, [id]);
       await conn.query(`DELETE FROM store_product_categories WHERE business_id = ?`, [id]);
+      await conn.query(`DELETE FROM business_metrics_daily WHERE business_id = ?`, [id]);
     }
 
     if ((resource === 'emailLogs' || resource === 'email_logs') && id === 'all') {
@@ -2826,6 +2946,8 @@ export async function getDatabaseDiagnostics(): Promise<DatabaseDiagnostics> {
       'payment_transactions',
       'email_logs',
       'app_settings',
+      'business_metrics_daily',
+      'plan_invites',
     ];
     const counts: Record<string, number> = {};
     for (const tbl of tables) {
@@ -2852,6 +2974,411 @@ export async function getDatabaseDiagnostics(): Promise<DatabaseDiagnostics> {
       ...safeTarget,
       error: err instanceof Error ? err.message : 'Erro desconhecido ao conectar no MySQL.',
     };
+  }
+}
+
+export type DbBusinessMetricEventType = 'view' | 'whatsapp_click' | 'showcase_click';
+
+export interface DbDailyMetricPoint {
+  date: string;
+  label: string;
+  views: number;
+  whatsappClicks: number;
+  showcaseClicks: number;
+}
+
+export interface DbBusinessMetricsSummary {
+  viewsTotal: number;
+  whatsappClicks: number;
+  showcaseClicks: number;
+  conversionRate: string;
+  daily: DbDailyMetricPoint[];
+}
+
+const WEEKDAY_SHORT_LABELS = ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb'];
+
+export function getSaoPauloDateKey(date = new Date()): string {
+  return new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'America/Sao_Paulo',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).format(date);
+}
+
+export function buildLast7DaysKeys(referenceDate = new Date()): Array<{ date: string; label: string }> {
+  const todayKey = getSaoPauloDateKey(referenceDate);
+  const [y, m, d] = todayKey.split('-').map(Number);
+  const baseUtc = new Date(Date.UTC(y, m - 1, d, 12, 0, 0));
+  const result: Array<{ date: string; label: string }> = [];
+  for (let offset = 6; offset >= 0; offset--) {
+    const dt = new Date(baseUtc.getTime() - offset * 86400000);
+    const key = dt.toISOString().slice(0, 10);
+    const label = WEEKDAY_SHORT_LABELS[dt.getUTCDay()];
+    result.push({ date: key, label });
+  }
+  return result;
+}
+
+export async function recordBusinessMetricInDb(
+  businessId: string,
+  eventType: DbBusinessMetricEventType
+): Promise<void> {
+  const activePool = getPool();
+  if (!activePool || !businessId) return;
+  await ensureDatabaseSchema();
+
+  const dateKey = getSaoPauloDateKey();
+  const viewsInc = eventType === 'view' ? 1 : 0;
+  const whatsappInc = eventType === 'whatsapp_click' ? 1 : 0;
+  const showcaseInc = eventType === 'showcase_click' ? 1 : 0;
+
+  await activePool.query(
+    `INSERT INTO business_metrics_daily (business_id, metric_date, views_count, whatsapp_clicks, showcase_clicks)
+     VALUES (?, ?, ?, ?, ?)
+     ON DUPLICATE KEY UPDATE
+       views_count = views_count + VALUES(views_count),
+       whatsapp_clicks = whatsapp_clicks + VALUES(whatsapp_clicks),
+       showcase_clicks = showcase_clicks + VALUES(showcase_clicks)`,
+    [businessId, dateKey, viewsInc, whatsappInc, showcaseInc]
+  );
+}
+
+export async function getBusinessMetricsFromDb(
+  businessId: string
+): Promise<DbBusinessMetricsSummary> {
+  const days = buildLast7DaysKeys();
+  const emptySummary: DbBusinessMetricsSummary = {
+    viewsTotal: 0,
+    whatsappClicks: 0,
+    showcaseClicks: 0,
+    conversionRate: '0%',
+    daily: days.map((d) => ({
+      date: d.date,
+      label: d.label,
+      views: 0,
+      whatsappClicks: 0,
+      showcaseClicks: 0,
+    })),
+  };
+
+  const activePool = getPool();
+  if (!activePool || !businessId) return emptySummary;
+  await ensureDatabaseSchema();
+
+  const [sumRows] = await activePool.query<RowDataPacket[]>(
+    `SELECT
+       COALESCE(SUM(views_count), 0) AS viewsTotal,
+       COALESCE(SUM(whatsapp_clicks), 0) AS whatsappClicks,
+       COALESCE(SUM(showcase_clicks), 0) AS showcaseClicks
+     FROM business_metrics_daily
+     WHERE business_id = ?`,
+    [businessId]
+  );
+
+  const viewsTotal = Number(sumRows[0]?.viewsTotal || 0);
+  const whatsappClicks = Number(sumRows[0]?.whatsappClicks || 0);
+  const showcaseClicks = Number(sumRows[0]?.showcaseClicks || 0);
+  const conversionRate =
+    viewsTotal > 0 ? `${((whatsappClicks / viewsTotal) * 100).toFixed(1)}%` : '0%';
+
+  const [dailyRows] = await activePool.query<RowDataPacket[]>(
+    `SELECT
+       DATE_FORMAT(metric_date, '%Y-%m-%d') AS metricDate,
+       views_count AS viewsCount,
+       whatsapp_clicks AS whatsappClicks,
+       showcase_clicks AS showcaseClicks
+     FROM business_metrics_daily
+     WHERE business_id = ? AND metric_date >= ?`,
+    [businessId, days[0].date]
+  );
+
+  const byDate = new Map<string, { views: number; whatsappClicks: number; showcaseClicks: number }>();
+  for (const r of dailyRows) {
+    byDate.set(String(r.metricDate), {
+      views: Number(r.viewsCount || 0),
+      whatsappClicks: Number(r.whatsappClicks || 0),
+      showcaseClicks: Number(r.showcaseClicks || 0),
+    });
+  }
+
+  return {
+    viewsTotal,
+    whatsappClicks,
+    showcaseClicks,
+    conversionRate,
+    daily: days.map((d) => {
+      const hit = byDate.get(d.date);
+      return {
+        date: d.date,
+        label: d.label,
+        views: hit?.views || 0,
+        whatsappClicks: hit?.whatsappClicks || 0,
+        showcaseClicks: hit?.showcaseClicks || 0,
+      };
+    }),
+  };
+}
+
+export interface DbPlanInvite {
+  id: string;
+  code: string;
+  planId: string;
+  maxUses: number;
+  usedCount: number;
+  recipientHint?: string;
+  expiresAt?: string;
+  status: 'active' | 'used' | 'revoked' | 'expired';
+  redeemedByBusinessId?: string;
+  redeemedByBusinessName?: string;
+  redeemedAt?: string;
+  createdAt: string;
+}
+
+function computeInviteEffectiveStatus(row: {
+  status?: string;
+  maxUses: number;
+  usedCount: number;
+  expiresAt?: string | null;
+}): 'active' | 'used' | 'revoked' | 'expired' {
+  if (row.status === 'revoked') return 'revoked';
+  if (row.usedCount >= row.maxUses) return 'used';
+  if (row.expiresAt) {
+    const todayKey = getSaoPauloDateKey();
+    if (String(row.expiresAt).slice(0, 10) < todayKey) return 'expired';
+  }
+  return 'active';
+}
+
+function mapPlanInviteRow(r: RowDataPacket): DbPlanInvite {
+  const maxUses = Math.max(1, Number(r.max_uses || 1));
+  const usedCount = Math.max(0, Number(r.used_count || 0));
+  const expiresAt = r.expires_at ? String(r.expires_at) : undefined;
+  return {
+    id: String(r.id),
+    code: String(r.code),
+    planId: String(r.plan_id || 'plan-invite-premium-6m'),
+    maxUses,
+    usedCount,
+    ...(r.recipient_hint ? { recipientHint: String(r.recipient_hint) } : {}),
+    ...(expiresAt ? { expiresAt } : {}),
+    status: computeInviteEffectiveStatus({
+      status: r.status ? String(r.status) : 'active',
+      maxUses,
+      usedCount,
+      expiresAt,
+    }),
+    ...(r.redeemed_by_business_id ? { redeemedByBusinessId: String(r.redeemed_by_business_id) } : {}),
+    ...(r.redeemed_by_business_name ? { redeemedByBusinessName: String(r.redeemed_by_business_name) } : {}),
+    ...(r.redeemed_at ? { redeemedAt: String(r.redeemed_at) } : {}),
+    createdAt: String(r.created_at || ''),
+  };
+}
+
+export async function listPlanInvitesFromDb(): Promise<DbPlanInvite[]> {
+  const activePool = getPool();
+  if (!activePool) return [];
+  await ensureDatabaseSchema();
+  const [rows] = await activePool.query<RowDataPacket[]>(
+    `SELECT * FROM plan_invites ORDER BY sort_order DESC, created_at DESC`
+  );
+  return rows.map(mapPlanInviteRow);
+}
+
+export async function createPlanInviteInDb(invite: DbPlanInvite): Promise<DbPlanInvite> {
+  const activePool = getPool();
+  if (!activePool) throw new Error('Database not configured.');
+  await ensureDatabaseSchema();
+
+  const normalizedCode = invite.code.trim().toUpperCase();
+  const [existing] = await activePool.query<RowDataPacket[]>(
+    `SELECT id FROM plan_invites WHERE UPPER(code) = ? LIMIT 1`,
+    [normalizedCode]
+  );
+  if (existing.length > 0) {
+    throw new Error(`Já existe um convite cadastrado com o código "${normalizedCode}".`);
+  }
+
+  await activePool.query(
+    `INSERT INTO plan_invites (
+       id, code, plan_id, max_uses, used_count, recipient_hint, expires_at, status, created_at, sort_order
+     ) VALUES (?, ?, ?, ?, 0, ?, ?, 'active', ?, ?)`,
+    [
+      invite.id,
+      normalizedCode,
+      invite.planId || 'plan-invite-premium-6m',
+      Math.max(1, Number(invite.maxUses || 1)),
+      invite.recipientHint || null,
+      invite.expiresAt || null,
+      invite.createdAt || getSaoPauloDateKey(),
+      Date.now() % 2147483647,
+    ]
+  );
+
+  const [createdRows] = await activePool.query<RowDataPacket[]>(
+    `SELECT * FROM plan_invites WHERE id = ? LIMIT 1`,
+    [invite.id]
+  );
+  return createdRows.length > 0 ? mapPlanInviteRow(createdRows[0]) : { ...invite, code: normalizedCode };
+}
+
+export async function revokePlanInviteInDb(id: string): Promise<{ updated: boolean }> {
+  const activePool = getPool();
+  if (!activePool) return { updated: false };
+  await ensureDatabaseSchema();
+  const [res] = await activePool.query<any>(
+    `UPDATE plan_invites SET status = 'revoked' WHERE id = ?`,
+    [id]
+  );
+  return { updated: (res?.affectedRows || 0) > 0 };
+}
+
+export async function deletePlanInviteInDb(id: string): Promise<{ deleted: boolean }> {
+  const activePool = getPool();
+  if (!activePool) return { deleted: false };
+  await ensureDatabaseSchema();
+  const [res] = await activePool.query<any>(`DELETE FROM plan_invites WHERE id = ?`, [id]);
+  return { deleted: (res?.affectedRows || 0) > 0 };
+}
+
+export async function validatePlanInviteInDb(code: string): Promise<{
+  valid: boolean;
+  invite?: DbPlanInvite;
+  error?: string;
+}> {
+  const activePool = getPool();
+  if (!activePool) return { valid: false, error: 'Banco de dados não configurado.' };
+  await ensureDatabaseSchema();
+
+  const normalized = code.trim().toUpperCase();
+  if (!normalized) {
+    return { valid: false, error: 'Informe um código de convite.' };
+  }
+
+  const [rows] = await activePool.query<RowDataPacket[]>(
+    `SELECT * FROM plan_invites WHERE UPPER(code) = ? LIMIT 1`,
+    [normalized]
+  );
+  if (rows.length === 0) {
+    return { valid: false, error: 'Código de convite não encontrado. Verifique com o administrador.' };
+  }
+
+  const invite = mapPlanInviteRow(rows[0]);
+  if (invite.status === 'revoked') {
+    return { valid: false, invite, error: 'Este convite foi revogado pelo administrador.' };
+  }
+  if (invite.status === 'expired') {
+    return { valid: false, invite, error: 'O prazo de validade deste link de convite já expirou.' };
+  }
+  if (invite.status === 'used' || invite.usedCount >= invite.maxUses) {
+    return { valid: false, invite, error: 'Este código de convite já atingiu o limite máximo de uso.' };
+  }
+
+  return { valid: true, invite };
+}
+
+export async function redeemPlanInviteInDb(params: {
+  code: string;
+  businessId: string;
+  businessName?: string;
+}): Promise<{
+  success: boolean;
+  invite?: DbPlanInvite;
+  planExpiresAt?: string;
+  planId?: string;
+  error?: string;
+}> {
+  const activePool = getPool();
+  if (!activePool) return { success: false, error: 'Banco de dados não configurado.' };
+  await ensureDatabaseSchema();
+
+  const normalized = params.code.trim().toUpperCase();
+  const conn = await activePool.getConnection();
+  try {
+    await conn.beginTransaction();
+
+    const [rows] = await conn.query<RowDataPacket[]>(
+      `SELECT * FROM plan_invites WHERE UPPER(code) = ? LIMIT 1 FOR UPDATE`,
+      [normalized]
+    );
+    if (rows.length === 0) {
+      await conn.rollback();
+      return { success: false, error: 'Código de convite não encontrado.' };
+    }
+
+    const invite = mapPlanInviteRow(rows[0]);
+    if (invite.status === 'revoked') {
+      await conn.rollback();
+      return { success: false, error: 'Este convite foi revogado pelo administrador.' };
+    }
+    if (invite.status === 'expired') {
+      await conn.rollback();
+      return { success: false, error: 'Este convite está expirado.' };
+    }
+    if (invite.usedCount >= invite.maxUses) {
+      await conn.rollback();
+      return { success: false, error: 'Este código de convite já foi totalmente utilizado.' };
+    }
+
+    // Read target plan trialMonths (default 6 months)
+    let trialMonths = 6;
+    const [planRows] = await conn.query<RowDataPacket[]>(
+      `SELECT trial_months FROM plans WHERE id = ? LIMIT 1`,
+      [invite.planId]
+    );
+    if (planRows.length > 0 && planRows[0].trial_months) {
+      trialMonths = Math.max(1, Number(planRows[0].trial_months));
+    }
+
+    const expiryTarget = new Date();
+    expiryTarget.setMonth(expiryTarget.getMonth() + trialMonths);
+    const planExpiresAt = expiryTarget.toISOString().split('T')[0];
+
+    const nextUsedCount = invite.usedCount + 1;
+    const nextStatus = nextUsedCount >= invite.maxUses ? 'used' : 'active';
+    const redeemedAt = getSaoPauloDateKey();
+
+    await conn.query(
+      `UPDATE plan_invites
+       SET used_count = ?, status = ?, redeemed_by_business_id = ?, redeemed_by_business_name = ?, redeemed_at = ?
+       WHERE id = ?`,
+      [nextUsedCount, nextStatus, params.businessId, params.businessName || null, redeemedAt, invite.id]
+    );
+
+    await conn.query(
+      `UPDATE businesses
+       SET plan_id = ?,
+           billing_cycle = 'monthly',
+           plan_expires_at = ?,
+           invite_code = ?,
+           payment_status = 'active',
+           subscription_status = 'active',
+           pending_plan_id = NULL,
+           pending_billing_cycle = NULL
+       WHERE id = ?`,
+      [invite.planId, planExpiresAt, invite.code, params.businessId]
+    );
+
+    await conn.commit();
+
+    return {
+      success: true,
+      planId: invite.planId,
+      planExpiresAt,
+      invite: {
+        ...invite,
+        usedCount: nextUsedCount,
+        status: nextStatus,
+        redeemedByBusinessId: params.businessId,
+        redeemedByBusinessName: params.businessName,
+        redeemedAt,
+      },
+    };
+  } catch (err) {
+    await conn.rollback();
+    throw err;
+  } finally {
+    conn.release();
   }
 }
 

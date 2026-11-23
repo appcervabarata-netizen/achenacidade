@@ -9,7 +9,9 @@ import {
   Package,
   X,
   Heart,
+  Award,
 } from 'lucide-react';
+import { isFounderPlan, isVipPlan } from '../../utils/planPricing';
 
 export const FeaturedBusinesses: React.FC = () => {
   const {
@@ -24,6 +26,7 @@ export const FeaturedBusinesses: React.FC = () => {
     getBusinessProductCount,
     toggleFavoriteBusiness,
     isBusinessFavorite,
+    trackBusinessMetric,
   } = useDirectory();
 
   const getCityName = (cityId: string) => {
@@ -79,11 +82,19 @@ export const FeaturedBusinesses: React.FC = () => {
             {filteredBusinesses.map((biz) => {
               const plan = getPlan(biz.planId);
               const productCount = getBusinessProductCount(biz.id);
+              const founder = isFounderPlan(plan);
+              const vip = isVipPlan(plan);
 
               return (
                 <div
                   key={biz.id}
-                  className="group bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-xs hover:shadow-md hover:border-blue-300 dark:hover:border-blue-700 transition-all flex flex-col justify-between overflow-hidden"
+                  className={`group bg-white dark:bg-slate-900 rounded-2xl border shadow-xs hover:shadow-md transition-all flex flex-col justify-between overflow-hidden ${
+                    founder
+                      ? 'border-amber-400/90 dark:border-amber-700/80 hover:border-amber-500'
+                      : vip
+                      ? 'border-blue-300/80 dark:border-blue-800/80 hover:border-blue-500'
+                      : 'border-slate-200 dark:border-slate-800 hover:border-blue-300 dark:hover:border-blue-700'
+                  }`}
                 >
                   <div className="p-3 sm:p-5">
                     {/* Top Row: Logo, Title & Verified */}
@@ -116,12 +127,17 @@ export const FeaturedBusinesses: React.FC = () => {
                           <span className="truncate">{biz.neighborhood}</span>
                         </div>
 
-                        {/* Plan Tag if highlighted */}
-                        {plan && plan.highlighted && (
+                        {/* Exclusive Founder Seal or VIP highlight tag */}
+                        {founder ? (
+                          <div className="mt-0.5 inline-flex items-center gap-1 text-[9px] sm:text-[11px] font-bold text-amber-700 dark:text-amber-400 truncate">
+                            <Award className="w-3 h-3 shrink-0" />
+                            <span>Sócio Fundador VIP</span>
+                          </div>
+                        ) : (vip || plan?.highlighted) && plan ? (
                           <div className="mt-0.5 text-[9px] sm:text-[11px] font-semibold text-blue-600 dark:text-blue-400 truncate">
                             ★ {plan.badge}
                           </div>
-                        )}
+                        ) : null}
                       </div>
 
                       {/* Favorite Button */}
@@ -179,6 +195,7 @@ export const FeaturedBusinesses: React.FC = () => {
                       )}`}
                       target="_blank"
                       rel="noopener noreferrer"
+                      onClick={() => trackBusinessMetric(biz.id, 'whatsapp_click')}
                       className="flex items-center justify-center gap-1 px-2.5 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-[11px] sm:text-xs font-semibold transition-colors shadow-xs"
                     >
                       <MessageCircle className="w-3 h-3" />

@@ -13,7 +13,9 @@ import {
   ExternalLink,
   X,
   Store,
+  Award,
 } from 'lucide-react';
+import { isFounderPlan, isVipPlan } from '../../utils/planPricing';
 
 export const StoresPage: React.FC = () => {
   const {
@@ -31,19 +33,20 @@ export const StoresPage: React.FC = () => {
     toggleFavoriteBusiness,
     isBusinessFavorite,
     setCurrentView,
+    trackBusinessMetric,
   } = useDirectory();
 
   const getCategoryName = (catId: string) => {
     return categories.find((c) => c.id === catId)?.name || 'Geral';
   };
 
-  const getPlanBadge = (planId: string) => {
-    const plan = plans.find((p) => p.id === planId);
-    return plan?.badge || 'Padrão';
+  const getPlan = (planId: string) => {
+    return plans.find((p) => p.id === planId);
   };
 
-  const handleWhatsAppClick = (e: React.MouseEvent, whatsapp: string, name: string) => {
+  const handleWhatsAppClick = (e: React.MouseEvent, businessId: string, whatsapp: string, name: string) => {
     e.stopPropagation();
+    trackBusinessMetric(businessId, 'whatsapp_click');
     const cleanNumber = whatsapp.replace(/\D/g, '');
     const message = encodeURIComponent(
       `Olá! Encontrei a ${name} no portal Achenacidade e gostaria de informações.`
@@ -174,15 +177,22 @@ export const StoresPage: React.FC = () => {
           <div className="grid grid-cols-2 md:grid-cols-2 lg:grid-cols-3 gap-2.5 sm:gap-6">
             {filteredBusinesses.map((biz) => {
               const isFav = isBusinessFavorite(biz.id);
+              const plan = getPlan(biz.planId);
+              const founder = isFounderPlan(plan);
+              const vip = isVipPlan(plan);
 
               return (
                 <div
                   key={biz.id}
                   onClick={() => openModal('business_detail', biz.id)}
-                  className="group bg-white dark:bg-slate-900 rounded-2xl overflow-hidden border border-slate-200 dark:border-slate-800 hover:border-blue-400 dark:hover:border-blue-600 shadow-xs hover:shadow-lg transition-all cursor-pointer flex flex-col justify-between"
+                  className={`group bg-white dark:bg-slate-900 rounded-2xl overflow-hidden border shadow-xs hover:shadow-lg transition-all cursor-pointer flex flex-col justify-between ${
+                    founder
+                      ? 'border-amber-400 dark:border-amber-700 hover:border-amber-500'
+                      : 'border-slate-200 dark:border-slate-800 hover:border-blue-400 dark:hover:border-blue-600'
+                  }`}
                 >
                   <div>
-                    {/* Cover image with favorite button and plan badge */}
+                    {/* Cover image with favorite button and VIP badge */}
                     <div className="relative h-24 sm:h-36 w-full overflow-hidden bg-slate-100 dark:bg-slate-800">
                       <img
                         src={biz.coverUrl || biz.logoUrl}
@@ -204,11 +214,22 @@ export const StoresPage: React.FC = () => {
                         <Heart className={`w-3.5 h-3.5 sm:w-4 sm:h-4 ${isFav ? 'text-rose-500 fill-rose-500' : 'text-white'}`} />
                       </button>
 
-                      {/* Plan Badge */}
+                      {/* VIP / Founder Seal Badge */}
                       <div className="absolute bottom-2 left-2">
-                        <span className="text-[9px] sm:text-[10px] font-black uppercase tracking-wider px-2 py-0.5 rounded-md bg-blue-600/90 text-white backdrop-blur-xs">
-                          {getPlanBadge(biz.planId)}
-                        </span>
+                        {founder ? (
+                          <span className="inline-flex items-center gap-1 text-[9px] sm:text-[10px] font-black uppercase tracking-wider px-2 py-0.5 rounded-md bg-gradient-to-r from-amber-500 to-orange-600 text-white shadow-xs">
+                            <Award className="w-3 h-3" />
+                            Sócio Fundador VIP
+                          </span>
+                        ) : (
+                          <span
+                            className={`text-[9px] sm:text-[10px] font-black uppercase tracking-wider px-2 py-0.5 rounded-md text-white backdrop-blur-xs ${
+                              vip ? 'bg-blue-600/95' : 'bg-slate-800/85'
+                            }`}
+                          >
+                            {plan?.badge || 'Padrão'}
+                          </span>
+                        )}
                       </div>
                     </div>
 
@@ -254,7 +275,7 @@ export const StoresPage: React.FC = () => {
                   {/* Actions Bar */}
                   <div className="p-2.5 sm:p-4 pt-0">
                     <button
-                      onClick={(e) => handleWhatsAppClick(e, biz.whatsapp, biz.name)}
+                      onClick={(e) => handleWhatsAppClick(e, biz.id, biz.whatsapp, biz.name)}
                       className="w-full flex items-center justify-center gap-1.5 py-1.5 sm:py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-[11px] sm:text-xs font-bold transition shadow-xs cursor-pointer"
                     >
                       <MessageCircle className="w-3.5 h-3.5" />

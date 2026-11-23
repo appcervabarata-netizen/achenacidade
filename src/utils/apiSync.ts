@@ -13,6 +13,7 @@ import type {
   PaymentTransaction,
   Plan,
   PlanDiscountConfig,
+  PlanInvite,
   Product,
   Service,
   SessionConfig,
@@ -646,12 +647,86 @@ export function deleteEntityInDb(resource: string, id: string): Promise<ApiMutat
   );
 }
 
+export function syncCollectionToDb(collection: string, items: unknown[]): Promise<ApiMutationResult> {
+  return sendJsonMutation(`/api/sync/${encodeURIComponent(collection)}`, 'PUT', { items });
+}
+
 export function saveSettingToDb(key: string, value: unknown): Promise<ApiMutationResult> {
   return sendJsonMutation(`/api/settings/${encodeURIComponent(key)}`, 'PUT', { value });
 }
 
 export function recordBannerClickInDb(id: string): Promise<ApiMutationResult> {
   return sendJsonMutation(`/api/banners/${encodeURIComponent(id)}/click`, 'POST');
+}
+
+export async function trackBusinessMetricViaApi(
+  businessId: string,
+  eventType: 'view' | 'whatsapp_click' | 'showcase_click'
+): Promise<void> {
+  if (!businessId) return;
+  try {
+    await fetch('/api/metrics/track', {
+      method: 'POST',
+      keepalive: true,
+      cache: 'no-store',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ businessId, eventType }),
+    });
+  } catch {
+    // Ignore transient network errors during metric tracking
+  }
+}
+
+export async function fetchBusinessMetricsViaApi(businessId: string): Promise<{
+  ok: boolean;
+  databaseEnabled: boolean;
+  metrics?: {
+    viewsTotal: number;
+    whatsappClicks: number;
+    showcaseClicks: number;
+    conversionRate: string;
+    daily: Array<{
+      date: string;
+      label: string;
+      views: number;
+      whatsappClicks: number;
+      showcaseClicks: number;
+    }>;
+  };
+}> {
+  if (!businessId) return { ok: false, databaseEnabled: false };
+  try {
+    const res = await fetch(`/api/metrics/${encodeURIComponent(businessId)}`, {
+      method: 'GET',
+      cache: 'no-store',
+      headers: { Accept: 'application/json' },
+    });
+    if (!res.ok) return { ok: false, databaseEnabled: false };
+    const data = (await res.json()) as {
+      success?: boolean;
+      databaseEnabled?: boolean;
+      metrics?: {
+        viewsTotal: number;
+        whatsappClicks: number;
+        showcaseClicks: number;
+        conversionRate: string;
+        daily: Array<{
+          date: string;
+          label: string;
+          views: number;
+          whatsappClicks: number;
+          showcaseClicks: number;
+        }>;
+      };
+    };
+    return {
+      ok: Boolean(data.success && data.metrics),
+      databaseEnabled: Boolean(data.databaseEnabled),
+      metrics: data.metrics,
+    };
+  } catch {
+    return { ok: false, databaseEnabled: false };
+  }
 }
 
 export async function uploadImageToServer(
@@ -671,3 +746,211 @@ export async function uploadImageToServer(
     return null;
   }
 }
+
+export async function fetchPlanInvitesViaApi(
+  token: string
+): Promise<{ success: boolean; databaseEnabled?: boolean; invites?: PlanInvite[]; error?: string }> {
+  if (!token) return { success: false, error: 'Sessão administrativa ausente.' };
+  try {
+    const res = await fetch('/api/plan-invites', {
+      method: 'GET',
+      cache: 'no-store',
+      headers: {
+        Authorization: `Bearer ${token}`,
+        Accept: 'application/json',
+      },
+    });
+    const data = (await res.json()) as {
+      success?: boolean;
+      databaseEnabled?: boolean;
+      invites?: PlanInvite[];
+      error?: string;
+    };
+    if (!res.ok || !data.success) {
+      return { success: false, error: data.error || 'Não foi possível carregar os convites.' };
+    }
+    return { success: true, databaseEnabled: data.databaseEnabled, invites: data.invites || [] };
+  } catch (err) {
+    return {
+      success: false,
+      error: err instanceof Error ? err.message : 'Erro de rede ao consultar convites.',
+    };
+  }
+}
+
+export async function createPlanInviteViaApi(
+  token: string,
+  params: {
+    code?: string;
+    planId?: string;
+    maxUses?: number;
+    recipientHint?: string;
+    expiresAt?: string;
+  }
+): Promise<{ success: boolean; databaseEnabled?: boolean; invite?: PlanInvite; error?: string }> {
+  if (!token) return { success: false, error: 'Sessão administrativa ausente.' };
+  try {
+    const res = await fetch('/api/plan-invites', {
+      method: 'POST',
+      cache: 'no-store',
+      headers: {
+        Authorization: `Bearer ${token}`,
+        'Content-Type': 'application/json',
+        Accept: 'application/json',
+      },
+      body: JSON.stringify(params),
+    });
+    const data = (await res.json()) as {
+      success?: boolean;
+      databaseEnabled?: boolean;
+      invite?: PlanInvite;
+      error?: string;
+    };
+    if (!res.ok || !data.success || !data.invite) {
+      return { success: false, error: data.error || 'Erro ao gerar código de convite.' };
+    }
+    return { success: true, databaseEnabled: data.databaseEnabled, invite: data.invite };
+  } catch (err) {
+    return {
+      success: false,
+      error: err instanceof Error ? err.message : 'Erro de rede ao gerar convite.',
+    };
+  }
+}
+
+export async function revokePlanInviteViaApi(
+  token: string,
+  id: string
+): Promise<{ success: boolean; error?: string }> {
+  if (!token) return { success: false, error: 'Sessão administrativa ausente.' };
+  try {
+    const res = await fetch(`/api/plan-invites/${encodeURIComponent(id)}/revoke`, {
+      method: 'POST',
+      cache: 'no-store',
+      headers: {
+        Authorization: `Bearer ${token}`,
+        Accept: 'application/json',
+      },
+    });
+    const data = (await res.json()) as { success?: boolean; error?: string };
+    if (!res.ok || !data.success) {
+      return { success: false, error: data.error || 'Não foi possível revogar o convite.' };
+    }
+    return { success: true };
+  } catch (err) {
+    return {
+      success: false,
+      error: err instanceof Error ? err.message : 'Erro ao revogar convite.',
+    };
+  }
+}
+
+export async function deletePlanInviteViaApi(
+  token: string,
+  id: string
+): Promise<{ success: boolean; error?: string }> {
+  if (!token) return { success: false, error: 'Sessão administrativa ausente.' };
+  try {
+    const res = await fetch(`/api/plan-invites/${encodeURIComponent(id)}`, {
+      method: 'DELETE',
+      cache: 'no-store',
+      headers: {
+        Authorization: `Bearer ${token}`,
+        Accept: 'application/json',
+      },
+    });
+    const data = (await res.json()) as { success?: boolean; error?: string };
+    if (!res.ok || !data.success) {
+      return { success: false, error: data.error || 'Não foi possível excluir o convite.' };
+    }
+    return { success: true };
+  } catch (err) {
+    return {
+      success: false,
+      error: err instanceof Error ? err.message : 'Erro ao excluir convite.',
+    };
+  }
+}
+
+export async function validatePlanInviteViaApi(
+  code: string
+): Promise<{ valid: boolean; invite?: PlanInvite; error?: string }> {
+  try {
+    const res = await fetch('/api/plan-invites/validate', {
+      method: 'POST',
+      cache: 'no-store',
+      headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+      body: JSON.stringify({ code }),
+    });
+    const data = (await res.json()) as {
+      valid?: boolean;
+      invite?: PlanInvite;
+      error?: string;
+    };
+    if (!res.ok || !data.valid) {
+      return {
+        valid: false,
+        invite: data.invite,
+        error: data.error || 'Código de convite inválido ou expirado.',
+      };
+    }
+    return { valid: true, invite: data.invite };
+  } catch (err) {
+    return {
+      valid: false,
+      error: err instanceof Error ? err.message : 'Erro de conexão ao validar convite.',
+    };
+  }
+}
+
+export async function redeemPlanInviteViaApi(
+  token: string,
+  params: { code: string; businessId: string; businessName?: string }
+): Promise<{
+  success: boolean;
+  databaseEnabled?: boolean;
+  planId?: string;
+  planExpiresAt?: string;
+  invite?: PlanInvite;
+  error?: string;
+}> {
+  if (!token) {
+    return { success: false, error: 'Sessão não autenticada para ativar convite.' };
+  }
+  try {
+    const res = await fetch('/api/plan-invites/redeem', {
+      method: 'POST',
+      cache: 'no-store',
+      headers: {
+        Authorization: `Bearer ${token}`,
+        'Content-Type': 'application/json',
+        Accept: 'application/json',
+      },
+      body: JSON.stringify(params),
+    });
+    const data = (await res.json()) as {
+      success?: boolean;
+      databaseEnabled?: boolean;
+      planId?: string;
+      planExpiresAt?: string;
+      invite?: PlanInvite;
+      error?: string;
+    };
+    if (!res.ok || !data.success) {
+      return { success: false, error: data.error || 'Não foi possível ativar o convite.' };
+    }
+    return {
+      success: true,
+      databaseEnabled: data.databaseEnabled,
+      planId: data.planId,
+      planExpiresAt: data.planExpiresAt,
+      invite: data.invite,
+    };
+  } catch (err) {
+    return {
+      success: false,
+      error: err instanceof Error ? err.message : 'Erro de conexão ao resgatar convite.',
+    };
+  }
+}
+

@@ -3,7 +3,13 @@ import { useDirectory } from '../../context/DirectoryContext';
 import { DaySchedule, BillingCycle } from '../../types';
 import { ImageUploadField } from '../common/ImageUploadField';
 import { BillingCycleSelector } from '../common/BillingCycleSelector';
-import { calculatePlanPricing, formatBRL } from '../../utils/planPricing';
+import {
+  calculatePlanPricing,
+  formatBRL,
+  isFounderPlan,
+  isInviteTrialPlan,
+  isLifetimePlan,
+} from '../../utils/planPricing';
 import {
   ArrowLeft,
   Building2,
@@ -25,6 +31,8 @@ import {
   Plus,
   ShieldCheck,
   Sparkles,
+  Ticket,
+  Crown,
 } from 'lucide-react';
 
 const initialWeeklySchedule: DaySchedule[] = [
@@ -53,15 +61,27 @@ export const RegisterStoreScreen: React.FC = () => {
     sendVerificationCodeEmail,
     sendTemplatedEmail,
     openCheckoutPage,
+    activeInviteCode,
+    validatedInvite,
+    inviteValidationError,
+    validateInviteCode,
+    clearActiveInvite,
   } = useDirectory();
 
   const activeCities = cities.filter((c) => c.isActive);
+  const selectablePlans = plans.filter(
+    (p) => !p.isInviteOnly || (validatedInvite && p.id === validatedInvite.planId)
+  );
 
   const [form, setForm] = useState({
     name: '',
     cityId: activeCities[0]?.id || cities[0]?.id || '',
     categoryId: categories[0]?.id || '',
-    planId: preselectedPlanId || plans[0]?.id || '',
+    planId:
+      preselectedPlanId &&
+      plans.some((p) => p.id === preselectedPlanId && (!p.isInviteOnly || validatedInvite?.planId === p.id))
+        ? preselectedPlanId
+        : plans.find((p) => !p.isInviteOnly)?.id || plans[0]?.id || '',
     description: '',
     phone: '',
     whatsapp: '',
@@ -81,14 +101,29 @@ export const RegisterStoreScreen: React.FC = () => {
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [inviteCodeInput, setInviteCodeInput] = useState(activeInviteCode || '');
+  const [isValidatingInvite, setIsValidatingInvite] = useState(false);
 
   const [billingCycle, setBillingCycle] = useState<BillingCycle>(preselectedBillingCycle || 'monthly');
 
   useEffect(() => {
-    if (preselectedPlanId && plans.some((p) => p.id === preselectedPlanId)) {
+    if (activeInviteCode && !inviteCodeInput) {
+      setInviteCodeInput(activeInviteCode);
+    }
+  }, [activeInviteCode]);
+
+  useEffect(() => {
+    if (validatedInvite?.planId && plans.some((p) => p.id === validatedInvite.planId)) {
+      setForm((prev) => ({ ...prev, planId: validatedInvite.planId }));
+    } else if (
+      preselectedPlanId &&
+      plans.some(
+        (p) => p.id === preselectedPlanId && (!p.isInviteOnly || validatedInvite?.planId === p.id)
+      )
+    ) {
       setForm((prev) => ({ ...prev, planId: preselectedPlanId }));
     }
-  }, [preselectedPlanId, plans]);
+  }, [preselectedPlanId, validatedInvite, plans]);
 
   useEffect(() => {
     setBillingCycle(preselectedBillingCycle);
@@ -154,10 +189,25 @@ export const RegisterStoreScreen: React.FC = () => {
         .slice(0, 3)
         .join(' | ');
 
-      const chosenPlan = plans.find((p) => p.id === form.planId) || plans[0];
-      const freeFallbackPlan = plans.find((p) => p.priceMonthly === 0) || plans[0];
-      const isPaidPlan = (chosenPlan?.priceMonthly || 0) > 0;
+      const chosenPlan =
+        selectablePlans.find((p) => p.id === form.planId) ||
+        selectablePlans[0] ||
+        plans[0];
+      const freeFallbackPlan = plans.find((p) => p.priceMonthly === 0 && !p.isInviteOnly) || plans[0];
       const chosenPricing = calculatePlanPricing(chosenPlan, billingCycle, planDiscountConfig);
+      const isPaidPlan = chosenPricing.isPaid;
+      const isInviteSelected =
+        isInviteTrialPlan(chosenPlan) && Boolean(validatedInvite && (activeInviteCode || validatedInvite.code));
+      const appliedInviteCode = isInviteSelected
+        ? (activeInviteCode || validatedInvite?.code || '').trim().toUpperCase()
+        : undefined;
+
+      if (chosenPlan.isInviteOnly && !appliedInviteCode) {
+        setErrorMsg('O plano de convite exige um código de convite válido emitido pelo administrador.');
+        setIsSubmitting(false);
+        return;
+      }
+
       const paymentToken = isPaidPlan
         ? `pay-${Math.random().toString(36).slice(2, 10)}${Date.now().toString(36)}`
         : undefined;
@@ -187,7 +237,9 @@ export const RegisterStoreScreen: React.FC = () => {
         paymentStatus: isPaidPlan ? ('pending_payment' as const) : ('active' as const),
         pendingPlanId: isPaidPlan ? chosenPlan.id : undefined,
         pendingBillingCycle: isPaidPlan ? billingCycle : undefined,
-        billingCycle: isPaidPlan ? 'monthly' : billingCycle,
+        billingCycle: isPaidPlan || chosenPricing.isLifetime || isInviteSelected ? 'monthly' : billingCycle,
+        inviteCode: appliedInviteCode,
+        subscriptionStatus: 'active' as const,
         paymentToken,
       };
 
@@ -220,12 +272,13 @@ export const RegisterStoreScreen: React.FC = () => {
           billingCycle
         )}&token=${encodeURIComponent(paymentToken || '')}`;
 
-        const planLabel =
-          chosenPricing.months > 1
-            ? `${chosenPlan.name} (${chosenPricing.shortLabel}${
-                chosenPricing.discountPercent > 0 ? ` · ${chosenPricing.discountPercent}% OFF` : ''
-              })`
-            : chosenPlan.name;
+        const planLabel = chosenPricing.isLifetime
+          ? `${chosenPlan.name} (Vitalício · Pagamento Único)`
+          : chosenPricing.months > 1
+          ? `${chosenPlan.name} (${chosenPricing.shortLabel}${
+              chosenPricing.discountPercent > 0 ? ` · ${chosenPricing.discountPercent}% OFF` : ''
+            })`
+          : chosenPlan.name;
 
         await sendTemplatedEmail({
           key: 'payment_link',
@@ -248,7 +301,9 @@ export const RegisterStoreScreen: React.FC = () => {
           to: form.email.trim(),
           variables: {
             nome_empresa: newBizData.name,
-            nome_plano: chosenPlan?.name || 'Plano Gratuito',
+            nome_plano: isInviteSelected
+              ? `${chosenPlan?.name || 'Convite Premium 6 Meses'} (6 meses grátis)`
+              : chosenPlan?.name || 'Plano Gratuito',
             email_login: form.email.trim(),
             link_painel: portalLink,
             cidade: cityName,
@@ -266,9 +321,24 @@ export const RegisterStoreScreen: React.FC = () => {
     }
   };
 
-  const selectedPlan = plans.find((p) => p.id === form.planId) || plans[0];
+  const selectedPlan =
+    selectablePlans.find((p) => p.id === form.planId) ||
+    selectablePlans[0] ||
+    plans[0];
   const selectedPricing = calculatePlanPricing(selectedPlan, billingCycle, planDiscountConfig);
-  const isPaidSelectedPlan = !selectedPricing.isFree;
+  const isPaidSelectedPlan = selectedPricing.isPaid;
+  const isLifetimeSelectedPlan = isLifetimePlan(selectedPlan);
+  const isInviteSelectedPlan = isInviteTrialPlan(selectedPlan);
+
+  const handleApplyInviteInForm = async () => {
+    if (!inviteCodeInput.trim()) return;
+    setIsValidatingInvite(true);
+    const res = await validateInviteCode(inviteCodeInput);
+    setIsValidatingInvite(false);
+    if (res.valid && res.invite) {
+      setForm((prev) => ({ ...prev, planId: res.invite!.planId || 'plan-invite-premium-6m' }));
+    }
+  };
 
   return (
     <div className="min-h-screen bg-slate-50 dark:bg-slate-950 flex flex-col transition-colors pb-24 md:pb-16">
@@ -326,54 +396,139 @@ export const RegisterStoreScreen: React.FC = () => {
         <form onSubmit={handleSubmit} className="space-y-8">
           {/* 1. Escolha do Plano e Ciclo */}
           <div className="p-6 rounded-3xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-sm space-y-4">
-            <div className="flex items-center justify-between border-b border-slate-100 dark:border-slate-800 pb-3">
+            <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-100 dark:border-slate-800 pb-3">
               <div className="flex items-center gap-2">
                 <CreditCard className="w-5 h-5 text-blue-600" />
                 <h2 className="text-sm sm:text-base font-bold text-slate-900 dark:text-white">
                   1. Escolha seu Plano & Ciclo de Pagamento
                 </h2>
               </div>
-              <span className="text-[11px] text-slate-500">Descontos automáticos multi-anuais</span>
+              <span className="text-[11px] text-slate-500">Vitalício ou recorrente</span>
             </div>
 
-            <div className="space-y-2">
-              <p className="text-xs font-semibold text-slate-600 dark:text-slate-300">
-                Periodicidade do Plano:
+            {/* Invite Code Box */}
+            <div className="p-3.5 rounded-2xl bg-slate-50 dark:bg-slate-800/70 border border-slate-200 dark:border-slate-700 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+              <div className="flex items-center gap-2 text-xs text-slate-700 dark:text-slate-200">
+                <Ticket className="w-4 h-4 text-blue-600 shrink-0" />
+                <span>
+                  {validatedInvite ? (
+                    <>
+                      Convite <strong className="font-mono text-emerald-700 dark:text-emerald-400">{validatedInvite.code}</strong> ativo — <strong>6 meses grátis</strong> do Plano Premium liberado!
+                    </>
+                  ) : (
+                    'Tem um código de convite do administrador?'
+                  )}
+                </span>
+              </div>
+              <div className="flex items-center gap-2">
+                <input
+                  type="text"
+                  value={inviteCodeInput}
+                  onChange={(e) => setInviteCodeInput(e.target.value.toUpperCase())}
+                  placeholder="Código de convite"
+                  className="px-3 py-1.5 rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-900 text-xs font-mono uppercase text-slate-900 dark:text-white w-40"
+                />
+                <button
+                  type="button"
+                  onClick={handleApplyInviteInForm}
+                  disabled={isValidatingInvite}
+                  className="px-3 py-1.5 rounded-lg bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold transition cursor-pointer whitespace-nowrap shrink-0"
+                >
+                  {isValidatingInvite ? 'Validando...' : 'Aplicar'}
+                </button>
+                {validatedInvite && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      clearActiveInvite();
+                      setInviteCodeInput('');
+                      setForm((prev) => ({
+                        ...prev,
+                        planId: plans.find((p) => !p.isInviteOnly)?.id || 'plan-free',
+                      }));
+                    }}
+                    className="text-[11px] text-slate-500 hover:text-rose-600 cursor-pointer"
+                  >
+                    Remover
+                  </button>
+                )}
+              </div>
+            </div>
+
+            {inviteValidationError && (
+              <p className="text-xs text-rose-600 dark:text-rose-400 flex items-center gap-1.5">
+                <AlertCircle className="w-3.5 h-3.5 shrink-0" />
+                <span>{inviteValidationError}</span>
               </p>
-              <BillingCycleSelector
-                value={billingCycle}
-                onChange={(cycle) => {
-                  setBillingCycle(cycle);
-                  setPreselectedBillingCycle(cycle);
-                }}
-                globalDiscounts={planDiscountConfig}
-                compact
-              />
-            </div>
+            )}
 
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-              {plans.map((p) => {
+            {!isLifetimeSelectedPlan && !isInviteSelectedPlan && (
+              <div className="space-y-2">
+                <p className="text-xs font-semibold text-slate-600 dark:text-slate-300">
+                  Periodicidade do Plano Recorrente:
+                </p>
+                <BillingCycleSelector
+                  value={billingCycle}
+                  onChange={(cycle) => {
+                    setBillingCycle(cycle);
+                    setPreselectedBillingCycle(cycle);
+                  }}
+                  globalDiscounts={planDiscountConfig}
+                  compact
+                />
+              </div>
+            )}
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+              {selectablePlans.map((p) => {
                 const isSelected = form.planId === p.id;
                 const pricing = calculatePlanPricing(p, billingCycle, planDiscountConfig);
+                const isLifetime = isLifetimePlan(p);
+                const isFounder = isFounderPlan(p);
+                const isInvitePlan = isInviteTrialPlan(p);
                 return (
                   <div
                     key={p.id}
                     onClick={() => setForm({ ...form, planId: p.id })}
                     className={`p-4 rounded-2xl border transition cursor-pointer flex flex-col justify-between ${
                       isSelected
-                        ? 'border-blue-600 bg-blue-50/50 dark:bg-blue-950/40 ring-2 ring-blue-500/20 shadow-sm'
+                        ? isFounder
+                          ? 'border-amber-500 bg-amber-50/60 dark:bg-amber-950/30 ring-2 ring-amber-400/30 shadow-sm'
+                          : 'border-blue-600 bg-blue-50/50 dark:bg-blue-950/40 ring-2 ring-blue-500/20 shadow-sm'
                         : 'border-slate-200 dark:border-slate-800 hover:border-slate-300'
                     }`}
                   >
                     <div>
-                      <div className="flex items-center justify-between">
-                        <span className="font-bold text-xs sm:text-sm text-slate-900 dark:text-white">{p.name}</span>
-                        {isSelected && <CheckCircle className="w-4 h-4 text-blue-600" />}
+                      <div className="flex items-center justify-between gap-1">
+                        <span className="font-bold text-xs sm:text-sm text-slate-900 dark:text-white flex items-center gap-1">
+                          {isFounder && <Crown className="w-3.5 h-3.5 text-amber-600 shrink-0" />}
+                          {p.name}
+                        </span>
+                        {isSelected && <CheckCircle className="w-4 h-4 text-blue-600 shrink-0" />}
                       </div>
 
-                      {pricing.isFree ? (
+                      {isInvitePlan ? (
+                        <div className="mt-2">
+                          <div className="text-lg font-black text-emerald-700 dark:text-emerald-400 font-mono">
+                            6 Meses Grátis
+                          </div>
+                          <p className="text-[11px] text-slate-500">Convite VIP Exclusivo</p>
+                        </div>
+                      ) : pricing.isFree ? (
                         <div className="mt-2 text-lg font-black text-slate-900 dark:text-white font-mono">
                           Grátis
+                        </div>
+                      ) : isLifetime ? (
+                        <div className="mt-2 space-y-0.5">
+                          <div className="text-lg font-black text-slate-900 dark:text-white font-mono tabular-nums">
+                            {formatBRL(pricing.totalAmount)}
+                            <span className="text-[11px] font-semibold text-amber-700 dark:text-amber-400 ml-1">
+                              único
+                            </span>
+                          </div>
+                          <p className="text-[11px] font-bold text-amber-700 dark:text-amber-400">
+                            Vitalício · Sem mensalidade
+                          </p>
                         </div>
                       ) : (
                         <div className="mt-2 space-y-0.5">
@@ -403,7 +558,7 @@ export const RegisterStoreScreen: React.FC = () => {
                         Até {p.productLimit} produtos/serviços
                       </div>
                       <div className="text-[11px] text-slate-500 tabular-nums">
-                        Até {p.businessLimit || 1} {p.businessLimit === 1 ? 'loja' : 'lojas'}
+                        Até {p.businessLimit || 1} {(p.businessLimit || 1) === 1 ? 'loja' : 'lojas'}
                       </div>
                     </div>
                   </div>
@@ -777,13 +932,19 @@ export const RegisterStoreScreen: React.FC = () => {
                 <Sparkles className="w-4 h-4" />
                 <span>
                   {isPaidSelectedPlan
-                    ? `${selectedPlan?.name} · ${selectedPricing.label} · ${formatBRL(
-                        selectedPricing.totalAmount
-                      )}${
-                        selectedPricing.discountPercent > 0
-                          ? ` (${selectedPricing.discountPercent}% OFF)`
-                          : ''
-                      }`
+                    ? isLifetimeSelectedPlan
+                      ? `${selectedPlan?.name} · Vitalício · Pagamento Único de ${formatBRL(
+                          selectedPricing.totalAmount
+                        )}`
+                      : `${selectedPlan?.name} · ${selectedPricing.label} · ${formatBRL(
+                          selectedPricing.totalAmount
+                        )}${
+                          selectedPricing.discountPercent > 0
+                            ? ` (${selectedPricing.discountPercent}% OFF)`
+                            : ''
+                        }`
+                    : isInviteSelectedPlan
+                    ? `Ativação Imediata · Convite VIP Premium (6 Meses Grátis)`
                     : 'Ativação Imediata · Plano Gratuito'}
                 </span>
               </div>
@@ -797,8 +958,10 @@ export const RegisterStoreScreen: React.FC = () => {
                   ? `Ao finalizar, sua empresa será cadastrada como Pendente de Pagamento, enviaremos o código de validação para o seu e-mail e você seguirá para pagar ${formatBRL(
                       selectedPricing.totalAmount
                     )} (PIX ou Cartão${
-                      selectedPricing.months > 1 ? ' em até 12x' : ''
+                      isLifetimeSelectedPlan || selectedPricing.months > 1 ? ' em até 12x' : ''
                     }).`
+                  : isInviteSelectedPlan
+                  ? 'Ao finalizar, seu código de convite será ativado automaticamente, liberando 6 meses grátis com todos os benefícios do Plano Premium Ouro!'
                   : 'Ao clicar abaixo, sua empresa será cadastrada, enviaremos o código de validação e as boas-vindas por e-mail e você acessará o painel da sua loja imediatamente.'}
               </p>
             </div>

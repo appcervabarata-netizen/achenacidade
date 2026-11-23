@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { useDirectory } from '../../context/DirectoryContext';
 import { CountdownTimer } from '../common/CountdownTimer';
+import { isFounderPlan, isLifetimePlan } from '../../utils/planPricing';
 import heroLaunchImg from '../../assets/images/hero_launch_merchants_1794903735502.jpg';
 import {
   ArrowRight,
@@ -422,72 +423,120 @@ export const LaunchPage: React.FC<LaunchPageProps> = ({ isPreview = false, onExi
           </p>
         </div>
 
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-6 max-w-6xl mx-auto">
-          {plans.map((plan) => {
-            const isFree = plan.priceMonthly === 0;
-            return (
-              <div
-                key={plan.id}
-                className={`rounded-2xl p-6 sm:p-7 flex flex-col justify-between bg-white dark:bg-slate-900 ${
-                  plan.highlighted
-                    ? 'border-2 border-orange-500 shadow-lg shadow-orange-500/10'
-                    : 'border border-slate-200 dark:border-slate-800'
-                }`}
-              >
-                <div>
-                  <div className="flex items-center justify-between gap-2 text-xs text-slate-500 dark:text-slate-400 mb-3">
-                    <span className="font-bold text-blue-700 dark:text-blue-400">{plan.badge}</span>
-                    <span className="flex items-center gap-1 font-mono tabular-nums">
-                      <Package className="w-3.5 h-3.5 text-orange-500" />
-                      Até {plan.productLimit} anúncios
-                    </span>
-                  </div>
-
-                  <h3 className="text-xl font-bold text-slate-900 dark:text-white font-display">
-                    {plan.name}
-                  </h3>
-
-                  <div className="mt-3 mb-5 flex items-baseline gap-1">
-                    {isFree ? (
-                      <span className="text-3xl font-extrabold text-slate-900 dark:text-white">
-                        Grátis
-                      </span>
-                    ) : (
-                      <>
-                        <span className="text-sm font-semibold text-slate-500">R$</span>
-                        <span className="text-3xl font-extrabold font-mono tabular-nums text-slate-900 dark:text-white">
-                          {plan.priceMonthly.toFixed(2).replace('.', ',')}
+        {(() => {
+          const publicLaunchPlans = plans.filter((p) => !p.isInviteOnly);
+          return (
+            <div
+              className={`grid grid-cols-1 md:grid-cols-2 ${
+                publicLaunchPlans.length >= 4 ? 'lg:grid-cols-4' : 'lg:grid-cols-3'
+              } gap-6 max-w-7xl mx-auto`}
+            >
+              {publicLaunchPlans.map((plan) => {
+                const isLifetime = isLifetimePlan(plan);
+                const isFounder = isFounderPlan(plan);
+                const amount = isLifetime ? Number(plan.priceOnce || 0) : plan.priceMonthly;
+                const isFree = amount === 0;
+                return (
+                  <div
+                    key={plan.id}
+                    className={`rounded-2xl p-6 flex flex-col justify-between bg-white dark:bg-slate-900 ${
+                      isFounder
+                        ? 'border-2 border-amber-500 shadow-lg shadow-amber-500/10'
+                        : plan.highlighted
+                        ? 'border-2 border-orange-500 shadow-lg shadow-orange-500/10'
+                        : 'border border-slate-200 dark:border-slate-800'
+                    }`}
+                  >
+                    <div>
+                      <div className="flex items-center justify-between gap-2 text-xs text-slate-500 dark:text-slate-400 mb-3">
+                        <span
+                          className={`font-bold ${
+                            isFounder
+                              ? 'text-amber-700 dark:text-amber-400'
+                              : 'text-blue-700 dark:text-blue-400'
+                          }`}
+                        >
+                          {plan.badge}
                         </span>
-                        <span className="text-xs text-slate-500">/mês</span>
-                      </>
-                    )}
+                        <span className="flex items-center gap-1 font-mono tabular-nums">
+                          <Package className="w-3.5 h-3.5 text-orange-500" />
+                          Até {plan.productLimit} anúncios
+                        </span>
+                      </div>
+
+                      <h3 className="text-xl font-bold text-slate-900 dark:text-white font-display">
+                        {plan.name}
+                      </h3>
+
+                      <div className="mt-3 mb-5">
+                        {isFree ? (
+                          <span className="text-3xl font-extrabold text-slate-900 dark:text-white">
+                            Grátis
+                          </span>
+                        ) : (
+                          <div>
+                            <div className="flex items-baseline gap-1">
+                              <span className="text-sm font-semibold text-slate-500">R$</span>
+                              <span className="text-3xl font-extrabold font-mono tabular-nums text-slate-900 dark:text-white">
+                                {amount.toFixed(2).replace('.', ',')}
+                              </span>
+                              <span className="text-xs text-slate-500">
+                                {isLifetime ? 'único' : '/mês'}
+                              </span>
+                            </div>
+                            {isLifetime && (
+                              <p className="text-[11px] font-bold text-amber-700 dark:text-amber-400 mt-0.5">
+                                Pagamento único · Vitalício · {plan.businessLimit || 1} loja
+                              </p>
+                            )}
+                          </div>
+                        )}
+                      </div>
+
+                      <ul className="space-y-2.5 mb-7 text-xs sm:text-sm text-slate-600 dark:text-slate-300">
+                        {plan.features.map((feature, idx) => (
+                          <li key={idx} className="flex items-start gap-2">
+                            <Check className="w-4 h-4 text-emerald-500 shrink-0 mt-0.5" />
+                            <span>{feature}</span>
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+
+                    <div className="space-y-2.5">
+                      <button
+                        onClick={() => handleChoosePlanDirect(plan.id)}
+                        className={`w-full py-3.5 px-4 rounded-xl text-xs sm:text-sm font-extrabold flex items-center justify-center gap-2 transition cursor-pointer ${
+                          isFounder
+                            ? 'bg-gradient-to-r from-amber-600 to-orange-600 hover:from-amber-700 hover:to-orange-700 text-white shadow-md shadow-amber-500/20'
+                            : plan.highlighted
+                            ? 'bg-orange-600 hover:bg-orange-700 text-white shadow-md shadow-orange-600/20'
+                            : 'bg-blue-700 hover:bg-blue-800 text-white'
+                        }`}
+                      >
+                        <span>Escolher {plan.name}</span>
+                        <ArrowRight className="w-4 h-4 shrink-0" />
+                      </button>
+                      {isFounder && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            if (isPreview) setAdminPreviewMode('none');
+                            setCurrentView('founder_sales');
+                            window.scrollTo({ top: 0, behavior: 'smooth' });
+                          }}
+                          className="w-full text-center text-xs font-semibold text-amber-700 dark:text-amber-400 hover:underline cursor-pointer"
+                        >
+                          Ver página de benefícios Sócio Fundador
+                        </button>
+                      )}
+                    </div>
                   </div>
-
-                  <ul className="space-y-2.5 mb-7 text-xs sm:text-sm text-slate-600 dark:text-slate-300">
-                    {plan.features.map((feature, idx) => (
-                      <li key={idx} className="flex items-start gap-2">
-                        <Check className="w-4 h-4 text-emerald-500 shrink-0 mt-0.5" />
-                        <span>{feature}</span>
-                      </li>
-                    ))}
-                  </ul>
-                </div>
-
-                <button
-                  onClick={() => handleChoosePlanDirect(plan.id)}
-                  className={`w-full py-3.5 px-4 rounded-xl text-xs sm:text-sm font-extrabold flex items-center justify-center gap-2 transition cursor-pointer ${
-                    plan.highlighted
-                      ? 'bg-orange-600 hover:bg-orange-700 text-white shadow-md shadow-orange-600/20'
-                      : 'bg-blue-700 hover:bg-blue-800 text-white'
-                  }`}
-                >
-                  <span>Escolher {plan.name} e Cadastrar</span>
-                  <ArrowRight className="w-4 h-4" />
-                </button>
-              </div>
-            );
-          })}
-        </div>
+                );
+              })}
+            </div>
+          );
+        })()}
 
         <div className="mt-8 text-center">
           <button

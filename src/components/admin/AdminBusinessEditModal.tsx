@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { Business, City, Category, Plan, DaySchedule } from '../../types';
 import { ImageUploadField } from '../common/ImageUploadField';
 import { cloneWeeklySchedule, compileWeeklyScheduleSummary } from '../../utils/scheduleHelpers';
+import { formatBRL, isInviteTrialPlan, isLifetimePlan } from '../../utils/planPricing';
 import {
   X,
   Building2,
@@ -351,7 +352,15 @@ export const AdminBusinessEditModal: React.FC<AdminBusinessEditModalProps> = ({
                     >
                       {plans.map((p) => (
                         <option key={p.id} value={p.id}>
-                          {p.name} - R$ {p.priceMonthly.toFixed(2)}/mês (Até {p.productLimit} produtos)
+                          {p.name} -{' '}
+                          {isLifetimePlan(p)
+                            ? `${formatBRL(p.priceOnce ?? 500)} único (Vitalício)`
+                            : isInviteTrialPlan(p)
+                            ? `${p.trialMonths || 6} meses grátis (Convite)`
+                            : p.priceMonthly === 0
+                            ? 'Grátis'
+                            : `${formatBRL(p.priceMonthly)}/mês`}{' '}
+                          (Até {p.productLimit} itens)
                         </option>
                       ))}
                     </select>

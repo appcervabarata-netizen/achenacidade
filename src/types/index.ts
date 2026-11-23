@@ -32,18 +32,28 @@ export interface PlanDiscountConfig {
   triennial: number;
 }
 
+export type PlanBillingType = 'recurring' | 'lifetime' | 'invite_trial';
+export type PlanVipTier = 'none' | 'pro' | 'premium' | 'founder';
+
 export interface Plan {
   id: string;
   name: string;
   priceMonthly: number; // in BRL, e.g. 0, 49.90, 99.90
-  productLimit: number; // Max products allowed for this plan
+  priceOnce?: number; // one-time price in BRL for lifetime plans, e.g. 500
+  billingType?: PlanBillingType; // 'recurring' (default), 'lifetime', 'invite_trial'
+  trialMonths?: number; // e.g. 6 for invite trial plans
+  isInviteOnly?: boolean; // when true, hidden from public plans unless unlocked by invite code/link
+  vipTier?: PlanVipTier; // 'none' | 'pro' | 'premium' | 'founder'
+  productLimit: number; // Max products/services combined allowed for this plan per store
   businessLimit: number; // Max stores/businesses allowed per user account
-  badge: string; // e.g. "Gratuito", "Profissional", "Destaque Ouro"
+  badge: string; // e.g. "Gratuito", "Profissional", "Destaque Ouro", "Sócio Fundador VIP"
   features: string[];
   highlighted?: boolean;
   color: string;
   useCustomDiscounts?: boolean;
   cycleDiscounts?: PlanCycleDiscounts;
+  sortOrder?: number; // Display ordering controlled by Admin
+  showOnHome?: boolean; // Whether plan appears in Home PlansSection
 }
 
 export interface DaySchedule {
@@ -84,6 +94,8 @@ export interface Business {
   pendingBillingCycle?: BillingCycle;
   billingCycle?: BillingCycle;
   planExpiresAt?: string;
+  inviteCode?: string;
+  subscriptionStatus?: 'active' | 'cancelled';
   paymentToken?: string;
   createdAt: string;
 }
@@ -180,6 +192,7 @@ export type AppView =
   | 'products'
   | 'services'
   | 'plans'
+  | 'founder_sales'
   | 'admin'
   | 'admin_login'
   | 'business_portal'
@@ -380,4 +393,39 @@ export interface AppGeneralConfig {
   twitterHandle: string;
   googleSiteVerification: string;
   robotsIndex: boolean;
+}
+
+export type BusinessMetricEventType = 'view' | 'whatsapp_click' | 'showcase_click';
+
+export interface DailyMetricPoint {
+  date: string; // YYYY-MM-DD
+  label: string; // Ex: Seg, Ter, Qua
+  views: number;
+  whatsappClicks: number;
+  showcaseClicks: number;
+}
+
+export interface BusinessMetricsSummary {
+  viewsTotal: number;
+  whatsappClicks: number;
+  showcaseClicks: number;
+  conversionRate: string;
+  daily: DailyMetricPoint[];
+}
+
+export type PlanInviteStatus = 'active' | 'used' | 'revoked' | 'expired';
+
+export interface PlanInvite {
+  id: string;
+  code: string;
+  planId: string;
+  maxUses: number;
+  usedCount: number;
+  recipientHint?: string;
+  expiresAt?: string; // YYYY-MM-DD optional expiry of the invite link itself
+  status: PlanInviteStatus;
+  redeemedByBusinessId?: string;
+  redeemedByBusinessName?: string;
+  redeemedAt?: string;
+  createdAt: string;
 }

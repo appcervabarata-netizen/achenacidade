@@ -42,8 +42,12 @@ import {
   Mail,
   Database,
   Clock,
+  Gift,
+  Award,
+  Link2,
+  Ban,
 } from 'lucide-react';
-import { AdminTheme, Business, Plan, PlanCycleDiscounts } from '../../types';
+import { AdminTheme, Business, Plan, PlanBillingType, PlanCycleDiscounts, PlanVipTier } from '../../types';
 import { AdminBusinessEditModal } from './AdminBusinessEditModal';
 import { SocialCreativesStudio } from './SocialCreativesStudio';
 import { AdminSiteModeTab } from './AdminSiteModeTab';
@@ -58,6 +62,11 @@ import {
   calculatePlanPricing,
   clampDiscountPercent,
   formatBRL,
+  getPlanBillingType,
+  isFounderPlan,
+  isInviteTrialPlan,
+  isLifetimePlan,
+  isPaidPlan,
 } from '../../utils/planPricing';
 
 export const AdminScreen: React.FC = () => {
@@ -76,6 +85,7 @@ export const AdminScreen: React.FC = () => {
     addPlan,
     updatePlan,
     deletePlan,
+    movePlanOrder,
     businesses,
     updateBusiness,
     deleteBusiness,
@@ -104,6 +114,11 @@ export const AdminScreen: React.FC = () => {
     sessionConfig,
     updateSessionConfig,
     renewSession,
+    planInvites,
+    loadPlanInvites,
+    createPlanInvite,
+    revokePlanInvite,
+    deletePlanInvite,
   } = useDirectory();
 
   // Active admin tab
@@ -280,11 +295,17 @@ export const AdminScreen: React.FC = () => {
   const [planForm, setPlanForm] = useState({
     name: '',
     priceMonthly: 0,
+    priceOnce: 0,
+    billingType: 'recurring' as PlanBillingType,
+    trialMonths: 6,
+    isInviteOnly: false,
+    vipTier: 'none' as PlanVipTier,
     productLimit: 5,
     businessLimit: 1,
     badge: 'Popular',
     featuresText: 'Cadastro da empresa\nDivulgação de produtos\nContato WhatsApp',
     highlighted: false,
+    showOnHome: true,
     color: '#1D4ED8',
     useCustomDiscounts: false,
     cycleDiscounts: {
@@ -293,6 +314,15 @@ export const AdminScreen: React.FC = () => {
       triennial: planDiscountConfig.triennial,
     } as PlanCycleDiscounts,
   });
+
+  // Invite generator state (Admin exclusive)
+  const [inviteForm, setInviteForm] = useState({
+    recipientHint: '',
+    code: '',
+    maxUses: 1,
+    expiresAt: '',
+  });
+  const [isCreatingInvite, setIsCreatingInvite] = useState(false);
 
   const [editingPlanId, setEditingPlanId] = useState<string | null>(null);
   const [hgTab, setHgTab] = useState<'sql' | 'config' | 'api' | 'export_sql' | 'htaccess' | 'instructions'>('instructions');
@@ -318,8 +348,10 @@ export const AdminScreen: React.FC = () => {
   const totalServices = services.length;
   const totalCatalogItems = totalProducts + totalServices;
   const monthlyRevenue = businesses.reduce((acc, b) => {
+    if (b.subscriptionStatus === 'cancelled') return acc;
     const p = plans.find((pl) => pl.id === b.planId);
-    return acc + (p ? p.priceMonthly : 0);
+    if (!p || isLifetimePlan(p) || isInviteTrialPlan(p)) return acc;
+    return acc + (p.priceMonthly || 0);
   }, 0);
 
   const handleCopy = (key: string, text: string) => {
@@ -447,6 +479,34 @@ export const AdminScreen: React.FC = () => {
     setTimeout(() => setAdminToast(null), 3500);
   };
 
+  useEffect(() => {
+    if (activeTab === 'plans') {
+      void loadPlanInvites();
+    }
+  }, [activeTab]);
+
+  const handleCreateInvite = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setIsCreatingInvite(true);
+    try {
+      const res = await createPlanInvite({
+        code: inviteForm.code.trim() || undefined,
+        planId: 'plan-invite-premium-6m',
+        maxUses: Math.max(1, Number(inviteForm.maxUses) || 1),
+        recipientHint: inviteForm.recipientHint.trim() || undefined,
+        expiresAt: inviteForm.expiresAt.trim() || undefined,
+      });
+      if (!res.success || !res.invite) {
+        showAdminToast(res.error || 'Não foi possível criar o código de convite.');
+        return;
+      }
+      setInviteForm({ recipientHint: '', code: '', maxUses: 1, expiresAt: '' });
+      showAdminToast(`Convite VIP "${res.invite.code}" criado com sucesso!`);
+    } finally {
+      setIsCreatingInvite(false);
+    }
+  };
+
   const handleSavePlan = (e: React.FormEvent) => {
     e.preventDefault();
     if (!planForm.name) return;
@@ -464,15 +524,27 @@ export const AdminScreen: React.FC = () => {
 
     const payload = {
       name: planForm.name,
-      priceMonthly: Number(planForm.priceMonthly),
+      priceMonthly: planForm.billingType === 'recurring' ? Number(planForm.priceMonthly) : 0,
+      priceOnce: planForm.billingType === 'lifetime' ? Number(planForm.priceOnce) : 0,
+      billingType: planForm.billingType,
+      trialMonths: planForm.billingType === 'invite_trial' ? Math.max(1, Number(planForm.trialMonths) || 6) : 0,
+      isInviteOnly: planForm.billingType === 'invite_trial' ? true : planForm.isInviteOnly,
+      vipTier: planForm.vipTier,
       productLimit: Number(planForm.productLimit),
       businessLimit: Number(planForm.businessLimit || 1),
       badge: planForm.badge,
       features,
       highlighted: planForm.highlighted,
+      showOnHome:
+        planForm.billingType === 'invite_trial' || planForm.isInviteOnly
+          ? false
+          : planForm.showOnHome,
       color: planForm.color,
-      useCustomDiscounts: planForm.useCustomDiscounts,
-      cycleDiscounts: planForm.useCustomDiscounts ? normalizedCycleDiscounts : undefined,
+      useCustomDiscounts: planForm.billingType === 'recurring' ? planForm.useCustomDiscounts : false,
+      cycleDiscounts:
+        planForm.billingType === 'recurring' && planForm.useCustomDiscounts
+          ? normalizedCycleDiscounts
+          : undefined,
     };
 
     if (editingPlanId) {
@@ -488,11 +560,17 @@ export const AdminScreen: React.FC = () => {
     setPlanForm({
       name: '',
       priceMonthly: 0,
+      priceOnce: 0,
+      billingType: 'recurring',
+      trialMonths: 6,
+      isInviteOnly: false,
+      vipTier: 'none',
       productLimit: 5,
       businessLimit: 1,
       badge: 'Popular',
       featuresText: 'Cadastro da empresa\nDivulgação de produtos\nContato WhatsApp',
       highlighted: false,
+      showOnHome: true,
       color: '#1D4ED8',
       useCustomDiscounts: false,
       cycleDiscounts: {
@@ -1409,6 +1487,207 @@ export const AdminScreen: React.FC = () => {
               </div>
             </form>
 
+            {/* Gerador Exclusivo de Códigos e Links de Convite VIP (Premium 6 Meses Grátis) */}
+            <div className="p-5 rounded-2xl bg-white dark:bg-slate-900 border border-indigo-200 dark:border-indigo-900/60 shadow-xs space-y-4">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                <div>
+                  <h4 className="text-xs font-bold text-indigo-700 dark:text-indigo-400 uppercase tracking-wider flex items-center gap-1.5">
+                    <Gift className="w-4 h-4" />
+                    <span>Convites VIP — Plano Premium 6 Meses Grátis</span>
+                  </h4>
+                  <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
+                    Crie códigos e links exclusivos (`/?convite=CODIGO`) para liberar 6 meses gratuitos do Plano Premium. Após 6 meses, o lojista recebe aviso para escolher um plano ou cancelar.
+                  </p>
+                </div>
+                <span className="text-xs font-mono font-bold text-indigo-700 dark:text-indigo-300 tabular-nums shrink-0">
+                  {planInvites.length} convite(s) gerado(s)
+                </span>
+              </div>
+
+              <form onSubmit={handleCreateInvite} className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3 items-end">
+                <div className="lg:col-span-2">
+                  <label className="block text-[11px] font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                    Destinatário / Observação (Opcional)
+                  </label>
+                  <input
+                    type="text"
+                    value={inviteForm.recipientHint}
+                    onChange={(e) => setInviteForm({ ...inviteForm, recipientHint: e.target.value })}
+                    placeholder="Ex: Loja Parceira Centro ou João Silva"
+                    className="w-full px-3 py-2 rounded-xl border border-slate-300 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-xs text-slate-900 dark:text-white"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-[11px] font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                    Código Personalizado (Opcional)
+                  </label>
+                  <input
+                    type="text"
+                    value={inviteForm.code}
+                    onChange={(e) => setInviteForm({ ...inviteForm, code: e.target.value.toUpperCase() })}
+                    placeholder="Auto (ex: VIP-XXXXXX)"
+                    className="w-full px-3 py-2 rounded-xl border border-slate-300 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-xs font-mono uppercase text-slate-900 dark:text-white"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-[11px] font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                    Limite de Usos
+                  </label>
+                  <input
+                    type="number"
+                    min="1"
+                    max="500"
+                    value={inviteForm.maxUses}
+                    onChange={(e) => setInviteForm({ ...inviteForm, maxUses: parseInt(e.target.value, 10) || 1 })}
+                    className="w-full px-3 py-2 rounded-xl border border-slate-300 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-xs font-mono font-bold text-slate-900 dark:text-white tabular-nums"
+                  />
+                </div>
+
+                <div>
+                  <button
+                    type="submit"
+                    disabled={isCreatingInvite}
+                    className="w-full px-4 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white text-xs font-bold transition flex items-center justify-center gap-1.5 cursor-pointer whitespace-nowrap"
+                  >
+                    <Plus className="w-3.5 h-3.5" />
+                    <span>{isCreatingInvite ? 'Gerando...' : 'Gerar Convite VIP'}</span>
+                  </button>
+                </div>
+              </form>
+
+              {planInvites.length > 0 ? (
+                <div className="overflow-x-auto rounded-xl border border-slate-200 dark:border-slate-800">
+                  <table className="w-full text-xs text-left">
+                    <thead className="bg-slate-50 dark:bg-slate-800 text-slate-600 dark:text-slate-300 font-bold border-b border-slate-200 dark:border-slate-700">
+                      <tr>
+                        <th className="p-2.5">Código</th>
+                        <th className="p-2.5">Destinatário / Loja Vinculada</th>
+                        <th className="p-2.5">Usos</th>
+                        <th className="p-2.5">Status</th>
+                        <th className="p-2.5 text-right">Compartilhar & Ações</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-200 dark:divide-slate-800">
+                      {planInvites.map((inv) => {
+                        const inviteLink =
+                          typeof window !== 'undefined'
+                            ? `${window.location.origin}/?convite=${encodeURIComponent(inv.code)}`
+                            : `/?convite=${inv.code}`;
+                        const isExpiredInv =
+                          !!inv.expiresAt && new Date(`${inv.expiresAt}T23:59:59`).getTime() < Date.now();
+                        const effectiveStatus =
+                          inv.status === 'active' && isExpiredInv ? 'expired' : inv.status;
+
+                        return (
+                          <tr key={inv.id} className="hover:bg-slate-50 dark:hover:bg-slate-800/40">
+                            <td className="p-2.5 font-mono font-bold text-slate-900 dark:text-white whitespace-nowrap">
+                              {inv.code}
+                            </td>
+                            <td className="p-2.5 text-slate-600 dark:text-slate-300">
+                              <div className="font-medium">{inv.recipientHint || 'Convite Avulso'}</div>
+                              {inv.redeemedByBusinessName && (
+                                <span className="text-[10px] text-emerald-600 dark:text-emerald-400 font-semibold block">
+                                  Resgatado por: {inv.redeemedByBusinessName}
+                                </span>
+                              )}
+                            </td>
+                            <td className="p-2.5 font-mono tabular-nums text-slate-700 dark:text-slate-300">
+                              {inv.usedCount} / {inv.maxUses}
+                            </td>
+                            <td className="p-2.5">
+                              <span
+                                className={`text-[10px] font-bold px-2 py-0.5 rounded-full uppercase ${
+                                  effectiveStatus === 'active'
+                                    ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950/60 dark:text-emerald-300'
+                                    : effectiveStatus === 'used'
+                                    ? 'bg-blue-100 text-blue-800 dark:bg-blue-950/60 dark:text-blue-300'
+                                    : effectiveStatus === 'revoked'
+                                    ? 'bg-rose-100 text-rose-800 dark:bg-rose-950/60 dark:text-rose-300'
+                                    : 'bg-slate-200 text-slate-700 dark:bg-slate-800 dark:text-slate-400'
+                                }`}
+                              >
+                                {effectiveStatus === 'active'
+                                  ? 'Ativo'
+                                  : effectiveStatus === 'used'
+                                  ? 'Utilizado'
+                                  : effectiveStatus === 'revoked'
+                                  ? 'Revogado'
+                                  : 'Expirado'}
+                              </span>
+                            </td>
+                            <td className="p-2.5 text-right">
+                              <div className="inline-flex items-center gap-1.5 justify-end">
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    handleCopy(`inv-link-${inv.id}`, inviteLink);
+                                    showAdminToast(`Link de convite copiado para ${inv.code}!`);
+                                  }}
+                                  className="px-2.5 py-1 rounded-lg bg-indigo-50 hover:bg-indigo-100 dark:bg-indigo-950/60 dark:hover:bg-indigo-900 text-indigo-700 dark:text-indigo-300 font-bold text-[11px] flex items-center gap-1 cursor-pointer whitespace-nowrap"
+                                  title="Copiar link completo de cadastro/ativação com convite"
+                                >
+                                  {copiedKey === `inv-link-${inv.id}` ? (
+                                    <Check className="w-3 h-3 text-emerald-600" />
+                                  ) : (
+                                    <Link2 className="w-3 h-3" />
+                                  )}
+                                  <span>{copiedKey === `inv-link-${inv.id}` ? 'Copiado!' : 'Copiar Link'}</span>
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    handleCopy(`inv-code-${inv.id}`, inv.code);
+                                    showAdminToast(`Código ${inv.code} copiado!`);
+                                  }}
+                                  className="px-2 py-1 rounded-lg bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 font-bold text-[11px] flex items-center gap-1 cursor-pointer whitespace-nowrap"
+                                  title="Copiar apenas o código"
+                                >
+                                  <Copy className="w-3 h-3" />
+                                  <span>Código</span>
+                                </button>
+                                {inv.status === 'active' && (
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      void revokePlanInvite(inv.id).then((r) => {
+                                        if (r.success) showAdminToast(`Convite ${inv.code} revogado.`);
+                                      });
+                                    }}
+                                    className="px-2 py-1 rounded-lg text-amber-700 hover:bg-amber-50 dark:text-amber-400 dark:hover:bg-amber-950/40 font-bold text-[11px] cursor-pointer"
+                                    title="Revogar convite"
+                                  >
+                                    Revogar
+                                  </button>
+                                )}
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    void deletePlanInvite(inv.id).then((r) => {
+                                      if (r.success) showAdminToast(`Convite ${inv.code} excluído.`);
+                                    });
+                                  }}
+                                  className="p-1 text-red-500 hover:text-red-700 rounded-lg hover:bg-red-50 dark:hover:bg-red-950/40 cursor-pointer"
+                                  title="Excluir convite"
+                                >
+                                  <Trash2 className="w-3.5 h-3.5" />
+                                </button>
+                              </div>
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              ) : (
+                <div className="p-4 rounded-xl bg-slate-50 dark:bg-slate-800/40 text-center text-xs text-slate-500">
+                  Nenhum convite gerado ainda. Use o formulário acima para gerar códigos e links exclusivos.
+                </div>
+              )}
+            </div>
+
             <form ref={planFormRef} onSubmit={handleSavePlan} className="p-5 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-xs space-y-4">
               <div className="flex items-center justify-between">
                 <h4 className="text-xs font-bold text-blue-700 dark:text-blue-400 uppercase tracking-wider flex items-center gap-1.5">
@@ -1423,11 +1702,17 @@ export const AdminScreen: React.FC = () => {
                       setPlanForm({
                         name: '',
                         priceMonthly: 0,
+                        priceOnce: 0,
+                        billingType: 'recurring',
+                        trialMonths: 6,
+                        isInviteOnly: false,
+                        vipTier: 'none',
                         productLimit: 5,
                         businessLimit: 1,
                         badge: 'Popular',
                         featuresText: 'Cadastro da empresa\nDivulgação de produtos\nContato WhatsApp',
                         highlighted: false,
+                        showOnHome: true,
                         color: '#1D4ED8',
                         useCustomDiscounts: false,
                         cycleDiscounts: {
@@ -1461,17 +1746,74 @@ export const AdminScreen: React.FC = () => {
 
                 <div>
                   <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
-                    Preço Base Mensal (R$) *
+                    Modalidade de Cobrança *
                   </label>
-                  <input
-                    type="number"
-                    step="0.01"
-                    required
-                    value={planForm.priceMonthly}
-                    onChange={(e) => setPlanForm({ ...planForm, priceMonthly: parseFloat(e.target.value) || 0 })}
-                    className="w-full px-3 py-2 rounded-xl border border-slate-300 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-xs text-slate-900 dark:text-white font-mono"
-                  />
+                  <select
+                    value={planForm.billingType}
+                    onChange={(e) =>
+                      setPlanForm({
+                        ...planForm,
+                        billingType: e.target.value as PlanBillingType,
+                        isInviteOnly:
+                          e.target.value === 'invite_trial' ? true : planForm.isInviteOnly,
+                      })
+                    }
+                    className="w-full px-3 py-2 rounded-xl border border-slate-300 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-xs text-slate-900 dark:text-white cursor-pointer"
+                  >
+                    <option value="recurring">Recorrente (Mensal / Anual / Bienal / Trienal)</option>
+                    <option value="lifetime">Vitalício (Pagamento Único)</option>
+                    <option value="invite_trial">Convite Gratuito (Meses Grátis)</option>
+                  </select>
                 </div>
+
+                {planForm.billingType === 'recurring' && (
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                      Preço Base Mensal (R$) *
+                    </label>
+                    <input
+                      type="number"
+                      step="0.01"
+                      required
+                      value={planForm.priceMonthly}
+                      onChange={(e) => setPlanForm({ ...planForm, priceMonthly: parseFloat(e.target.value) || 0 })}
+                      className="w-full px-3 py-2 rounded-xl border border-slate-300 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-xs text-slate-900 dark:text-white font-mono"
+                    />
+                  </div>
+                )}
+
+                {planForm.billingType === 'lifetime' && (
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                      Valor Único Vitalício (R$) *
+                    </label>
+                    <input
+                      type="number"
+                      step="0.01"
+                      required
+                      value={planForm.priceOnce}
+                      onChange={(e) => setPlanForm({ ...planForm, priceOnce: parseFloat(e.target.value) || 0 })}
+                      className="w-full px-3 py-2 rounded-xl border border-slate-300 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-xs text-slate-900 dark:text-white font-mono"
+                    />
+                  </div>
+                )}
+
+                {planForm.billingType === 'invite_trial' && (
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                      Meses Grátis do Convite *
+                    </label>
+                    <input
+                      type="number"
+                      min="1"
+                      max="36"
+                      required
+                      value={planForm.trialMonths}
+                      onChange={(e) => setPlanForm({ ...planForm, trialMonths: parseInt(e.target.value, 10) || 6 })}
+                      className="w-full px-3 py-2 rounded-xl border border-slate-300 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-xs text-slate-900 dark:text-white font-mono"
+                    />
+                  </div>
+                )}
 
                 <div>
                   <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
@@ -1514,6 +1856,21 @@ export const AdminScreen: React.FC = () => {
                   />
                 </div>
 
+                <div>
+                  <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                    Nível VIP & Selo na Vitrine
+                  </label>
+                  <select
+                    value={planForm.vipTier}
+                    onChange={(e) => setPlanForm({ ...planForm, vipTier: e.target.value as PlanVipTier })}
+                    className="w-full px-3 py-2 rounded-xl border border-slate-300 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-xs text-slate-900 dark:text-white cursor-pointer"
+                  >
+                    <option value="none">Padrão</option>
+                    <option value="premium">Destaque VIP (Premium)</option>
+                    <option value="founder">VIP + Selo Exclusivo Sócio Fundador</option>
+                  </select>
+                </div>
+
                 <div className="sm:col-span-2">
                   <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
                     Recursos Inclusos (1 por linha)
@@ -1528,7 +1885,7 @@ export const AdminScreen: React.FC = () => {
               </div>
 
               {/* Custom Per-Plan Cycle Discounts (Optional Override) */}
-              {planForm.priceMonthly > 0 && (() => {
+              {planForm.billingType === 'recurring' && planForm.priceMonthly > 0 && (() => {
                 const draftPlan: Plan = {
                   id: editingPlanId || 'draft',
                   name: planForm.name || 'Prévia',
@@ -1665,16 +2022,53 @@ export const AdminScreen: React.FC = () => {
                 );
               })()}
 
-              <div className="flex items-center justify-between">
-                <label className="flex items-center gap-2 text-xs text-slate-600 dark:text-slate-300 cursor-pointer">
-                  <input
-                    type="checkbox"
-                    checked={planForm.highlighted}
-                    onChange={(e) => setPlanForm({ ...planForm, highlighted: e.target.checked })}
-                    className="rounded text-blue-600"
-                  />
-                  <span>Destacar como "Mais Escolhido" na Home</span>
-                </label>
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <div className="flex flex-wrap items-center gap-4">
+                  <label className="flex items-center gap-2 text-xs text-slate-600 dark:text-slate-300 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={planForm.highlighted}
+                      onChange={(e) => setPlanForm({ ...planForm, highlighted: e.target.checked })}
+                      className="rounded text-blue-600"
+                    />
+                    <span>Destacar como Mais Escolhido</span>
+                  </label>
+                  <label
+                    className={`flex items-center gap-2 text-xs cursor-pointer ${
+                      planForm.isInviteOnly || planForm.billingType === 'invite_trial'
+                        ? 'text-slate-400 cursor-not-allowed'
+                        : 'text-slate-600 dark:text-slate-300'
+                    }`}
+                  >
+                    <input
+                      type="checkbox"
+                      disabled={planForm.isInviteOnly || planForm.billingType === 'invite_trial'}
+                      checked={
+                        planForm.isInviteOnly || planForm.billingType === 'invite_trial'
+                          ? false
+                          : planForm.showOnHome
+                      }
+                      onChange={(e) => setPlanForm({ ...planForm, showOnHome: e.target.checked })}
+                      className="rounded text-emerald-600"
+                    />
+                    <span>Exibir na Página Inicial (Home)</span>
+                  </label>
+                  <label className="flex items-center gap-2 text-xs text-slate-600 dark:text-slate-300 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={planForm.isInviteOnly}
+                      onChange={(e) =>
+                        setPlanForm({
+                          ...planForm,
+                          isInviteOnly: e.target.checked,
+                          showOnHome: e.target.checked ? false : planForm.showOnHome,
+                        })
+                      }
+                      className="rounded text-indigo-600"
+                    />
+                    <span>Exclusivo por Convite (ocultar na página pública)</span>
+                  </label>
+                </div>
 
                 <button
                   type="submit"
@@ -1685,123 +2079,285 @@ export const AdminScreen: React.FC = () => {
               </div>
             </form>
 
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-              {plans.map((p) => (
-                <div
-                  key={p.id}
-                  className={`p-5 rounded-2xl border flex flex-col justify-between shadow-xs ${
-                    p.highlighted
-                      ? 'bg-blue-50/50 dark:bg-blue-950/30 border-blue-400'
-                      : 'bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-800'
-                  }`}
+            {/* Plan Order, Home Visibility Summary & Sócio Fundador Sales Page Shortcut */}
+            <div className="p-4 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 flex flex-col lg:flex-row lg:items-center justify-between gap-3">
+              <div>
+                <h4 className="text-xs font-bold text-slate-900 dark:text-white flex items-center gap-2">
+                  <span>Ordem dos Planos e Exibição na Página Inicial</span>
+                  <span className="font-mono text-[11px] font-semibold text-emerald-700 dark:text-emerald-400 tabular-nums">
+                    ({plans.filter((p) => !p.isInviteOnly && p.showOnHome !== false).length} ativo(s) na Home)
+                  </span>
+                </h4>
+                <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
+                  Use as setas nos cards abaixo para reordenar os planos em todo o site e alterne o botão para escolher quais aparecem na página inicial.
+                </p>
+              </div>
+
+              <div className="flex flex-wrap items-center gap-2 shrink-0">
+                <button
+                  type="button"
+                  onClick={() => {
+                    const url =
+                      typeof window !== 'undefined'
+                        ? `${window.location.origin}/socio-fundador`
+                        : '/socio-fundador';
+                    navigator.clipboard?.writeText(url);
+                    showAdminToast('Link da página de vendas Sócio Fundador copiado!');
+                  }}
+                  className="px-3 py-1.5 rounded-lg border border-amber-300 dark:border-amber-800 bg-amber-50 dark:bg-amber-950/30 text-amber-800 dark:text-amber-300 text-xs font-bold hover:bg-amber-100 transition flex items-center gap-1.5 cursor-pointer whitespace-nowrap"
                 >
-                  <div>
-                    <div className="flex items-center justify-between">
-                      <h5 className="font-bold text-sm text-slate-900 dark:text-white">{p.name}</h5>
-                      <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300">
-                        {p.badge}
-                      </span>
-                    </div>
+                  <Copy className="w-3.5 h-3.5" />
+                  <span>Copiar Link Sócio Fundador</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setCurrentView('founder_sales');
+                    window.scrollTo({ top: 0, behavior: 'smooth' });
+                  }}
+                  className="px-3 py-1.5 rounded-lg bg-amber-600 hover:bg-amber-700 text-white text-xs font-bold transition flex items-center gap-1.5 cursor-pointer whitespace-nowrap"
+                >
+                  <ExternalLink className="w-3.5 h-3.5" />
+                  <span>Abrir Página de Vendas Sócio Fundador</span>
+                </button>
+              </div>
+            </div>
 
-                    <div className="mt-2 text-lg font-black text-slate-900 dark:text-white font-mono tabular-nums">
-                      {p.priceMonthly === 0 ? 'Grátis' : `${formatBRL(p.priceMonthly)}/mês`}
-                    </div>
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+              {plans.map((p, index) => {
+                const pIsLifetime = isLifetimePlan(p);
+                const pIsInvite = isInviteTrialPlan(p);
+                const pIsFounder = isFounderPlan(p);
+                const isHomeVisible = !p.isInviteOnly && p.showOnHome !== false;
 
-                    {p.priceMonthly > 0 && (
-                      <div className="mt-2.5 p-2.5 rounded-xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700 space-y-1.5">
-                        <div className="flex items-center justify-between text-[10px] font-bold text-slate-500">
-                          <span>Valores por ciclo</span>
-                          <span className={p.useCustomDiscounts ? 'text-orange-600' : 'text-blue-600'}>
-                            {p.useCustomDiscounts ? 'Desconto Personalizado' : 'Regra Global'}
+                return (
+                  <div
+                    key={p.id}
+                    className={`p-5 rounded-2xl border flex flex-col justify-between shadow-xs ${
+                      pIsFounder
+                        ? 'bg-amber-50/50 dark:bg-amber-950/20 border-amber-400'
+                        : p.highlighted
+                        ? 'bg-blue-50/50 dark:bg-blue-950/30 border-blue-400'
+                        : 'bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-800'
+                    }`}
+                  >
+                    <div>
+                      {/* Order Position & Home Visibility Bar */}
+                      <div className="flex items-center justify-between gap-2 pb-3 mb-3 border-b border-slate-200/80 dark:border-slate-800">
+                        <div className="flex items-center gap-1">
+                          <span className="text-[11px] font-mono font-bold text-slate-500 dark:text-slate-400 tabular-nums mr-1">
+                            #{index + 1}
                           </span>
+                          <button
+                            type="button"
+                            disabled={index === 0}
+                            onClick={() => {
+                              movePlanOrder(p.id, 'up');
+                              showAdminToast(`Ordem atualizada: "${p.name}" movido para #${index}.`);
+                            }}
+                            className="p-1 rounded-md border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700 disabled:opacity-35 disabled:cursor-not-allowed cursor-pointer transition"
+                            title="Mover plano para cima na ordem"
+                          >
+                            <ChevronUp className="w-3.5 h-3.5" />
+                          </button>
+                          <button
+                            type="button"
+                            disabled={index === plans.length - 1}
+                            onClick={() => {
+                              movePlanOrder(p.id, 'down');
+                              showAdminToast(`Ordem atualizada: "${p.name}" movido para #${index + 2}.`);
+                            }}
+                            className="p-1 rounded-md border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700 disabled:opacity-35 disabled:cursor-not-allowed cursor-pointer transition"
+                            title="Mover plano para baixo na ordem"
+                          >
+                            <ChevronDown className="w-3.5 h-3.5" />
+                          </button>
                         </div>
-                        <div className="grid grid-cols-3 gap-1.5 text-[11px] font-mono tabular-nums">
-                          {(['annual', 'biennial', 'triennial'] as const).map((cycle) => {
-                            const cp = calculatePlanPricing(p, cycle, planDiscountConfig);
-                            return (
-                              <div key={cycle} className="rounded-lg bg-white dark:bg-slate-900 px-2 py-1 border border-slate-200/70 dark:border-slate-700">
-                                <div className="text-[10px] font-sans font-semibold text-slate-500 flex items-center justify-between">
-                                  <span>{cp.shortLabel}</span>
-                                  <span className="text-emerald-600 font-bold">-{cp.discountPercent}%</span>
-                                </div>
-                                <div className="font-bold text-slate-900 dark:text-white">
-                                  {formatBRL(cp.totalAmount)}
-                                </div>
-                              </div>
-                            );
-                          })}
-                        </div>
-                      </div>
-                    )}
 
-                    <div className="mt-2 text-xs font-bold text-orange-600 dark:text-orange-400 tabular-nums">
-                      Cotas: {p.businessLimit || 1} {p.businessLimit === 1 ? 'loja' : 'lojas'} · {p.productLimit} itens/loja (prods + servs)
+                        <button
+                          type="button"
+                          disabled={!!p.isInviteOnly}
+                          onClick={() => {
+                            const nextVal = !isHomeVisible;
+                            updatePlan(p.id, { showOnHome: nextVal });
+                            showAdminToast(
+                              nextVal
+                                ? `Plano "${p.name}" agora aparece na Página Inicial.`
+                                : `Plano "${p.name}" ocultado da Página Inicial.`
+                            );
+                          }}
+                          className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-[11px] font-bold transition whitespace-nowrap ${
+                            p.isInviteOnly
+                              ? 'bg-slate-100 dark:bg-slate-800 text-slate-400 cursor-not-allowed'
+                              : isHomeVisible
+                              ? 'bg-emerald-100 dark:bg-emerald-950/60 text-emerald-800 dark:text-emerald-300 hover:bg-emerald-200 cursor-pointer'
+                              : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400 hover:bg-slate-200 dark:hover:bg-slate-700 cursor-pointer'
+                          }`}
+                          title={
+                            p.isInviteOnly
+                              ? 'Planos exclusivos por convite não são exibidos na Home pública'
+                              : 'Alternar visibilidade deste plano na Página Inicial'
+                          }
+                        >
+                          {isHomeVisible ? (
+                            <>
+                              <Eye className="w-3 h-3 shrink-0" />
+                              <span>Na Home</span>
+                            </>
+                          ) : (
+                            <>
+                              <EyeOff className="w-3 h-3 shrink-0" />
+                              <span>{p.isInviteOnly ? 'Só Convite' : 'Oculto na Home'}</span>
+                            </>
+                          )}
+                        </button>
+                      </div>
+
+                      <div className="flex items-center justify-between gap-2">
+                        <h5 className="font-bold text-sm text-slate-900 dark:text-white flex items-center gap-1.5">
+                          {pIsFounder && <Award className="w-4 h-4 text-amber-600 shrink-0" />}
+                          <span>{p.name}</span>
+                        </h5>
+                        <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300">
+                          {p.badge}
+                        </span>
+                      </div>
+
+                      <div className="mt-2 text-lg font-black text-slate-900 dark:text-white font-mono tabular-nums">
+                        {pIsLifetime
+                          ? `${formatBRL(p.priceOnce ?? 500)} único (Vitalício)`
+                          : pIsInvite
+                          ? `Grátis · ${p.trialMonths || 6} meses (Convite)`
+                          : p.priceMonthly === 0
+                          ? 'Grátis'
+                          : `${formatBRL(p.priceMonthly)}/mês`}
+                      </div>
+
+                      {p.isInviteOnly && (
+                        <span className="inline-block mt-1 text-[10px] font-bold text-indigo-700 dark:text-indigo-400">
+                          Acesso exclusivo via Código / Link de Convite
+                        </span>
+                      )}
+
+                      {!pIsLifetime && !pIsInvite && p.priceMonthly > 0 && (
+                        <div className="mt-2.5 p-2.5 rounded-xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700 space-y-1.5">
+                          <div className="flex items-center justify-between text-[10px] font-bold text-slate-500">
+                            <span>Valores por ciclo</span>
+                            <span className={p.useCustomDiscounts ? 'text-orange-600' : 'text-blue-600'}>
+                              {p.useCustomDiscounts ? 'Desconto Personalizado' : 'Regra Global'}
+                            </span>
+                          </div>
+                          <div className="grid grid-cols-3 gap-1.5 text-[11px] font-mono tabular-nums">
+                            {(['annual', 'biennial', 'triennial'] as const).map((cycle) => {
+                              const cp = calculatePlanPricing(p, cycle, planDiscountConfig);
+                              return (
+                                <div key={cycle} className="rounded-lg bg-white dark:bg-slate-900 px-2 py-1 border border-slate-200/70 dark:border-slate-700">
+                                  <div className="text-[10px] font-sans font-semibold text-slate-500 flex items-center justify-between">
+                                    <span>{cp.shortLabel}</span>
+                                    <span className="text-emerald-600 font-bold">-{cp.discountPercent}%</span>
+                                  </div>
+                                  <div className="font-bold text-slate-900 dark:text-white">
+                                    {formatBRL(cp.totalAmount)}
+                                  </div>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        </div>
+                      )}
+
+                      <div className="mt-2 text-xs font-bold text-orange-600 dark:text-orange-400 tabular-nums">
+                        Cotas: {p.businessLimit || 1} {p.businessLimit === 1 ? 'loja' : 'lojas'} · {p.productLimit} itens/loja (prods + servs)
+                      </div>
+
+                      <ul className="mt-3 space-y-1 text-[11px] text-slate-600 dark:text-slate-400">
+                        {p.features.map((feat, idx) => (
+                          <li key={idx} className="flex items-center gap-1">
+                            <span className="text-emerald-500">✓</span> {feat}
+                          </li>
+                        ))}
+                      </ul>
                     </div>
 
-                    <ul className="mt-3 space-y-1 text-[11px] text-slate-600 dark:text-slate-400">
-                      {p.features.map((feat, idx) => (
-                        <li key={idx} className="flex items-center gap-1">
-                          <span className="text-emerald-500">✓</span> {feat}
-                        </li>
-                      ))}
-                    </ul>
-                  </div>
+                    <div className="mt-4 pt-3 border-t border-slate-200 dark:border-slate-800 flex items-center justify-between gap-2">
+                      {pIsFounder ? (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setCurrentView('founder_sales');
+                            window.scrollTo({ top: 0, behavior: 'smooth' });
+                          }}
+                          className="text-[11px] font-bold text-amber-700 dark:text-amber-400 hover:underline flex items-center gap-1 cursor-pointer"
+                        >
+                          <ExternalLink className="w-3 h-3" />
+                          <span>Página de Vendas</span>
+                        </button>
+                      ) : (
+                        <span />
+                      )}
+                      <div className="flex items-center gap-2">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setEditingPlanId(p.id);
+                            setPlanForm({
+                              name: p.name,
+                              priceMonthly: p.priceMonthly,
+                              priceOnce: p.priceOnce ?? 0,
+                              billingType: getPlanBillingType(p),
+                              trialMonths: p.trialMonths ?? 6,
+                              isInviteOnly: !!p.isInviteOnly,
+                              vipTier: p.vipTier || (pIsFounder ? 'founder' : isPaidPlan(p) && p.highlighted ? 'premium' : 'none'),
+                              productLimit: p.productLimit,
+                              businessLimit: p.businessLimit || 1,
+                              badge: p.badge,
+                              featuresText: p.features.join('\n'),
+                              highlighted: !!p.highlighted,
+                              showOnHome: p.isInviteOnly ? false : p.showOnHome !== false,
+                              color: p.color,
+                              useCustomDiscounts: !!p.useCustomDiscounts,
+                              cycleDiscounts: {
+                                annual: p.cycleDiscounts?.annual ?? planDiscountConfig.annual,
+                                biennial: p.cycleDiscounts?.biennial ?? planDiscountConfig.biennial,
+                                triennial: p.cycleDiscounts?.triennial ?? planDiscountConfig.triennial,
+                              },
+                            });
+                            planFormRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                          }}
+                          className="flex items-center gap-1 px-2.5 py-1.5 text-blue-600 hover:text-blue-800 rounded-lg bg-blue-50/70 hover:bg-blue-100 text-xs font-bold transition cursor-pointer"
+                          title="Editar plano"
+                        >
+                          <Edit2 className="w-3.5 h-3.5" />
+                          <span>Editar</span>
+                        </button>
 
-                  <div className="mt-4 pt-3 border-t border-slate-200 dark:border-slate-800 flex justify-end gap-2">
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setEditingPlanId(p.id);
-                        setPlanForm({
-                          name: p.name,
-                          priceMonthly: p.priceMonthly,
-                          productLimit: p.productLimit,
-                          businessLimit: p.businessLimit || 1,
-                          badge: p.badge,
-                          featuresText: p.features.join('\n'),
-                          highlighted: !!p.highlighted,
-                          color: p.color,
-                          useCustomDiscounts: !!p.useCustomDiscounts,
-                          cycleDiscounts: {
-                            annual: p.cycleDiscounts?.annual ?? planDiscountConfig.annual,
-                            biennial: p.cycleDiscounts?.biennial ?? planDiscountConfig.biennial,
-                            triennial: p.cycleDiscounts?.triennial ?? planDiscountConfig.triennial,
-                          },
-                        });
-                        planFormRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' });
-                      }}
-                      className="flex items-center gap-1 px-2.5 py-1.5 text-blue-600 hover:text-blue-800 rounded-lg bg-blue-50/70 hover:bg-blue-100 text-xs font-bold transition cursor-pointer"
-                      title="Editar plano"
-                    >
-                      <Edit2 className="w-3.5 h-3.5" />
-                      <span>Editar</span>
-                    </button>
-
-                    <button
-                      type="button"
-                      onClick={() =>
-                        setPendingConfirm({
-                          title: 'Excluir Plano',
-                          message: `Tem certeza que deseja remover o plano "${p.name}"?`,
-                          confirmLabel: 'Excluir Plano',
-                          variant: 'danger',
-                          onConfirm: () => {
-                            deletePlan(p.id);
-                            if (editingPlanId === p.id) {
-                              setEditingPlanId(null);
-                            }
-                            showAdminToast(`Plano "${p.name}" removido com sucesso!`);
-                          },
-                        })
-                      }
-                      className="p-1.5 text-red-500 hover:text-red-700 rounded-lg hover:bg-red-50 dark:hover:bg-red-950/40 transition cursor-pointer"
-                      title="Excluir plano"
-                    >
-                      <Trash2 className="w-4 h-4" />
-                    </button>
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setPendingConfirm({
+                            title: 'Excluir Plano',
+                            message: `Tem certeza que deseja remover o plano "${p.name}"?`,
+                            confirmLabel: 'Excluir Plano',
+                            variant: 'danger',
+                            onConfirm: () => {
+                              deletePlan(p.id);
+                              if (editingPlanId === p.id) {
+                                setEditingPlanId(null);
+                              }
+                              showAdminToast(`Plano "${p.name}" removido com sucesso!`);
+                            },
+                          })
+                        }
+                        className="p-1.5 text-red-500 hover:text-red-700 rounded-lg hover:bg-red-50 dark:hover:bg-red-950/40 transition cursor-pointer"
+                        title="Excluir plano"
+                      >
+                        <Trash2 className="w-4 h-4" />
+                      </button>
+                      </div>
+                    </div>
                   </div>
-                </div>
-              ))}
+                );
+              })}
             </div>
           </div>
         )}
@@ -1904,9 +2460,15 @@ export const AdminScreen: React.FC = () => {
                                     <ShieldCheck className="w-3.5 h-3.5 text-blue-600 inline shrink-0" />
                                   </span>
                                 )}
+                                {biz.subscriptionStatus === 'cancelled' && (
+                                  <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-rose-100 text-rose-700 dark:bg-rose-950 dark:text-rose-300">
+                                    Pausada
+                                  </span>
+                                )}
                               </div>
                               <span className="text-[10px] text-slate-500">
                                 {biz.neighborhood ? `${biz.neighborhood} · ` : ''}{biz.whatsapp}
+                                {biz.inviteCode ? ` · Convite: ${biz.inviteCode}` : ''}
                               </span>
                             </div>
                           </td>
@@ -1915,7 +2477,7 @@ export const AdminScreen: React.FC = () => {
                             <select
                               value={biz.planId}
                               onChange={(e) => {
-                                updateBusiness(biz.id, { planId: e.target.value });
+                                updateBusiness(biz.id, { planId: e.target.value, subscriptionStatus: 'active' });
                                 setAdminToast(`Plano da empresa "${biz.name}" alterado.`);
                                 setTimeout(() => setAdminToast(null), 3000);
                               }}
@@ -1927,6 +2489,11 @@ export const AdminScreen: React.FC = () => {
                                 </option>
                               ))}
                             </select>
+                            {biz.planExpiresAt && (
+                              <span className="block text-[10px] text-slate-500 mt-0.5 font-mono">
+                                Vence: {biz.planExpiresAt}
+                              </span>
+                            )}
                           </td>
                           <td className="p-3">
                             <div className={`font-mono tabular-nums font-bold ${quota.isFull ? 'text-red-600 dark:text-red-400' : 'text-slate-900 dark:text-white'}`}>

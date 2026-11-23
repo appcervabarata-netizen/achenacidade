@@ -4,6 +4,8 @@ import {
   BILLING_CYCLE_LIST,
   BILLING_CYCLE_META,
   clampDiscountPercent,
+  isInviteTrialPlan,
+  isLifetimePlan,
 } from '../../utils/planPricing';
 
 interface BillingCycleSelectorProps {
@@ -21,6 +23,28 @@ export const BillingCycleSelector: React.FC<BillingCycleSelectorProps> = ({
   plan,
   compact = false,
 }) => {
+  if (plan && isLifetimePlan(plan)) {
+    return (
+      <div className="px-4 py-2.5 rounded-2xl bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-800 text-xs font-bold text-amber-900 dark:text-amber-200 flex items-center justify-between gap-2">
+        <span>Pagamento Único · Vitalício</span>
+        <span className="text-[11px] font-medium text-amber-700 dark:text-amber-300">
+          Sem renovação mensal
+        </span>
+      </div>
+    );
+  }
+
+  if (plan && isInviteTrialPlan(plan)) {
+    return (
+      <div className="px-4 py-2.5 rounded-2xl bg-indigo-50 dark:bg-indigo-950/40 border border-indigo-200 dark:border-indigo-800 text-xs font-bold text-indigo-900 dark:text-indigo-200 flex items-center justify-between gap-2">
+        <span>Convite VIP · {plan.trialMonths || 6} meses grátis</span>
+        <span className="text-[11px] font-medium text-indigo-700 dark:text-indigo-300">
+          Sem cobrança no período inicial
+        </span>
+      </div>
+    );
+  }
+
   const getCycleDiscountBadge = (cycle: BillingCycle): number => {
     if (cycle === 'monthly') return 0;
     if (plan?.useCustomDiscounts && plan.cycleDiscounts) {

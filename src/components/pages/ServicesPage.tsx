@@ -33,6 +33,7 @@ export const ServicesPage: React.FC = () => {
     toggleFavoriteService,
     isServiceFavorite,
     setCurrentView,
+    trackBusinessMetric,
   } = useDirectory();
 
   const [selectedServiceCategory, setSelectedServiceCategory] = useState<string>('all');
@@ -322,7 +323,10 @@ export const ServicesPage: React.FC = () => {
                         )}`}
                         target="_blank"
                         rel="noopener noreferrer"
-                        onClick={(e) => e.stopPropagation()}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          trackBusinessMetric(biz.id, 'whatsapp_click');
+                        }}
                         className="w-full flex items-center justify-center gap-1.5 py-1.5 sm:py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-[11px] sm:text-xs font-bold transition shadow-xs cursor-pointer"
                       >
                         <MessageCircle className="w-3.5 h-3.5" />

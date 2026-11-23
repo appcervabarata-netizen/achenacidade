@@ -101,6 +101,11 @@ CREATE TABLE IF NOT EXISTS `plans` (
   `id` VARCHAR(120) PRIMARY KEY,
   `name` VARCHAR(255) NOT NULL,
   `price_monthly` DECIMAL(10,2) NOT NULL DEFAULT 0,
+  `price_once` DECIMAL(10,2) NULL DEFAULT 0,
+  `billing_type` VARCHAR(32) NOT NULL DEFAULT 'recurring',
+  `trial_months` INT NULL,
+  `is_invite_only` TINYINT(1) NOT NULL DEFAULT 0,
+  `vip_tier` VARCHAR(32) NOT NULL DEFAULT 'none',
   `product_limit` INT NOT NULL DEFAULT 3,
   `business_limit` INT NOT NULL DEFAULT 1,
   `badge` VARCHAR(120) NOT NULL DEFAULT '',
@@ -109,6 +114,7 @@ CREATE TABLE IF NOT EXISTS `plans` (
   `color` VARCHAR(32) NOT NULL DEFAULT '#1D4ED8',
   `use_custom_discounts` TINYINT(1) NOT NULL DEFAULT 0,
   `cycle_discounts` JSON NULL,
+  `show_on_home` TINYINT(1) NOT NULL DEFAULT 1,
   `sort_order` INT NOT NULL DEFAULT 0,
   `updated_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
@@ -142,6 +148,8 @@ CREATE TABLE IF NOT EXISTS `businesses` (
   `pending_billing_cycle` VARCHAR(32) NULL,
   `billing_cycle` VARCHAR(32) NULL,
   `plan_expires_at` VARCHAR(64) NULL,
+  `invite_code` VARCHAR(64) NULL,
+  `subscription_status` VARCHAR(32) NOT NULL DEFAULT 'active',
   `payment_token` VARCHAR(255) NULL,
   `created_at` VARCHAR(64) NOT NULL,
   `sort_order` INT NOT NULL DEFAULT 0,
@@ -259,6 +267,34 @@ CREATE TABLE IF NOT EXISTS `app_settings` (
   `setting_key` VARCHAR(120) PRIMARY KEY,
   `setting_value` JSON NOT NULL,
   `updated_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS `business_metrics_daily` (
+  `business_id` VARCHAR(120) NOT NULL,
+  `metric_date` DATE NOT NULL,
+  `views_count` INT NOT NULL DEFAULT 0,
+  `whatsapp_clicks` INT NOT NULL DEFAULT 0,
+  `showcase_clicks` INT NOT NULL DEFAULT 0,
+  `updated_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (`business_id`, `metric_date`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS `plan_invites` (
+  `id` VARCHAR(120) PRIMARY KEY,
+  `code` VARCHAR(64) NOT NULL,
+  `plan_id` VARCHAR(120) NOT NULL DEFAULT 'plan-invite-premium-6m',
+  `max_uses` INT NOT NULL DEFAULT 1,
+  `used_count` INT NOT NULL DEFAULT 0,
+  `recipient_hint` VARCHAR(255) NULL,
+  `expires_at` VARCHAR(64) NULL,
+  `status` VARCHAR(32) NOT NULL DEFAULT 'active',
+  `redeemed_by_business_id` VARCHAR(120) NULL,
+  `redeemed_by_business_name` VARCHAR(255) NULL,
+  `redeemed_at` VARCHAR(64) NULL,
+  `created_at` VARCHAR(64) NOT NULL,
+  `sort_order` INT NOT NULL DEFAULT 0,
+  `updated_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  UNIQUE KEY `uniq_plan_invite_code` (`code`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 SET FOREIGN_KEY_CHECKS = 1;

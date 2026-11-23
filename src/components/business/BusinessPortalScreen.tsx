@@ -8,6 +8,11 @@ import {
   BILLING_CYCLE_META,
   calculatePlanPricing,
   formatBRL,
+  getPlanExpirationInfo,
+  isFounderPlan,
+  isInviteTrialPlan,
+  isLifetimePlan,
+  isPaidPlan,
 } from '../../utils/planPricing';
 import { formatServicePrice, getServiceModeLabel } from '../../utils/serviceFormatters';
 import { cloneWeeklySchedule } from '../../utils/scheduleHelpers';
@@ -55,6 +60,9 @@ import {
   Folder,
   Layers,
   Wrench,
+  Award,
+  Gift,
+  Ban,
 } from 'lucide-react';
 
 const defaultWeeklySchedule: DaySchedule[] = [
@@ -102,12 +110,18 @@ export const BusinessPortalScreen: React.FC = () => {
     paymentTransactions,
     planDiscountConfig,
     preselectedBillingCycle,
+    getBusinessMetrics,
+    loadBusinessMetricsFromDb,
+    applyInviteCodeToBusiness,
+    cancelBusinessSubscription,
+    activeInviteCode,
   } = useDirectory();
 
   // Strictly use authenticated business session (no unauthenticated demo fallback)
   const activeBusiness =
     currentBusinessAuth || businesses.find((b) => b.id === authSession.businessId) || null;
   const activePlan = activeBusiness ? plans.find((p) => p.id === activeBusiness.planId) || plans[0] : null;
+  const expirationInfo = getPlanExpirationInfo(activeBusiness, activePlan);
   const businessProducts = activeBusiness ? products.filter((p) => p.businessId === activeBusiness.id) : [];
   const businessServices = activeBusiness ? services.filter((s) => s.businessId === activeBusiness.id) : [];
   const activeStoreCategories = activeBusiness ? storeProductCategories.filter((c) => c.businessId === activeBusiness.id) : [];
@@ -157,10 +171,24 @@ export const BusinessPortalScreen: React.FC = () => {
     debugCode?: string;
   } | null>(null);
 
+  const [inviteInput, setInviteInput] = useState(activeInviteCode || '');
+  const [isApplyingInvite, setIsApplyingInvite] = useState(false);
+  const [inviteFeedback, setInviteFeedback] = useState<{
+    type: 'success' | 'error';
+    text: string;
+  } | null>(null);
+  const [showCancelModal, setShowCancelModal] = useState(false);
+
   useEffect(() => {
     setVerifyCodeInput('');
     setVerifyEmailFeedback(null);
   }, [activeBusiness?.id]);
+
+  useEffect(() => {
+    if (activeInviteCode && !inviteInput) {
+      setInviteInput(activeInviteCode);
+    }
+  }, [activeInviteCode]);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -220,7 +248,7 @@ export const BusinessPortalScreen: React.FC = () => {
     name: '',
     cityId: cities[0]?.id || '',
     categoryId: categories[0]?.id || '',
-    planId: plans[0]?.id || '',
+    planId: plans.find((p) => !p.isInviteOnly)?.id || plans[0]?.id || '',
     description: '',
     phone: '',
     whatsapp: '',
@@ -282,17 +310,24 @@ export const BusinessPortalScreen: React.FC = () => {
     }
   }, [activeBusiness, cities, categories, plans]);
 
-  // Calculated metrics for the Dashboard
+  useEffect(() => {
+    if (activeBusiness?.id) {
+      void loadBusinessMetricsFromDb(activeBusiness.id);
+    }
+  }, [activeBusiness?.id]);
+
+  // Real metrics for the Dashboard (starts at 0 for newly registered stores)
+  const realMetrics = getBusinessMetrics(activeBusiness?.id || '');
   const metrics = {
-    viewsTotal: activeBusiness ? (activeBusiness.name.length * 47) + 320 : 480,
-    whatsappClicks: activeBusiness ? (activeBusiness.name.length * 12) + 85 : 98,
-    productClicks:
-      businessProducts.reduce((acc, p) => acc + (p.name.length * 3) + 14, 0) +
-      businessServices.reduce((acc, s) => acc + (s.name.length * 3) + 12, 0),
+    viewsTotal: realMetrics.viewsTotal,
+    whatsappClicks: realMetrics.whatsappClicks,
+    productClicks: realMetrics.showcaseClicks,
     activeProducts: quota.totalUsed,
     productLimit,
-    conversionRate: '18.4%',
+    conversionRate: realMetrics.conversionRate,
+    daily: realMetrics.daily,
   };
+  const maxDailyViews = Math.max(1, ...metrics.daily.map((d) => d.views));
 
   // Schedule Handlers
   const handleDayToggle = (index: number) => {
@@ -522,16 +557,53 @@ export const BusinessPortalScreen: React.FC = () => {
     if (!activeBusiness) return;
     const targetPlan = plans.find((p) => p.id === newPlanId);
     if (!targetPlan) return;
+    if (targetPlan.isInviteOnly && activeBusiness.planId !== targetPlan.id) {
+      setNotification({ text: 'Este plano é exclusivo via código de convite VIP.', type: 'error' });
+      return;
+    }
 
-    if (targetPlan.priceMonthly > 0) {
-      openPaymentModal(newPlanId, activeBusiness.id, cycle);
+    if (isPaidPlan(targetPlan)) {
+      openPaymentModal(newPlanId, activeBusiness.id, isLifetimePlan(targetPlan) ? 'monthly' : cycle);
     } else {
       updateBusiness(activeBusiness.id, {
         planId: newPlanId,
         billingCycle: 'monthly',
         planExpiresAt: undefined,
+        subscriptionStatus: 'active',
+        paymentStatus: 'active',
       });
       setNotification({ text: 'Plano gratuito ativado! Cota combinada de produtos e serviços atualizada.', type: 'success' });
+    }
+  };
+
+  const handleRedeemInvite = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!activeBusiness) return;
+    const trimmed = inviteInput.trim().toUpperCase();
+    if (!trimmed) {
+      setInviteFeedback({ type: 'error', text: 'Digite o código do convite VIP.' });
+      return;
+    }
+    setIsApplyingInvite(true);
+    setInviteFeedback(null);
+    try {
+      const res = await applyInviteCodeToBusiness(trimmed, activeBusiness.id);
+      if (!res.success) {
+        setInviteFeedback({
+          type: 'error',
+          text: res.error || 'Código de convite inválido, expirado ou já utilizado.',
+        });
+      } else {
+        setInviteInput('');
+        setInviteFeedback({
+          type: 'success',
+          text: `Convite VIP ativado! Sua loja recebeu 6 meses grátis do Plano Premium${
+            res.planExpiresAt ? ` (válido até ${res.planExpiresAt})` : ''
+          }.`,
+        });
+      }
+    } finally {
+      setIsApplyingInvite(false);
     }
   };
 
@@ -974,6 +1046,115 @@ export const BusinessPortalScreen: React.FC = () => {
         );
       })()}
 
+      {/* Cancelled / Paused Subscription Banner */}
+      {activeBusiness?.subscriptionStatus === 'cancelled' && (
+        <div className="max-w-7xl mx-auto w-full px-4 sm:px-6 pt-4">
+          <div className="p-4 sm:p-5 rounded-2xl bg-slate-100 dark:bg-slate-900 border border-slate-300 dark:border-slate-700 flex flex-col md:flex-row md:items-center justify-between gap-4 shadow-xs">
+            <div className="flex items-start gap-3">
+              <div className="p-2 rounded-xl bg-slate-200 dark:bg-slate-800 text-slate-700 dark:text-slate-300 shrink-0">
+                <Ban className="w-5 h-5" />
+              </div>
+              <div>
+                <p className="text-xs sm:text-sm font-extrabold text-slate-900 dark:text-white">
+                  Assinatura Cancelada · Loja Pausada no Guia Público
+                </p>
+                <p className="text-xs text-slate-600 dark:text-slate-300 mt-0.5">
+                  A vitrine da sua loja está temporariamente oculta para visitantes. Reative no Plano Grátis ou escolha um novo plano para voltar a aparecer nas buscas.
+                </p>
+              </div>
+            </div>
+            <div className="flex flex-wrap items-center gap-2 shrink-0">
+              <button
+                type="button"
+                onClick={() => handleUpgradePlan('plan-free')}
+                className="px-3.5 py-2 rounded-xl bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-600 text-xs font-bold text-slate-800 dark:text-slate-200 hover:bg-slate-50 transition cursor-pointer"
+              >
+                Reativar no Plano Grátis
+              </button>
+              <button
+                type="button"
+                onClick={() => setActiveTab('plans')}
+                className="px-4 py-2 rounded-xl bg-orange-600 hover:bg-orange-700 text-white text-xs font-extrabold transition cursor-pointer"
+              >
+                Escolher Novo Plano
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 6-Month Invite Trial Expiration / Expiring Soon Alert Banner */}
+      {activeBusiness &&
+        activeBusiness.subscriptionStatus !== 'cancelled' &&
+        expirationInfo.isTrialInvite &&
+        (expirationInfo.isExpired || expirationInfo.isExpiringSoon) && (
+          <div className="max-w-7xl mx-auto w-full px-4 sm:px-6 pt-4">
+            <div
+              className={`p-4 sm:p-5 rounded-2xl border flex flex-col md:flex-row md:items-center justify-between gap-4 shadow-xs ${
+                expirationInfo.isExpired
+                  ? 'bg-rose-50 dark:bg-rose-950/40 border-rose-300 dark:border-rose-800'
+                  : 'bg-amber-50 dark:bg-amber-950/40 border-amber-300 dark:border-amber-800'
+              }`}
+            >
+              <div className="flex items-start gap-3">
+                <div
+                  className={`p-2 rounded-xl shrink-0 ${
+                    expirationInfo.isExpired
+                      ? 'bg-rose-100 dark:bg-rose-900/60 text-rose-700 dark:text-rose-300'
+                      : 'bg-amber-100 dark:bg-amber-900/60 text-amber-700 dark:text-amber-300'
+                  }`}
+                >
+                  <AlertCircle className="w-5 h-5" />
+                </div>
+                <div>
+                  <p
+                    className={`text-xs sm:text-sm font-extrabold ${
+                      expirationInfo.isExpired
+                        ? 'text-rose-900 dark:text-rose-200'
+                        : 'text-amber-900 dark:text-amber-200'
+                    }`}
+                  >
+                    {expirationInfo.isExpired
+                      ? `Seu período gratuito de 6 meses (Convite VIP) encerrou em ${expirationInfo.expiresAtFormatted}`
+                      : `Seu Convite VIP Premium (6 meses grátis) vence em ${
+                          expirationInfo.daysRemaining === 0
+                            ? 'hoje'
+                            : `${expirationInfo.daysRemaining} dia(s)`
+                        } (${expirationInfo.expiresAtFormatted})`}
+                  </p>
+                  <p
+                    className={`text-xs mt-0.5 ${
+                      expirationInfo.isExpired
+                        ? 'text-rose-800 dark:text-rose-300'
+                        : 'text-amber-800 dark:text-amber-300/90'
+                    }`}
+                  >
+                    Escolha um dos planos disponíveis (incluindo o Sócio Fundador vitalício) para continuar com sua loja divulgada ou cancele sua assinatura sem cobranças.
+                  </p>
+                </div>
+              </div>
+
+              <div className="flex flex-wrap items-center gap-2 shrink-0">
+                <button
+                  type="button"
+                  onClick={() => setShowCancelModal(true)}
+                  className="px-3.5 py-2 rounded-xl bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 text-xs font-bold text-slate-700 dark:text-slate-200 hover:bg-slate-100 transition cursor-pointer"
+                >
+                  Cancelar Assinatura
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setActiveTab('plans')}
+                  className="px-4 py-2 rounded-xl bg-orange-600 hover:bg-orange-700 text-white text-xs font-extrabold shadow-xs transition flex items-center gap-1.5 cursor-pointer"
+                >
+                  <Zap className="w-3.5 h-3.5" />
+                  <span>Escolher Novo Plano</span>
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
       {/* Main Body per Tab */}
       <main className="max-w-7xl mx-auto w-full p-4 sm:p-6 lg:p-8 flex-1 space-y-6">
 
@@ -990,10 +1171,16 @@ export const BusinessPortalScreen: React.FC = () => {
                   className="w-16 h-16 rounded-2xl object-cover border-2 border-white/20 bg-white shrink-0 shadow-sm"
                 />
                 <div>
-                  <div className="flex items-center gap-2">
+                  <div className="flex flex-wrap items-center gap-2">
                     <span className="text-[10px] font-black uppercase tracking-wider px-2 py-0.5 rounded-full bg-orange-600 text-white">
-                      Loja Ativa
+                      {activeBusiness.subscriptionStatus === 'cancelled' ? 'Pausada' : 'Loja Ativa'}
                     </span>
+                    {isFounderPlan(activePlan) && (
+                      <span className="inline-flex items-center gap-1 text-[10px] font-black uppercase tracking-wider px-2 py-0.5 rounded-full bg-amber-400 text-slate-950">
+                        <Award className="w-3 h-3" />
+                        Sócio Fundador VIP
+                      </span>
+                    )}
                     <span className="text-xs text-blue-200">{activePlan?.name}</span>
                   </div>
                   <h2 className="text-xl sm:text-2xl font-extrabold font-display mt-0.5">
@@ -1060,8 +1247,9 @@ export const BusinessPortalScreen: React.FC = () => {
                 <div className="text-2xl sm:text-3xl font-black text-slate-900 dark:text-white font-mono">
                   {metrics.viewsTotal}
                 </div>
-                <span className="text-[11px] font-semibold text-emerald-600 flex items-center gap-1 mt-1">
-                  <TrendingUp className="w-3 h-3" /> +14.2% este mês
+                <span className="text-[11px] font-medium text-slate-500 flex items-center gap-1 mt-1">
+                  <TrendingUp className="w-3 h-3 text-blue-500" />
+                  {metrics.viewsTotal > 0 ? 'Acessos reais registrados' : 'Aguardando primeiros acessos'}
                 </span>
               </div>
 
@@ -1136,27 +1324,29 @@ export const BusinessPortalScreen: React.FC = () => {
                 </span>
               </div>
 
-              {/* Simulated weekly performance bars */}
+              {/* Real 7-day performance bars */}
               <div className="grid grid-cols-7 gap-2 pt-4 items-end h-40">
-                {[
-                  { day: 'Seg', val: 65, clicks: 12 },
-                  { day: 'Ter', val: 82, clicks: 16 },
-                  { day: 'Qua', val: 95, clicks: 21 },
-                  { day: 'Qui', val: 78, clicks: 14 },
-                  { day: 'Sex', val: 120, clicks: 28 },
-                  { day: 'Sáb', val: 140, clicks: 35 },
-                  { day: 'Dom', val: 90, clicks: 19 },
-                ].map((d, idx) => (
-                  <div key={idx} className="flex flex-col items-center gap-1.5 h-full justify-end">
-                    <span className="text-[10px] font-mono font-bold text-slate-500">{d.val}</span>
-                    <div
-                      className="w-full bg-gradient-to-t from-blue-700 to-sky-400 rounded-xl transition-all hover:brightness-110"
-                      style={{ height: `${(d.val / 140) * 100}%` }}
-                      title={`${d.val} visualizações e ${d.clicks} cliques`}
-                    />
-                    <span className="text-[11px] font-bold text-slate-700 dark:text-slate-300">{d.day}</span>
-                  </div>
-                ))}
+                {metrics.daily.map((d) => {
+                  const barHeight =
+                    d.views > 0 ? `${Math.max(12, Math.round((d.views / maxDailyViews) * 100))}%` : '6%';
+                  return (
+                    <div key={d.date} className="flex flex-col items-center gap-1.5 h-full justify-end">
+                      <span className="text-[10px] font-mono font-bold text-slate-500 tabular-nums">
+                        {d.views}
+                      </span>
+                      <div
+                        className={`w-full rounded-xl transition-all ${
+                          d.views > 0
+                            ? 'bg-gradient-to-t from-blue-700 to-sky-400 hover:brightness-110'
+                            : 'bg-slate-200 dark:bg-slate-800'
+                        }`}
+                        style={{ height: barHeight }}
+                        title={`${d.label} (${d.date}): ${d.views} visualizações · ${d.showcaseClicks} cliques vitrine · ${d.whatsappClicks} cliques WhatsApp`}
+                      />
+                      <span className="text-[11px] font-bold text-slate-700 dark:text-slate-300">{d.label}</span>
+                    </div>
+                  );
+                })}
               </div>
             </div>
 
@@ -2107,6 +2297,10 @@ export const BusinessPortalScreen: React.FC = () => {
                 currentCycle,
                 planDiscountConfig
               );
+              const activeIsLifetime = isLifetimePlan(activePlan);
+              const activeIsInvite = isInviteTrialPlan(activePlan);
+              const activeIsFounder = isFounderPlan(activePlan);
+              const activeIsPaid = isPaidPlan(activePlan);
 
               return (
                 <div className="p-6 rounded-3xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-xs flex flex-col md:flex-row md:items-center justify-between gap-6">
@@ -2118,32 +2312,90 @@ export const BusinessPortalScreen: React.FC = () => {
                       <h3 className="text-2xl font-extrabold text-slate-900 dark:text-white font-display">
                         {activePlan?.name}
                       </h3>
-                      {activePlan && activePlan.priceMonthly > 0 && (
+                      {activeIsFounder && (
+                        <span className="inline-flex items-center gap-1 text-xs font-bold px-2.5 py-0.5 rounded-lg bg-amber-100 dark:bg-amber-950/60 text-amber-800 dark:text-amber-300 border border-amber-300 dark:border-amber-800">
+                          <Award className="w-3.5 h-3.5" />
+                          Vitalício · Sem Vencimento
+                        </span>
+                      )}
+                      {!activeIsFounder && activeIsLifetime && (
+                        <span className="text-xs font-bold px-2.5 py-0.5 rounded-lg bg-amber-100 dark:bg-amber-950/60 text-amber-800 dark:text-amber-300">
+                          Vitalício
+                        </span>
+                      )}
+                      {activeIsInvite && (
+                        <span className="inline-flex items-center gap-1 text-xs font-bold px-2.5 py-0.5 rounded-lg bg-indigo-100 dark:bg-indigo-950/60 text-indigo-700 dark:text-indigo-300">
+                          <Gift className="w-3.5 h-3.5" />
+                          Convite VIP · 6 Meses Grátis
+                        </span>
+                      )}
+                      {!activeIsLifetime && !activeIsInvite && activeIsPaid && (
                         <span className="text-xs font-bold px-2.5 py-0.5 rounded-lg bg-blue-100 dark:bg-blue-950/60 text-blue-700 dark:text-blue-300">
                           Ciclo {BILLING_CYCLE_META[currentCycle].label}
+                        </span>
+                      )}
+                      {activeBusiness.subscriptionStatus === 'cancelled' && (
+                        <span className="text-xs font-bold px-2.5 py-0.5 rounded-lg bg-rose-100 dark:bg-rose-950/60 text-rose-700 dark:text-rose-300">
+                          Cancelado / Pausado
                         </span>
                       )}
                     </div>
                     <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
                       Sua empresa possui limite para cadastrar até <strong>{activePlan?.productLimit} produtos e/ou serviços somados</strong> na vitrine comercial (uso atual: {quota.totalUsed}/{quota.limit}).
                     </p>
-                    {activeBusiness.planExpiresAt && (
-                      <p className="text-xs font-semibold text-emerald-700 dark:text-emerald-400 mt-1 font-mono tabular-nums">
-                        Válido até: {activeBusiness.planExpiresAt}
+                    {activeIsLifetime ? (
+                      <p className="text-xs font-semibold text-amber-700 dark:text-amber-400 mt-1">
+                        Acesso permanente sem mensalidades futuras (1 loja · {activePlan?.productLimit} itens).
                       </p>
-                    )}
+                    ) : activeBusiness.planExpiresAt ? (
+                      <p
+                        className={`text-xs font-semibold mt-1 font-mono tabular-nums ${
+                          expirationInfo.isExpired
+                            ? 'text-rose-600 dark:text-rose-400'
+                            : expirationInfo.isExpiringSoon
+                            ? 'text-amber-600 dark:text-amber-400'
+                            : 'text-emerald-700 dark:text-emerald-400'
+                        }`}
+                      >
+                        {expirationInfo.isExpired
+                          ? `Período expirado em: ${expirationInfo.expiresAtFormatted || activeBusiness.planExpiresAt}`
+                          : `Válido até: ${expirationInfo.expiresAtFormatted || activeBusiness.planExpiresAt}`}
+                      </p>
+                    ) : null}
+
+                    {activeBusiness.subscriptionStatus !== 'cancelled' &&
+                      (activeIsPaid || activeIsInvite || activeBusiness.planId !== 'plan-free') && (
+                        <div className="mt-3">
+                          <button
+                            type="button"
+                            onClick={() => setShowCancelModal(true)}
+                            className="text-xs font-bold text-rose-600 dark:text-rose-400 hover:underline cursor-pointer inline-flex items-center gap-1"
+                          >
+                            <Ban className="w-3.5 h-3.5" />
+                            <span>Cancelar ou Pausar Assinatura</span>
+                          </button>
+                        </div>
+                      )}
                   </div>
 
                   <div className="px-5 py-3 rounded-2xl bg-blue-50 dark:bg-blue-950/40 border border-blue-200 dark:border-blue-900 text-right shrink-0">
                     <span className="text-xs font-semibold text-slate-500">
-                      {activePlan?.priceMonthly === 0 ? 'Valor do Plano:' : `Valor (${BILLING_CYCLE_META[currentCycle].shortLabel}):`}
+                      {activeIsLifetime
+                        ? 'Pagamento Único:'
+                        : activeIsInvite
+                        ? 'Convite Especial (6 meses):'
+                        : !activeIsPaid
+                        ? 'Valor do Plano:'
+                        : `Valor (${BILLING_CYCLE_META[currentCycle].shortLabel}):`}
                     </span>
                     <div className="text-2xl font-black text-blue-700 dark:text-blue-300 font-mono tabular-nums">
-                      {activePlan?.priceMonthly === 0
+                      {activeIsLifetime
+                        ? formatBRL(currentCyclePricing.totalAmount)
+                        : !activeIsPaid
                         ? 'Grátis'
                         : formatBRL(currentCyclePricing.totalAmount)}
                     </div>
-                    {activePlan && activePlan.priceMonthly > 0 && currentCycle !== 'monthly' && (
+                    {!activeIsLifetime && activeIsPaid && currentCycle !== 'monthly' && (
                       <span className="text-[11px] font-bold text-emerald-600 dark:text-emerald-400 font-mono tabular-nums">
                         {formatBRL(currentCyclePricing.effectiveMonthly)}/mês (-{currentCyclePricing.discountPercent}%)
                       </span>
@@ -2153,6 +2405,54 @@ export const BusinessPortalScreen: React.FC = () => {
               );
             })()}
 
+            {/* Redeem Invite Code VIP Card */}
+            <form
+              onSubmit={handleRedeemInvite}
+              className="p-5 rounded-3xl bg-white dark:bg-slate-900 border border-indigo-200 dark:border-indigo-900/60 shadow-xs flex flex-col md:flex-row md:items-center justify-between gap-4"
+            >
+              <div className="flex items-start gap-3">
+                <div className="w-10 h-10 rounded-xl bg-indigo-100 dark:bg-indigo-950 text-indigo-700 dark:text-indigo-300 flex items-center justify-center shrink-0">
+                  <Gift className="w-5 h-5" />
+                </div>
+                <div>
+                  <h4 className="text-sm font-bold text-slate-900 dark:text-white font-display">
+                    Possui um Código de Convite VIP (6 Meses Premium Grátis)?
+                  </h4>
+                  <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
+                    Insira o código exclusivo enviado pelo administrador para liberar o plano Convite Premium por 6 meses gratuitos.
+                  </p>
+                  {inviteFeedback && (
+                    <p
+                      className={`text-xs font-bold mt-1.5 ${
+                        inviteFeedback.type === 'success'
+                          ? 'text-emerald-600 dark:text-emerald-400'
+                          : 'text-rose-600 dark:text-rose-400'
+                      }`}
+                    >
+                      {inviteFeedback.text}
+                    </p>
+                  )}
+                </div>
+              </div>
+
+              <div className="flex items-center gap-2 shrink-0 w-full md:w-auto">
+                <input
+                  type="text"
+                  value={inviteInput}
+                  onChange={(e) => setInviteInput(e.target.value.toUpperCase())}
+                  placeholder="EX: VIP-ACHENA-6M"
+                  className="flex-1 md:w-48 px-3.5 py-2.5 rounded-xl border border-slate-300 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-xs font-mono font-bold uppercase text-slate-900 dark:text-white outline-none focus:ring-2 focus:ring-indigo-500"
+                />
+                <button
+                  type="submit"
+                  disabled={isApplyingInvite || !inviteInput.trim()}
+                  className="px-4 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white text-xs font-bold whitespace-nowrap shrink-0 cursor-pointer transition"
+                >
+                  {isApplyingInvite ? 'Validando...' : 'Ativar Convite'}
+                </button>
+              </div>
+            </form>
+
             {/* List of Available Plans for Upgrade + Cycle Selector */}
             <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
               <div>
@@ -2160,7 +2460,7 @@ export const BusinessPortalScreen: React.FC = () => {
                   Planos de Anúncio Disponíveis para Upgrade ou Renovação
                 </h4>
                 <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
-                  Escolha ciclos Anual, Bienal ou Trienal para ganhar descontos automáticos e parcelar em até 12x.
+                  Escolha ciclos Anual, Bienal ou Trienal para ganhar descontos automáticos ou garanta o plano Sócio Fundador vitalício.
                 </p>
               </div>
               <BillingCycleSelector
@@ -2171,113 +2471,162 @@ export const BusinessPortalScreen: React.FC = () => {
               />
             </div>
 
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-              {plans.map((p) => {
-                const isCurrentPlan = activeBusiness.planId === p.id;
-                const currentCycle = activeBusiness.billingCycle || 'monthly';
-                const isSamePlanAndCycle =
-                  isCurrentPlan &&
-                  (p.priceMonthly === 0 || currentCycle === upgradeCycle) &&
-                  activeBusiness.paymentStatus !== 'pending_payment';
-                const pricing = calculatePlanPricing(p, upgradeCycle, planDiscountConfig);
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-5">
+              {plans
+                .filter((p) => !p.isInviteOnly || p.id === activeBusiness.planId)
+                .map((p) => {
+                  const isCurrentPlan = activeBusiness.planId === p.id;
+                  const currentCycle = activeBusiness.billingCycle || 'monthly';
+                  const pIsLifetime = isLifetimePlan(p);
+                  const pIsInvite = isInviteTrialPlan(p);
+                  const pIsPaid = isPaidPlan(p);
+                  const pIsFounder = isFounderPlan(p);
+                  const isSamePlanAndCycle =
+                    isCurrentPlan &&
+                    activeBusiness.subscriptionStatus !== 'cancelled' &&
+                    (pIsLifetime || pIsInvite || !pIsPaid || currentCycle === upgradeCycle) &&
+                    activeBusiness.paymentStatus !== 'pending_payment';
+                  const pricing = calculatePlanPricing(p, upgradeCycle, planDiscountConfig);
 
-                return (
-                  <div
-                    key={p.id}
-                    className={`p-6 rounded-3xl bg-white dark:bg-slate-900 border flex flex-col justify-between shadow-xs transition ${
-                      isCurrentPlan
-                        ? 'border-2 border-blue-600 shadow-md ring-2 ring-blue-500/20'
-                        : 'border-slate-200 dark:border-slate-800 hover:border-slate-300'
-                    }`}
-                  >
-                    <div>
-                      <div className="flex items-center justify-between mb-3">
-                        <span className="text-xs font-bold px-2.5 py-0.5 rounded-full bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300">
-                          {p.badge}
-                        </span>
-                        {isCurrentPlan && (
-                          <span className="text-[10px] font-black uppercase tracking-wider px-2 py-0.5 rounded-md bg-blue-600 text-white">
-                            Plano Atual
-                          </span>
-                        )}
-                      </div>
-
-                      <h5 className="text-lg font-bold text-slate-900 dark:text-white font-display">{p.name}</h5>
-
-                      <div className="mt-3 mb-4 space-y-1">
-                        {p.priceMonthly === 0 ? (
-                          <div className="text-2xl font-black text-slate-900 dark:text-white font-mono">
-                            Grátis
-                          </div>
-                        ) : (
-                          <>
-                            <div className="flex items-baseline gap-2">
-                              <span className="text-2xl font-black text-slate-900 dark:text-white font-mono tabular-nums">
-                                {formatBRL(pricing.effectiveMonthly)}
-                              </span>
-                              <span className="text-xs text-slate-500 font-semibold">/mês</span>
-                              {pricing.discountPercent > 0 && (
-                                <span className="text-[11px] font-mono font-extrabold text-emerald-600 dark:text-emerald-400">
-                                  -{pricing.discountPercent}%
-                                </span>
-                              )}
-                            </div>
-
-                            {upgradeCycle !== 'monthly' ? (
-                              <div className="text-xs text-slate-600 dark:text-slate-300 space-y-0.5">
-                                <div className="flex items-center gap-1.5 font-mono tabular-nums">
-                                  <span className="line-through text-slate-400">
-                                    {formatBRL(pricing.baseTotal)}
-                                  </span>
-                                  <span className="font-extrabold text-blue-700 dark:text-blue-300">
-                                    {formatBRL(pricing.totalAmount)} ({pricing.shortLabel})
-                                  </span>
-                                </div>
-                                <p className="text-[11px] font-bold text-emerald-600 dark:text-emerald-400 font-mono tabular-nums">
-                                  Economia de {formatBRL(pricing.discountAmount)} · até 12x no cartão ou PIX
-                                </p>
-                              </div>
-                            ) : (
-                              <p className="text-[11px] text-slate-500">Cobrança mensal recorrente</p>
-                            )}
-                          </>
-                        )}
-                      </div>
-
-                      <div className="text-xs font-bold text-orange-600 dark:text-orange-400 mb-4 tabular-nums">
-                        Cota: até {p.productLimit} produtos/serviços somados
-                      </div>
-
-                      <ul className="space-y-2 text-xs text-slate-600 dark:text-slate-300 mb-6">
-                        {p.features.map((feat, idx) => (
-                          <li key={idx} className="flex items-center gap-1.5">
-                            <Check className="w-3.5 h-3.5 text-emerald-500 shrink-0" />
-                            <span>{feat}</span>
-                          </li>
-                        ))}
-                      </ul>
-                    </div>
-
-                    <button
-                      onClick={() => handleUpgradePlan(p.id, upgradeCycle)}
-                      disabled={isSamePlanAndCycle}
-                      className={`w-full py-2.5 rounded-xl font-bold text-xs shadow-xs transition cursor-pointer ${
-                        isSamePlanAndCycle
-                          ? 'bg-slate-100 dark:bg-slate-800 text-slate-400 cursor-default'
-                          : 'bg-orange-600 hover:bg-orange-700 text-white'
+                  return (
+                    <div
+                      key={p.id}
+                      className={`p-6 rounded-3xl bg-white dark:bg-slate-900 border flex flex-col justify-between shadow-xs transition ${
+                        isCurrentPlan
+                          ? 'border-2 border-blue-600 shadow-md ring-2 ring-blue-500/20'
+                          : pIsFounder
+                          ? 'border-amber-400 dark:border-amber-700 hover:border-amber-500'
+                          : 'border-slate-200 dark:border-slate-800 hover:border-slate-300'
                       }`}
                     >
-                      {isSamePlanAndCycle
-                        ? 'Plano e Ciclo em Uso'
-                        : isCurrentPlan
-                        ? `Mudar para Ciclo ${pricing.shortLabel}`
-                        : p.priceMonthly === 0
-                        ? 'Alterar para Plano Gratuito'
-                        : `Contratar ${pricing.shortLabel} · ${formatBRL(pricing.totalAmount)}`}
-                    </button>
-                  </div>
-                );
-              })}
+                      <div>
+                        <div className="flex items-center justify-between gap-2 mb-3">
+                          <span
+                            className={`text-xs font-bold px-2.5 py-0.5 rounded-full inline-flex items-center gap-1 ${
+                              pIsFounder
+                                ? 'bg-amber-100 dark:bg-amber-950/60 text-amber-800 dark:text-amber-300'
+                                : 'bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300'
+                            }`}
+                          >
+                            {pIsFounder && <Award className="w-3 h-3" />}
+                            {p.badge}
+                          </span>
+                          {isCurrentPlan && (
+                            <span className="text-[10px] font-black uppercase tracking-wider px-2 py-0.5 rounded-md bg-blue-600 text-white whitespace-nowrap shrink-0">
+                              Plano Atual
+                            </span>
+                          )}
+                        </div>
+
+                        <h5 className="text-lg font-bold text-slate-900 dark:text-white font-display">
+                          {p.name}
+                        </h5>
+
+                        <div className="mt-3 mb-4 space-y-1">
+                          {pIsLifetime ? (
+                            <>
+                              <div className="flex items-baseline gap-1.5">
+                                <span className="text-2xl font-black text-slate-900 dark:text-white font-mono tabular-nums">
+                                  {formatBRL(pricing.totalAmount)}
+                                </span>
+                                <span className="text-xs font-semibold text-amber-700 dark:text-amber-400">
+                                  pagamento único
+                                </span>
+                              </div>
+                              <p className="text-[11px] font-semibold text-slate-500 dark:text-slate-400">
+                                Vitalício · 1 loja · sem mensalidades
+                              </p>
+                            </>
+                          ) : pIsInvite ? (
+                            <>
+                              <div className="text-2xl font-black text-indigo-700 dark:text-indigo-300 font-mono">
+                                Grátis
+                              </div>
+                              <p className="text-[11px] font-semibold text-indigo-600 dark:text-indigo-400">
+                                Convite VIP · {p.trialMonths || 6} meses grátis
+                              </p>
+                            </>
+                          ) : !pIsPaid ? (
+                            <div className="text-2xl font-black text-slate-900 dark:text-white font-mono">
+                              Grátis
+                            </div>
+                          ) : (
+                            <>
+                              <div className="flex items-baseline gap-2">
+                                <span className="text-2xl font-black text-slate-900 dark:text-white font-mono tabular-nums">
+                                  {formatBRL(pricing.effectiveMonthly)}
+                                </span>
+                                <span className="text-xs text-slate-500 font-semibold">/mês</span>
+                                {pricing.discountPercent > 0 && (
+                                  <span className="text-[11px] font-mono font-extrabold text-emerald-600 dark:text-emerald-400">
+                                    -{pricing.discountPercent}%
+                                  </span>
+                                )}
+                              </div>
+
+                              {upgradeCycle !== 'monthly' ? (
+                                <div className="text-xs text-slate-600 dark:text-slate-300 space-y-0.5">
+                                  <div className="flex items-center gap-1.5 font-mono tabular-nums">
+                                    <span className="line-through text-slate-400">
+                                      {formatBRL(pricing.baseTotal)}
+                                    </span>
+                                    <span className="font-extrabold text-blue-700 dark:text-blue-300">
+                                      {formatBRL(pricing.totalAmount)} ({pricing.shortLabel})
+                                    </span>
+                                  </div>
+                                  <p className="text-[11px] font-bold text-emerald-600 dark:text-emerald-400 font-mono tabular-nums">
+                                    Economia de {formatBRL(pricing.discountAmount)} · até 12x no cartão ou PIX
+                                  </p>
+                                </div>
+                              ) : (
+                                <p className="text-[11px] text-slate-500">Cobrança mensal recorrente</p>
+                              )}
+                            </>
+                          )}
+                        </div>
+
+                        <div className="text-xs font-bold text-orange-600 dark:text-orange-400 mb-4 tabular-nums">
+                          Cota: {p.businessLimit || 1} {p.businessLimit === 1 ? 'loja' : 'lojas'} · até {p.productLimit} itens
+                        </div>
+
+                        <ul className="space-y-2 text-xs text-slate-600 dark:text-slate-300 mb-6">
+                          {p.features.map((feat, idx) => (
+                            <li key={idx} className="flex items-center gap-1.5">
+                              <Check className="w-3.5 h-3.5 text-emerald-500 shrink-0" />
+                              <span>{feat}</span>
+                            </li>
+                          ))}
+                        </ul>
+                      </div>
+
+                      <button
+                        onClick={() => handleUpgradePlan(p.id, upgradeCycle)}
+                        disabled={isSamePlanAndCycle || pIsInvite}
+                        className={`w-full py-2.5 rounded-xl font-bold text-xs shadow-xs transition whitespace-nowrap ${
+                          isSamePlanAndCycle || pIsInvite
+                            ? 'bg-slate-100 dark:bg-slate-800 text-slate-400 cursor-default'
+                            : pIsFounder
+                            ? 'bg-amber-600 hover:bg-amber-700 text-white cursor-pointer'
+                            : 'bg-orange-600 hover:bg-orange-700 text-white cursor-pointer'
+                        }`}
+                      >
+                        {pIsInvite
+                          ? 'Ativo via Convite VIP'
+                          : isSamePlanAndCycle
+                          ? 'Plano em Uso'
+                          : isCurrentPlan && activeBusiness.subscriptionStatus === 'cancelled'
+                          ? 'Reativar Plano'
+                          : isCurrentPlan
+                          ? `Mudar para Ciclo ${pricing.shortLabel}`
+                          : pIsLifetime
+                          ? `Assinar Vitalício · ${formatBRL(pricing.totalAmount)}`
+                          : !pIsPaid
+                          ? 'Alterar para Plano Gratuito'
+                          : `Contratar ${pricing.shortLabel} · ${formatBRL(pricing.totalAmount)}`}
+                      </button>
+                    </div>
+                  );
+                })}
             </div>
 
             {/* Histórico de Faturas & Pagamentos da Loja */}
@@ -2492,11 +2841,19 @@ export const BusinessPortalScreen: React.FC = () => {
                   onChange={(e) => setNewBizForm({ ...newBizForm, planId: e.target.value })}
                   className="w-full px-3 py-2.5 rounded-xl border border-slate-300 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-xs sm:text-sm text-slate-900 dark:text-white font-bold text-blue-600 cursor-pointer"
                 >
-                  {plans.map((p) => (
-                    <option key={p.id} value={p.id}>
-                      {p.name} — até {p.productLimit} produtos/serviços
-                    </option>
-                  ))}
+                  {plans
+                    .filter((p) => !p.isInviteOnly)
+                    .map((p) => (
+                      <option key={p.id} value={p.id}>
+                        {p.name} — até {p.productLimit} itens (
+                        {isLifetimePlan(p)
+                          ? `${formatBRL(p.priceOnce ?? 500)} único · Vitalício`
+                          : p.priceMonthly === 0
+                          ? 'Grátis'
+                          : `${formatBRL(p.priceMonthly)}/mês`}
+                        )
+                      </option>
+                    ))}
                 </select>
               </div>
 
@@ -2564,6 +2921,85 @@ export const BusinessPortalScreen: React.FC = () => {
         onConfirm={() => pendingConfirm?.onConfirm()}
         onCancel={() => setPendingConfirm(null)}
       />
+
+      {/* Cancel / Downgrade Subscription Modal */}
+      {showCancelModal && activeBusiness && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/75 backdrop-blur-xs p-4"
+          onClick={() => setShowCancelModal(false)}
+        >
+          <div
+            className="w-full max-w-md rounded-3xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-6 shadow-2xl space-y-4"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-xl bg-rose-100 dark:bg-rose-950 text-rose-600 dark:text-rose-400 flex items-center justify-center shrink-0">
+                <Ban className="w-5 h-5" />
+              </div>
+              <div>
+                <h3 className="text-base font-extrabold text-slate-900 dark:text-white font-display">
+                  Cancelar ou Migrar Plano
+                </h3>
+                <p className="text-xs text-slate-500 dark:text-slate-400">
+                  Escolha como deseja encerrar o plano atual de <strong>{activeBusiness.name}</strong>
+                </p>
+              </div>
+            </div>
+
+            <div className="space-y-2.5">
+              <button
+                type="button"
+                onClick={() => {
+                  cancelBusinessSubscription(activeBusiness.id, 'free');
+                  setShowCancelModal(false);
+                  setNotification({
+                    type: 'success',
+                    text: 'Sua loja foi migrada para o Plano Grátis e permanece visível no diretório.',
+                  });
+                }}
+                className="w-full p-4 rounded-2xl border border-slate-200 dark:border-slate-700 hover:border-blue-500 bg-slate-50 dark:bg-slate-800/60 text-left transition cursor-pointer"
+              >
+                <span className="text-xs font-extrabold text-slate-900 dark:text-white block">
+                  1. Migrar para o Plano Grátis (até 3 itens)
+                </span>
+                <span className="text-[11px] text-slate-500 dark:text-slate-400 mt-0.5 block">
+                  Sem mensalidades. Sua loja continua visível no diretório público com limite gratuito.
+                </span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => {
+                  cancelBusinessSubscription(activeBusiness.id, 'pause');
+                  setShowCancelModal(false);
+                  setNotification({
+                    type: 'success',
+                    text: 'Assinatura cancelada e vitrine da loja pausada no guia público.',
+                  });
+                }}
+                className="w-full p-4 rounded-2xl border border-rose-200 dark:border-rose-900 hover:border-rose-500 bg-rose-50/70 dark:bg-rose-950/30 text-left transition cursor-pointer"
+              >
+                <span className="text-xs font-extrabold text-rose-800 dark:text-rose-300 block">
+                  2. Cancelar e Pausar Divulgação Pública
+                </span>
+                <span className="text-[11px] text-rose-700 dark:text-rose-400 mt-0.5 block">
+                  Oculta a loja e os anúncios das buscas públicas. Você poderá reativar quando quiser.
+                </span>
+              </button>
+            </div>
+
+            <div className="flex justify-end pt-2">
+              <button
+                type="button"
+                onClick={() => setShowCancelModal(false)}
+                className="px-4 py-2 rounded-xl text-xs font-bold text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer"
+              >
+                Voltar e Manter Plano
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

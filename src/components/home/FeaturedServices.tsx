@@ -27,6 +27,7 @@ export const FeaturedServices: React.FC = () => {
     toggleFavoriteService,
     isServiceFavorite,
     setCurrentView,
+    trackBusinessMetric,
   } = useDirectory();
 
   const getBusiness = (businessId: string) => {
@@ -193,7 +194,10 @@ export const FeaturedServices: React.FC = () => {
                         )}`}
                         target="_blank"
                         rel="noopener noreferrer"
-                        onClick={(e) => e.stopPropagation()}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          trackBusinessMetric(business.id, 'whatsapp_click');
+                        }}
                         className="w-full flex items-center justify-center gap-1.5 py-2 px-3 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-[11px] sm:text-xs font-semibold shadow-xs transition-colors cursor-pointer"
                       >
                         <MessageCircle className="w-3.5 h-3.5 shrink-0" />

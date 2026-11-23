@@ -16,6 +16,7 @@ import {
   Image as ImageIcon,
 } from 'lucide-react';
 import { Business, Product } from '../../types';
+import { formatBRL, isLifetimePlan, isPaidPlan } from '../../utils/planPricing';
 
 export const BusinessPortalModal: React.FC = () => {
   const {
@@ -33,6 +34,7 @@ export const BusinessPortalModal: React.FC = () => {
     authSession,
     registerBusinessAndLogin,
     setCurrentView,
+    openPaymentModal,
   } = useDirectory();
 
   // Tab: 'manage_products' | 'register_business'
@@ -43,7 +45,7 @@ export const BusinessPortalModal: React.FC = () => {
     name: '',
     cityId: cities[0]?.id || '',
     categoryId: categories[0]?.id || '',
-    planId: plans[0]?.id || '',
+    planId: plans.find((p) => !p.isInviteOnly)?.id || plans[0]?.id || '',
     description: '',
     phone: '',
     whatsapp: '',
@@ -163,7 +165,14 @@ export const BusinessPortalModal: React.FC = () => {
   // Quick Plan Upgrade
   const handleUpgradePlan = (newPlanId: string) => {
     if (!activeBusiness) return;
-    updateBusiness(activeBusiness.id, { planId: newPlanId });
+    const targetPlan = plans.find((p) => p.id === newPlanId);
+    if (!targetPlan) return;
+    if (isPaidPlan(targetPlan)) {
+      closeModal();
+      openPaymentModal(targetPlan.id, activeBusiness.id, 'monthly');
+      return;
+    }
+    updateBusiness(activeBusiness.id, { planId: newPlanId, planExpiresAt: undefined });
     setNotification({ text: 'Plano atualizado com sucesso! Nova cota de produtos liberada.', type: 'success' });
   };
 
@@ -336,14 +345,22 @@ export const BusinessPortalModal: React.FC = () => {
 
                       <div className="mt-3 flex flex-wrap gap-2">
                         {plans
-                          .filter((p) => p.productLimit > productLimit)
+                          .filter((p) => !p.isInviteOnly && p.productLimit > productLimit)
                           .map((higherPlan) => (
                             <button
                               key={higherPlan.id}
                               onClick={() => handleUpgradePlan(higherPlan.id)}
                               className="px-3 py-1.5 rounded-lg bg-amber-600 hover:bg-amber-700 text-white text-xs font-bold transition flex items-center gap-1.5 cursor-pointer shadow-xs"
                             >
-                              <span>Mudar para {higherPlan.name} ({higherPlan.productLimit} produtos)</span>
+                              <span>
+                                Mudar para {higherPlan.name} ({higherPlan.productLimit} itens ·{' '}
+                                {isLifetimePlan(higherPlan)
+                                  ? `${formatBRL(higherPlan.priceOnce ?? 500)} único`
+                                  : higherPlan.priceMonthly === 0
+                                  ? 'Grátis'
+                                  : `${formatBRL(higherPlan.priceMonthly)}/mês`}
+                                )
+                              </span>
                               <ArrowUpRight className="w-3.5 h-3.5" />
                             </button>
                           ))}
@@ -576,11 +593,19 @@ export const BusinessPortalModal: React.FC = () => {
                     onChange={(e) => setBizForm({ ...bizForm, planId: e.target.value })}
                     className="w-full px-3 py-2 rounded-xl border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 text-xs text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500 font-bold text-blue-600 cursor-pointer"
                   >
-                    {plans.map((p) => (
-                      <option key={p.id} value={p.id}>
-                        {p.name} — até {p.productLimit} produtos ({p.priceMonthly === 0 ? 'Grátis' : `R$ ${p.priceMonthly.toFixed(2)}/mês`})
-                      </option>
-                    ))}
+                    {plans
+                      .filter((p) => !p.isInviteOnly)
+                      .map((p) => (
+                        <option key={p.id} value={p.id}>
+                          {p.name} — até {p.productLimit} itens (
+                          {isLifetimePlan(p)
+                            ? `${formatBRL(p.priceOnce ?? 500)} único · Vitalício`
+                            : p.priceMonthly === 0
+                            ? 'Grátis'
+                            : `${formatBRL(p.priceMonthly)}/mês`}
+                          )
+                        </option>
+                      ))}
                   </select>
                 </div>
 

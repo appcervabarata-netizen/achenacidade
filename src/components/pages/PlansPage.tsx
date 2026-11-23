@@ -1,8 +1,13 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { useDirectory } from '../../context/DirectoryContext';
 import { RotatingBanner } from '../common/RotatingBanner';
 import { BillingCycleSelector } from '../common/BillingCycleSelector';
-import { calculatePlanPricing, formatBRL } from '../../utils/planPricing';
+import {
+  calculatePlanPricing,
+  formatBRL,
+  isFounderPlan,
+  isLifetimePlan,
+} from '../../utils/planPricing';
 import {
   Check,
   Zap,
@@ -13,12 +18,17 @@ import {
   Megaphone,
   Building2,
   Package,
+  Crown,
+  Ticket,
+  CheckCircle2,
+  AlertCircle,
 } from 'lucide-react';
 
 export const PlansPage: React.FC = () => {
   const {
     plans,
     setCurrentView,
+    setBusinessPortalTab,
     currentBusinessAuth,
     openPaymentModal,
     siteModeConfig,
@@ -26,19 +36,58 @@ export const PlansPage: React.FC = () => {
     planDiscountConfig,
     preselectedBillingCycle,
     setPreselectedBillingCycle,
+    activeInviteCode,
+    validatedInvite,
+    inviteValidationError,
+    validateInviteCode,
+    applyInviteCodeToBusiness,
   } = useDirectory();
 
+  const [inviteInput, setInviteInput] = useState(activeInviteCode || '');
+  const [inviteChecking, setInviteChecking] = useState(false);
+  const [inviteRedeemMsg, setInviteRedeemMsg] = useState<string | null>(null);
+
   const isRestrictedMode = siteModeConfig.mode !== 'normal';
+  const publicPlans = plans.filter((p) => !p.isInviteOnly);
 
   const handleChoosePlan = (planId: string) => {
+    const plan = plans.find((p) => p.id === planId);
+    const pricing = plan ? calculatePlanPricing(plan, preselectedBillingCycle, planDiscountConfig) : null;
     if (currentBusinessAuth) {
-      const plan = plans.find((p) => p.id === planId);
-      if (plan && plan.priceMonthly > 0) {
+      if (plan && pricing?.isPaid) {
         openPaymentModal(planId, currentBusinessAuth.id, preselectedBillingCycle);
         return;
       }
     }
     setPreselectedPlanId(planId);
+    setCurrentView('register_store');
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  };
+
+  const handleValidateInvite = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setInviteRedeemMsg(null);
+    if (!inviteInput.trim()) return;
+    setInviteChecking(true);
+    await validateInviteCode(inviteInput);
+    setInviteChecking(false);
+  };
+
+  const handleUseValidatedInvite = async () => {
+    if (!validatedInvite) return;
+    if (currentBusinessAuth) {
+      setInviteChecking(true);
+      const res = await applyInviteCodeToBusiness(validatedInvite.code, currentBusinessAuth.id);
+      setInviteChecking(false);
+      if (res.success) {
+        setInviteRedeemMsg('Convite ativado! Sua loja agora possui 6 meses grátis do Plano Premium.');
+        setBusinessPortalTab('plans');
+        setCurrentView('business_portal');
+        window.scrollTo({ top: 0, behavior: 'smooth' });
+      }
+      return;
+    }
+    setPreselectedPlanId(validatedInvite.planId || 'plan-invite-premium-6m');
     setCurrentView('register_store');
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
@@ -92,7 +141,7 @@ export const PlansPage: React.FC = () => {
             Divulgue sua Empresa, Produtos e Serviços na Cidade
           </h1>
           <p className="mt-3 text-sm sm:text-base text-slate-600 dark:text-slate-400">
-            Escolha o ciclo de pagamento para desbloquear descontos automáticos de longo prazo e a cota ideal de anúncios para a sua loja.
+            Escolha o ciclo de pagamento para desbloquear descontos automáticos de longo prazo ou garanta o plano vitalício Sócio Fundador.
           </p>
 
           <div className="mt-6 flex flex-col items-center gap-2">
@@ -103,58 +152,90 @@ export const PlansPage: React.FC = () => {
             />
             {preselectedBillingCycle !== 'monthly' && (
               <p className="text-xs font-semibold text-emerald-700 dark:text-emerald-400 tabular-nums">
-                Economize garantindo seu plano com pagamento em até 12x no cartão ou PIX com desconto aplicado.
+                Economize garantindo seu plano recorrente com pagamento em até 12x no cartão ou PIX com desconto aplicado.
               </p>
             )}
           </div>
         </div>
 
         {/* Plans Grid */}
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-6 lg:gap-8 max-w-6xl mx-auto mb-14">
-          {plans.map((plan) => {
+        <div
+          className={`grid grid-cols-1 md:grid-cols-2 ${
+            publicPlans.length >= 4 ? 'lg:grid-cols-4' : 'lg:grid-cols-3'
+          } gap-6 max-w-7xl mx-auto mb-10`}
+        >
+          {publicPlans.map((plan) => {
             const pricing = calculatePlanPricing(plan, preselectedBillingCycle, planDiscountConfig);
             const isFree = pricing.isFree;
+            const isLifetime = isLifetimePlan(plan);
+            const isFounder = isFounderPlan(plan);
 
             return (
               <div
                 key={plan.id}
-                className={`relative flex flex-col justify-between rounded-3xl p-6 sm:p-8 bg-white dark:bg-slate-900 transition-all ${
-                  plan.highlighted
-                    ? 'border-2 border-orange-500 shadow-xl shadow-orange-500/10 scale-102 lg:-translate-y-2'
+                className={`relative flex flex-col justify-between rounded-3xl p-6 bg-white dark:bg-slate-900 transition-all ${
+                  isFounder
+                    ? 'border-2 border-amber-500 shadow-xl shadow-amber-500/15 ring-2 ring-amber-400/20'
+                    : plan.highlighted
+                    ? 'border-2 border-orange-500 shadow-xl shadow-orange-500/10 lg:-translate-y-1.5'
                     : 'border border-slate-200 dark:border-slate-800 shadow-sm hover:shadow-md'
                 }`}
               >
-                {plan.highlighted && (
+                {(plan.highlighted || isFounder) && (
                   <div className="absolute -top-3.5 left-1/2 -translate-x-1/2">
-                    <span className="flex items-center gap-1 px-3 py-1 rounded-full bg-orange-600 text-white text-[10px] font-black uppercase tracking-wider shadow-sm whitespace-nowrap">
-                      <Sparkles className="w-3 h-3" />
-                      Mais Popular
+                    <span
+                      className={`flex items-center gap-1 px-3 py-1 rounded-full text-white text-[10px] font-black uppercase tracking-wider shadow-sm whitespace-nowrap ${
+                        isFounder
+                          ? 'bg-gradient-to-r from-amber-600 to-orange-600'
+                          : 'bg-orange-600'
+                      }`}
+                    >
+                      {isFounder ? <Crown className="w-3 h-3" /> : <Sparkles className="w-3 h-3" />}
+                      {isFounder ? 'Sócio Fundador · Vitalício' : 'Mais Popular'}
                     </span>
                   </div>
                 )}
 
                 <div>
-                  <div className="flex items-center justify-between gap-2 mb-4">
-                    <span className="text-xs font-bold text-slate-500 dark:text-slate-400">
+                  <div className="flex items-center justify-between gap-2 mb-4 pt-1">
+                    <span
+                      className={`text-xs font-bold ${
+                        isFounder
+                          ? 'text-amber-700 dark:text-amber-400'
+                          : 'text-slate-500 dark:text-slate-400'
+                      }`}
+                    >
                       {plan.badge}
                     </span>
                     <span className="text-xs font-semibold text-slate-400 flex items-center gap-1 font-mono tabular-nums">
-                      <Package className="w-3.5 h-3.5 text-blue-600" />
+                      <Package className="w-3.5 h-3.5 text-blue-600 shrink-0" />
                       Até {plan.productLimit} itens
                     </span>
                   </div>
 
-                  <h3 className="text-xl sm:text-2xl font-bold text-slate-900 dark:text-white font-display">
+                  <h3 className="text-xl font-bold text-slate-900 dark:text-white font-display">
                     {plan.name}
                   </h3>
 
                   <div className="mt-4 mb-5">
                     {isFree ? (
                       <div className="flex items-baseline gap-1">
-                        <span className="text-3xl sm:text-4xl font-extrabold text-slate-900 dark:text-white">
+                        <span className="text-3xl font-extrabold text-slate-900 dark:text-white">
                           Grátis
                         </span>
                         <span className="text-xs font-medium text-slate-500">sempre gratuito</span>
+                      </div>
+                    ) : isLifetime ? (
+                      <div className="space-y-1">
+                        <div className="flex items-baseline gap-1">
+                          <span className="text-sm font-semibold text-slate-500">R$</span>
+                          <span className="text-3xl sm:text-4xl font-extrabold text-slate-900 dark:text-white font-mono tabular-nums">
+                            {pricing.totalAmount.toFixed(2).replace('.', ',')}
+                          </span>
+                        </div>
+                        <p className="text-xs font-bold text-amber-700 dark:text-amber-400">
+                          Pagamento único · Sem mensalidade · Vitalício
+                        </p>
                       </div>
                     ) : (
                       <div className="space-y-1.5">
@@ -193,7 +274,7 @@ export const PlansPage: React.FC = () => {
                           </div>
                         ) : (
                           <p className="text-[11px] text-slate-500 dark:text-slate-400">
-                            Cobrança mensal · Troque para Anual, Bienal ou Trienal acima para economizar
+                            Cobrança mensal · Descontos disponíveis acima
                           </p>
                         )}
                       </div>
@@ -201,19 +282,30 @@ export const PlansPage: React.FC = () => {
                   </div>
 
                   {/* Quota Indicator */}
-                  <div className="p-3 rounded-xl bg-blue-50 dark:bg-blue-950/40 border border-blue-100 dark:border-blue-900/50 mb-6 text-xs text-blue-800 dark:text-blue-300 space-y-1.5">
+                  <div
+                    className={`p-3 rounded-xl border mb-6 text-xs space-y-1.5 ${
+                      isFounder
+                        ? 'bg-amber-50/70 dark:bg-amber-950/30 border-amber-200 dark:border-amber-900/50 text-amber-900 dark:text-amber-200'
+                        : 'bg-blue-50 dark:bg-blue-950/40 border-blue-100 dark:border-blue-900/50 text-blue-800 dark:text-blue-300'
+                    }`}
+                  >
                     <div className="flex items-center gap-1.5 font-bold">
-                      <Building2 className="w-3.5 h-3.5 text-blue-600 shrink-0" />
-                      <span>Até {plan.businessLimit || 1} {plan.businessLimit === 1 ? 'loja' : 'lojas'} por conta</span>
+                      <Building2 className={`w-3.5 h-3.5 shrink-0 ${isFounder ? 'text-amber-600' : 'text-blue-600'}`} />
+                      <span>
+                        Até {plan.businessLimit || 1}{' '}
+                        {(plan.businessLimit || 1) === 1 ? 'loja exclusiva' : 'lojas por conta'}
+                      </span>
                     </div>
                     <div className="flex items-center gap-1.5 text-slate-700 dark:text-slate-300">
-                      <Package className="w-3.5 h-3.5 text-blue-600 shrink-0" />
-                      <span>Até <strong>{plan.productLimit} anúncios somados</strong> (produtos e/ou serviços) por loja</span>
+                      <Package className={`w-3.5 h-3.5 shrink-0 ${isFounder ? 'text-amber-600' : 'text-blue-600'}`} />
+                      <span>
+                        Até <strong>{plan.productLimit} anúncios somados</strong> (produtos e/ou serviços)
+                      </span>
                     </div>
                   </div>
 
                   {/* Features List */}
-                  <ul className="space-y-3 mb-8 text-xs sm:text-sm text-slate-600 dark:text-slate-300">
+                  <ul className="space-y-2.5 mb-8 text-xs sm:text-sm text-slate-600 dark:text-slate-300">
                     {plan.features.map((feature, idx) => (
                       <li key={idx} className="flex items-start gap-2.5">
                         <Check className="w-4 h-4 text-emerald-500 shrink-0 mt-0.5" />
@@ -223,27 +315,115 @@ export const PlansPage: React.FC = () => {
                   </ul>
                 </div>
 
-                {/* CTA Button -> Leads to Mercado Pago Checkout if logged in, or Register */}
-                <button
-                  onClick={() => handleChoosePlan(plan.id)}
-                  className={`w-full py-3 px-4 rounded-xl text-xs sm:text-sm font-bold flex items-center justify-center gap-2 transition cursor-pointer shadow-xs ${
-                    plan.highlighted
-                      ? 'bg-orange-600 hover:bg-orange-700 text-white'
-                      : 'bg-slate-900 hover:bg-slate-800 text-white dark:bg-slate-100 dark:hover:bg-white dark:text-slate-900'
-                  }`}
-                >
-                  <span>
-                    {currentBusinessAuth
-                      ? isFree
-                        ? 'Plano Gratuito em Uso'
-                        : `Contratar ${pricing.shortLabel} (${formatBRL(pricing.totalAmount)})`
-                      : 'Anunciar Minha Loja'}
-                  </span>
-                  <ArrowRight className="w-4 h-4" />
-                </button>
+                {/* CTA Button */}
+                <div className="space-y-2.5">
+                  <button
+                    onClick={() => handleChoosePlan(plan.id)}
+                    className={`w-full py-3 px-4 rounded-xl text-xs sm:text-sm font-bold flex items-center justify-center gap-2 transition cursor-pointer shadow-xs whitespace-nowrap ${
+                      isFounder
+                        ? 'bg-gradient-to-r from-amber-600 to-orange-600 hover:from-amber-700 hover:to-orange-700 text-white'
+                        : plan.highlighted
+                        ? 'bg-orange-600 hover:bg-orange-700 text-white'
+                        : 'bg-slate-900 hover:bg-slate-800 text-white dark:bg-slate-100 dark:hover:bg-white dark:text-slate-900'
+                    }`}
+                  >
+                    <span>
+                      {currentBusinessAuth
+                        ? isFree
+                          ? 'Plano Gratuito em Uso'
+                          : isLifetime
+                          ? `Virar Sócio Fundador (${formatBRL(pricing.totalAmount)})`
+                          : `Contratar ${pricing.shortLabel} (${formatBRL(pricing.totalAmount)})`
+                        : isFounder
+                        ? 'Garantir Sócio Fundador'
+                        : 'Anunciar Minha Loja'}
+                    </span>
+                    <ArrowRight className="w-4 h-4 shrink-0" />
+                  </button>
+                  {isFounder && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setCurrentView('founder_sales');
+                        window.scrollTo({ top: 0, behavior: 'smooth' });
+                      }}
+                      className="w-full text-center text-xs font-semibold text-amber-700 dark:text-amber-400 hover:underline cursor-pointer"
+                    >
+                      Conhecer página de vantagens Sócio Fundador
+                    </button>
+                  )}
+                </div>
               </div>
             );
           })}
+        </div>
+
+        {/* Invite Code Activation Box (Convite Premium 6 Meses) */}
+        <div className="max-w-3xl mx-auto mb-12 p-5 sm:p-6 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-xs">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+            <div className="flex items-start gap-3">
+              <div className="w-10 h-10 rounded-xl bg-blue-50 dark:bg-blue-950/60 text-blue-600 dark:text-blue-400 flex items-center justify-center shrink-0 border border-blue-100 dark:border-blue-900">
+                <Ticket className="w-5 h-5" />
+              </div>
+              <div>
+                <h3 className="text-sm font-bold text-slate-900 dark:text-white">
+                  Possui um Código de Convite VIP (6 Meses Grátis)?
+                </h3>
+                <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
+                  O plano Convite Premium de 6 meses grátis é exclusivo para códigos ou links gerados pelo administrador.
+                </p>
+              </div>
+            </div>
+
+            <form onSubmit={handleValidateInvite} className="flex items-center gap-2 w-full sm:w-auto">
+              <input
+                type="text"
+                value={inviteInput}
+                onChange={(e) => setInviteInput(e.target.value.toUpperCase())}
+                placeholder="Ex: VIP6M-XXXX-XXXX"
+                className="flex-1 sm:w-48 px-3 py-2 rounded-xl border border-slate-300 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-xs font-mono uppercase text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+              />
+              <button
+                type="submit"
+                disabled={inviteChecking}
+                className="px-4 py-2 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold transition cursor-pointer whitespace-nowrap shrink-0 disabled:opacity-60"
+              >
+                {inviteChecking ? 'Validando...' : 'Validar Convite'}
+              </button>
+            </form>
+          </div>
+
+          {validatedInvite && (
+            <div className="mt-4 p-3.5 rounded-xl bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-200 dark:border-emerald-900 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+              <div className="flex items-center gap-2 text-xs text-emerald-800 dark:text-emerald-300">
+                <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+                <span>
+                  Código <strong>{validatedInvite.code}</strong> válido! Libera <strong>6 meses grátis do Plano Premium Ouro</strong> e após o período você decide o próximo plano ou cancela.
+                </span>
+              </div>
+              <button
+                type="button"
+                onClick={handleUseValidatedInvite}
+                className="px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold transition cursor-pointer whitespace-nowrap shrink-0"
+              >
+                {currentBusinessAuth ? 'Ativar na Minha Loja' : 'Cadastrar com Convite'}
+              </button>
+            </div>
+          )}
+
+          {inviteValidationError && (
+            <div className="mt-3 flex items-center gap-2 text-xs text-rose-600 dark:text-rose-400">
+              <AlertCircle className="w-4 h-4 shrink-0" />
+              <span>{inviteValidationError}</span>
+            </div>
+          )}
+
+          {inviteRedeemMsg && (
+            <div className="mt-3 flex items-center gap-2 text-xs text-emerald-700 dark:text-emerald-400 font-semibold">
+              <CheckCircle2 className="w-4 h-4 shrink-0" />
+              <span>{inviteRedeemMsg}</span>
+            </div>
+          )}
         </div>
 
         {/* Notice on Sponsored Rotating Banners (Cobrados separadamente) */}

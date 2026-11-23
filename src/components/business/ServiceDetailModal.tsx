@@ -16,6 +16,7 @@ import {
   Heart,
   CheckCircle2,
 } from 'lucide-react';
+import { normalizeWhatsappUrl } from '../../utils/seoHelper';
 
 export const ServiceDetailModal: React.FC = () => {
   const {
@@ -27,6 +28,7 @@ export const ServiceDetailModal: React.FC = () => {
     openModal,
     toggleFavoriteService,
     isServiceFavorite,
+    trackBusinessMetric,
   } = useDirectory();
 
   if (activeModal.type !== 'service_detail' || !activeModal.id) {
@@ -40,10 +42,11 @@ export const ServiceDetailModal: React.FC = () => {
   const city = cities.find((c) => c.id === service.cityId);
 
   const whatsappLink = business
-    ? `https://wa.me/${business.whatsapp.replace(/\D/g, '')}?text=${encodeURIComponent(
+    ? normalizeWhatsappUrl(
+        business.whatsapp,
         getServiceWhatsAppMessage(service, business.name)
-      )}`
-    : '#';
+      )
+    : '';
 
   const isFav = isServiceFavorite(service.id);
 
@@ -191,11 +194,12 @@ export const ServiceDetailModal: React.FC = () => {
             )}
 
             {/* Direct WhatsApp CTA */}
-            {business && (
+            {business && whatsappLink && (
               <a
                 href={whatsappLink}
                 target="_blank"
                 rel="noopener noreferrer"
+                onClick={() => trackBusinessMetric(business.id, 'whatsapp_click')}
                 className="w-full flex items-center justify-center gap-2 py-3.5 px-4 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-sm shadow-md hover:shadow-lg transition cursor-pointer"
               >
                 <MessageCircle className="w-5 h-5" />

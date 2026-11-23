@@ -22,6 +22,7 @@ export const FeaturedProducts: React.FC = () => {
     openModal,
     toggleFavoriteProduct,
     isProductFavorite,
+    trackBusinessMetric,
   } = useDirectory();
 
   const getBusiness = (businessId: string) => {
@@ -182,6 +183,7 @@ export const FeaturedProducts: React.FC = () => {
                         )}`}
                         target="_blank"
                         rel="noopener noreferrer"
+                        onClick={() => trackBusinessMetric(business.id, 'whatsapp_click')}
                         className="w-full flex items-center justify-center gap-1 py-1.5 sm:py-2 px-2 sm:px-3 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-[11px] sm:text-xs font-semibold shadow-xs transition-colors cursor-pointer"
                       >
                         <MessageCircle className="w-3.5 h-3.5" />

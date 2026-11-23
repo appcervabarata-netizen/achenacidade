@@ -21,10 +21,15 @@ import {
   CheckCircle2,
   FileCode,
   ExternalLink,
+  ChevronUp,
+  ChevronDown,
+  Eye,
+  EyeOff,
 } from 'lucide-react';
-import { City, Category, Plan, AdminTheme, Business } from '../../types';
+import { City, Category, Plan, PlanBillingType, PlanVipTier, AdminTheme, Business } from '../../types';
 import { AdminBusinessEditModal } from './AdminBusinessEditModal';
 import { generateHostGatorPackage, downloadFile } from '../../utils/hostgatorGenerator';
+import { formatBRL, getPlanBillingType, isInviteTrialPlan, isLifetimePlan } from '../../utils/planPricing';
 
 export const AdminModal: React.FC = () => {
   const {
@@ -42,6 +47,7 @@ export const AdminModal: React.FC = () => {
     addPlan,
     updatePlan,
     deletePlan,
+    movePlanOrder,
     businesses,
     updateBusiness,
     deleteBusiness,
@@ -88,11 +94,17 @@ export const AdminModal: React.FC = () => {
   const [planForm, setPlanForm] = useState({
     name: '',
     priceMonthly: 0,
+    priceOnce: 0,
+    billingType: 'recurring' as PlanBillingType,
+    trialMonths: 6,
+    isInviteOnly: false,
+    vipTier: 'none' as PlanVipTier,
     productLimit: 5,
     businessLimit: 1,
     badge: 'Popular',
     featuresText: 'Cadastro da empresa\nDivulgação de produtos\nContato WhatsApp',
     highlighted: false,
+    showOnHome: true,
     color: '#1D4ED8',
   });
 
@@ -116,8 +128,10 @@ export const AdminModal: React.FC = () => {
   const totalBusinesses = businesses.length;
   const totalProducts = products.length;
   const monthlyRevenue = businesses.reduce((acc, b) => {
+    if (b.subscriptionStatus === 'cancelled') return acc;
     const p = plans.find((pl) => pl.id === b.planId);
-    return acc + (p ? p.priceMonthly : 0);
+    if (!p || isLifetimePlan(p) || isInviteTrialPlan(p)) return acc;
+    return acc + (p.priceMonthly || 0);
   }, 0);
 
   // Copy code helper
@@ -179,39 +193,44 @@ export const AdminModal: React.FC = () => {
       .map((f) => f.trim())
       .filter(Boolean);
 
+    const payload = {
+      name: planForm.name,
+      priceMonthly: planForm.billingType === 'recurring' ? Number(planForm.priceMonthly) : 0,
+      priceOnce: planForm.billingType === 'lifetime' ? Number(planForm.priceOnce) : 0,
+      billingType: planForm.billingType,
+      trialMonths: planForm.billingType === 'invite_trial' ? Math.max(1, Number(planForm.trialMonths) || 6) : 0,
+      isInviteOnly: planForm.billingType === 'invite_trial' ? true : planForm.isInviteOnly,
+      vipTier: planForm.vipTier,
+      productLimit: Number(planForm.productLimit),
+      businessLimit: Number(planForm.businessLimit),
+      badge: planForm.badge,
+      features,
+      highlighted: planForm.highlighted,
+      showOnHome: planForm.isInviteOnly ? false : planForm.showOnHome,
+      color: planForm.color,
+    };
+
     if (editingPlanId) {
-      updatePlan(editingPlanId, {
-        name: planForm.name,
-        priceMonthly: Number(planForm.priceMonthly),
-        productLimit: Number(planForm.productLimit),
-        businessLimit: Number(planForm.businessLimit),
-        badge: planForm.badge,
-        features,
-        highlighted: planForm.highlighted,
-        color: planForm.color,
-      });
+      updatePlan(editingPlanId, payload);
       setEditingPlanId(null);
     } else {
-      addPlan({
-        name: planForm.name,
-        priceMonthly: Number(planForm.priceMonthly),
-        productLimit: Number(planForm.productLimit),
-        businessLimit: Number(planForm.businessLimit),
-        badge: planForm.badge,
-        features,
-        highlighted: planForm.highlighted,
-        color: planForm.color,
-      });
+      addPlan(payload);
     }
 
     setPlanForm({
       name: '',
       priceMonthly: 0,
+      priceOnce: 0,
+      billingType: 'recurring',
+      trialMonths: 6,
+      isInviteOnly: false,
+      vipTier: 'none',
       productLimit: 5,
       businessLimit: 1,
       badge: 'Popular',
       featuresText: 'Cadastro da empresa\nDivulgação de produtos\nContato WhatsApp',
       highlighted: false,
+      showOnHome: true,
       color: '#1D4ED8',
     });
   };
@@ -799,11 +818,17 @@ export const AdminModal: React.FC = () => {
                         setPlanForm({
                           name: '',
                           priceMonthly: 0,
+                          priceOnce: 0,
+                          billingType: 'recurring',
+                          trialMonths: 6,
+                          isInviteOnly: false,
+                          vipTier: 'none',
                           productLimit: 5,
                           businessLimit: 1,
                           badge: 'Popular',
                           featuresText: 'Cadastro da empresa\nDivulgação de produtos\nContato WhatsApp',
                           highlighted: false,
+                          showOnHome: true,
                           color: '#1D4ED8',
                         });
                       }}
@@ -831,14 +856,18 @@ export const AdminModal: React.FC = () => {
 
                   <div>
                     <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
-                      Preço Mensal (R$) *
+                      Preço Mensal / Único (R$) *
                     </label>
                     <input
                       type="number"
                       step="0.01"
                       required
-                      value={planForm.priceMonthly}
-                      onChange={(e) => setPlanForm({ ...planForm, priceMonthly: parseFloat(e.target.value) || 0 })}
+                      value={planForm.billingType === 'lifetime' ? planForm.priceOnce : planForm.priceMonthly}
+                      onChange={(e) =>
+                        planForm.billingType === 'lifetime'
+                          ? setPlanForm({ ...planForm, priceOnce: parseFloat(e.target.value) || 0 })
+                          : setPlanForm({ ...planForm, priceMonthly: parseFloat(e.target.value) || 0 })
+                      }
                       className="w-full px-3 py-2 rounded-xl border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 text-xs text-slate-900 dark:text-white font-mono"
                     />
                   </div>
@@ -897,16 +926,28 @@ export const AdminModal: React.FC = () => {
                   </div>
                 </div>
 
-                <div className="flex items-center justify-between">
-                  <label className="flex items-center gap-2 text-xs text-slate-600 dark:text-slate-300 cursor-pointer">
-                    <input
-                      type="checkbox"
-                      checked={planForm.highlighted}
-                      onChange={(e) => setPlanForm({ ...planForm, highlighted: e.target.checked })}
-                      className="rounded text-blue-600"
-                    />
-                    <span>Destacar como "Mais Escolhido" na Home</span>
-                  </label>
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <div className="flex flex-wrap items-center gap-4">
+                    <label className="flex items-center gap-2 text-xs text-slate-600 dark:text-slate-300 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={planForm.highlighted}
+                        onChange={(e) => setPlanForm({ ...planForm, highlighted: e.target.checked })}
+                        className="rounded text-blue-600"
+                      />
+                      <span>Destacar como Mais Escolhido</span>
+                    </label>
+                    <label className="flex items-center gap-2 text-xs text-slate-600 dark:text-slate-300 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        disabled={planForm.isInviteOnly}
+                        checked={planForm.isInviteOnly ? false : planForm.showOnHome}
+                        onChange={(e) => setPlanForm({ ...planForm, showOnHome: e.target.checked })}
+                        className="rounded text-emerald-600"
+                      />
+                      <span>Exibir na Página Inicial</span>
+                    </label>
+                  </div>
 
                   <button
                     type="submit"
@@ -919,7 +960,9 @@ export const AdminModal: React.FC = () => {
 
               {/* Cards de Planos Existentes */}
               <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                {plans.map((p) => (
+                {plans.map((p, index) => {
+                  const isHomeVisible = !p.isInviteOnly && p.showOnHome !== false;
+                  return (
                   <div
                     key={p.id}
                     className={`p-4 rounded-2xl border flex flex-col justify-between ${
@@ -929,6 +972,48 @@ export const AdminModal: React.FC = () => {
                     }`}
                   >
                     <div>
+                      <div className="flex items-center justify-between gap-2 pb-2.5 mb-2.5 border-b border-slate-200/80 dark:border-slate-700">
+                        <div className="flex items-center gap-1">
+                          <span className="text-[11px] font-mono font-bold text-slate-500 tabular-nums mr-1">
+                            #{index + 1}
+                          </span>
+                          <button
+                            type="button"
+                            disabled={index === 0}
+                            onClick={() => movePlanOrder(p.id, 'up')}
+                            className="p-1 rounded border border-slate-200 dark:border-slate-600 text-slate-600 dark:text-slate-300 disabled:opacity-35 cursor-pointer"
+                            title="Subir na ordem"
+                          >
+                            <ChevronUp className="w-3 h-3" />
+                          </button>
+                          <button
+                            type="button"
+                            disabled={index === plans.length - 1}
+                            onClick={() => movePlanOrder(p.id, 'down')}
+                            className="p-1 rounded border border-slate-200 dark:border-slate-600 text-slate-600 dark:text-slate-300 disabled:opacity-35 cursor-pointer"
+                            title="Descer na ordem"
+                          >
+                            <ChevronDown className="w-3 h-3" />
+                          </button>
+                        </div>
+
+                        <button
+                          type="button"
+                          disabled={!!p.isInviteOnly}
+                          onClick={() => updatePlan(p.id, { showOnHome: !isHomeVisible })}
+                          className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-bold transition ${
+                            p.isInviteOnly
+                              ? 'bg-slate-100 text-slate-400 cursor-not-allowed'
+                              : isHomeVisible
+                              ? 'bg-emerald-100 text-emerald-800 cursor-pointer'
+                              : 'bg-slate-100 text-slate-600 cursor-pointer'
+                          }`}
+                        >
+                          {isHomeVisible ? <Eye className="w-3 h-3" /> : <EyeOff className="w-3 h-3" />}
+                          <span>{p.isInviteOnly ? 'Só Convite' : isHomeVisible ? 'Na Home' : 'Oculto'}</span>
+                        </button>
+                      </div>
+
                       <div className="flex items-center justify-between">
                         <h5 className="font-bold text-sm text-slate-900 dark:text-white">{p.name}</h5>
                         <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-slate-100 dark:bg-slate-700 text-slate-700 dark:text-slate-300">
@@ -937,11 +1022,17 @@ export const AdminModal: React.FC = () => {
                       </div>
 
                       <div className="mt-2 text-lg font-black text-slate-900 dark:text-white font-mono">
-                        {p.priceMonthly === 0 ? 'Grátis' : `R$ ${p.priceMonthly.toFixed(2)}/mês`}
+                        {isLifetimePlan(p)
+                          ? `${formatBRL(p.priceOnce ?? 500)} único`
+                          : isInviteTrialPlan(p)
+                          ? `Grátis · ${p.trialMonths || 6} meses`
+                          : p.priceMonthly === 0
+                          ? 'Grátis'
+                          : `${formatBRL(p.priceMonthly)}/mês`}
                       </div>
 
                       <div className="mt-2 text-xs font-bold text-orange-600 dark:text-orange-400">
-                        Cota: {p.businessLimit || 1} {p.businessLimit === 1 ? 'loja' : 'lojas'} · {p.productLimit} produtos
+                        Cota: {p.businessLimit || 1} {p.businessLimit === 1 ? 'loja' : 'lojas'} · {p.productLimit} itens
                       </div>
 
                       <ul className="mt-3 space-y-1 text-[11px] text-slate-600 dark:text-slate-400">
@@ -960,11 +1051,17 @@ export const AdminModal: React.FC = () => {
                           setPlanForm({
                             name: p.name,
                             priceMonthly: p.priceMonthly,
+                            priceOnce: p.priceOnce ?? 0,
+                            billingType: getPlanBillingType(p),
+                            trialMonths: p.trialMonths ?? 6,
+                            isInviteOnly: !!p.isInviteOnly,
+                            vipTier: p.vipTier || 'none',
                             productLimit: p.productLimit,
                             businessLimit: p.businessLimit || 1,
                             badge: p.badge,
                             featuresText: p.features.join('\n'),
                             highlighted: !!p.highlighted,
+                            showOnHome: p.isInviteOnly ? false : p.showOnHome !== false,
                             color: p.color,
                           });
                         }}
@@ -992,7 +1089,8 @@ export const AdminModal: React.FC = () => {
                       </button>
                     </div>
                   </div>
-                ))}
+                  );
+                })}
               </div>
             </div>
           )}

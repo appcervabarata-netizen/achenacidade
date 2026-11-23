@@ -126,6 +126,71 @@ export function normalizeWhatsappUrl(number: string, message?: string): string {
   return `https://wa.me/${withCountry}${query}`;
 }
 
+export function formatWebsiteUrl(rawUrl?: string): string {
+  const val = (rawUrl || '').trim();
+  if (!val) return '';
+  if (/^https?:\/\//i.test(val)) return val;
+  return `https://${val.replace(/^\/+/, '')}`;
+}
+
+export function formatInstagramUrl(rawInstagram?: string): string {
+  const val = (rawInstagram || '').trim();
+  if (!val) return '';
+  if (/^https?:\/\//i.test(val)) return val;
+  if (/instagram\.com/i.test(val)) {
+    return `https://${val.replace(/^\/+/, '')}`;
+  }
+  const handle = val.replace(/^@+/, '').replace(/^\/+|\/+$/g, '');
+  return handle ? `https://instagram.com/${encodeURIComponent(handle)}` : '';
+}
+
+export function formatInstagramLabel(rawInstagram?: string): string {
+  const val = (rawInstagram || '').trim();
+  if (!val) return '';
+  if (/^https?:\/\//i.test(val) || /instagram\.com/i.test(val)) {
+    try {
+      const parsed = new URL(val.startsWith('http') ? val : `https://${val}`);
+      const seg = parsed.pathname.replace(/^\/+|\/+$/g, '').split('/')[0];
+      return seg ? `@${seg}` : 'Instagram';
+    } catch {
+      return val;
+    }
+  }
+  return val.startsWith('@') ? val : `@${val}`;
+}
+
+export function formatFacebookUrl(rawFacebook?: string): string {
+  const val = (rawFacebook || '').trim();
+  if (!val) return '';
+  if (/^https?:\/\//i.test(val)) return val;
+  if (/facebook\.com|fb\.com/i.test(val)) {
+    return `https://${val.replace(/^\/+/, '')}`;
+  }
+  const handle = val.replace(/^@+/, '').replace(/^\/+|\/+$/g, '');
+  return handle ? `https://facebook.com/${encodeURIComponent(handle)}` : '';
+}
+
+export function formatTelHref(rawPhone?: string): string {
+  const clean = (rawPhone || '').replace(/[^\d+]/g, '');
+  if (!clean) return '';
+  return `tel:${clean}`;
+}
+
+export function formatMailtoHref(rawEmail?: string): string {
+  const clean = (rawEmail || '').trim();
+  if (!clean) return '';
+  return `mailto:${clean}`;
+}
+
+export function formatMapsSearchUrl(parts: Array<string | undefined>): string {
+  const query = parts
+    .map((p) => (p || '').trim())
+    .filter(Boolean)
+    .join(', ');
+  if (!query) return '';
+  return `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(query)}`;
+}
+
 export function applySeoToDocumentHead(config: AppGeneralConfig): void {
   if (typeof document === 'undefined' || typeof window === 'undefined') return;
 
