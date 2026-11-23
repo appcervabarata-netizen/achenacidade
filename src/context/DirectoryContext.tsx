@@ -1,5 +1,5 @@
 import React, { createContext, useContext, useState, useEffect, useRef } from 'react';
-import { City, Category, Plan, PlanInvite, Business, Product, Service, AdminTheme, AdBanner, AppView, BusinessPortalTab, StoreProductCategory, SessionConfig, AuthSession, MercadoPagoConfig, PaymentTransaction, PushPreferences, PushAlertLog, SiteMode, SiteModeConfig, LaunchPageConfig, MaintenancePageConfig, SmtpConfig, EmailTemplate, EmailTemplateKey, EmailLogEntry, CheckoutTarget, BillingCycle, PlanDiscountConfig, AppGeneralConfig, BusinessMetricEventType, BusinessMetricsSummary, DailyMetricPoint } from '../types';
+import { City, Category, Plan, PlanInvite, Business, Product, Service, AdminTheme, AdBanner, BannerPlan, AppView, BusinessPortalTab, StoreProductCategory, SessionConfig, AuthSession, MercadoPagoConfig, PaymentTransaction, PushPreferences, PushAlertLog, SiteMode, SiteModeConfig, LaunchPageConfig, MaintenancePageConfig, SmtpConfig, EmailTemplate, EmailTemplateKey, EmailLogEntry, CheckoutTarget, BillingCycle, PlanDiscountConfig, AppGeneralConfig, BusinessMetricEventType, BusinessMetricsSummary, DailyMetricPoint } from '../types';
 import {
   initialCities,
   initialCategories,
@@ -8,6 +8,7 @@ import {
   initialProducts,
   initialServices,
   initialBanners,
+  initialBannerPlans,
   initialStoreProductCategories,
   defaultTheme,
   defaultMercadoPagoConfig,
@@ -52,6 +53,7 @@ import {
   trackBusinessMetricViaApi,
   fetchBusinessMetricsViaApi,
   loginViaApi,
+  loginDemoBusinessViaApi,
   verifySessionViaApi,
   renewSessionViaApi,
   logoutViaApi,
@@ -181,6 +183,11 @@ interface DirectoryContextType {
   deleteBanner: (id: string) => void;
   toggleBannerStatus: (id: string) => void;
   recordBannerClick: (id: string) => void;
+  bannerPlans: BannerPlan[];
+  addBannerPlan: (plan: Omit<BannerPlan, 'id'>) => void;
+  updateBannerPlan: (id: string, updates: Partial<BannerPlan>) => void;
+  deleteBannerPlan: (id: string) => void;
+  addMerchantBanner: (banner: Omit<AdBanner, 'id' | 'clicksCount' | 'isActive'>) => { success: boolean; error?: string };
 
   // Auth Session System (Database-backed with expiration)
   authSession: AuthSession;
@@ -189,6 +196,7 @@ interface DirectoryContextType {
   renewSession: () => Promise<{ success: boolean; error?: string }>;
   authenticateAdmin: (email: string, password: string) => Promise<{ success: boolean; error?: string }>;
   authenticateStoreOwner: (email: string, password: string) => Promise<{ success: boolean; error?: string }>;
+  loginDemoStoreOwner: () => Promise<{ success: boolean; error?: string }>;
   registerBusinessAndLogin: (
     biz: Omit<Business, 'id' | 'slug' | 'createdAt'>,
     navigateToPortal?: boolean
@@ -393,6 +401,12 @@ function isFounderSalesPath(
   pathname: string = typeof window !== 'undefined' ? window.location.pathname : '/'
 ): boolean {
   return pathname.replace(/\/+$/, '').toLowerCase() === '/socio-fundador';
+}
+
+function isBannerAdPagePath(
+  pathname: string = typeof window !== 'undefined' ? window.location.pathname : '/'
+): boolean {
+  return pathname.replace(/\/+$/, '').toLowerCase() === '/anunciar-banner';
 }
 
 function sortPlansList(list: Plan[]): Plan[] {
@@ -738,7 +752,7 @@ export const DirectoryProvider: React.FC<{ children: React.ReactNode }> = ({ chi
 
   // Full Screen Navigation State with History Support for Mobile Back Button
   const [currentView, setCurrentViewState] = useState<AppView>(() =>
-    isLoginAdminPath() ? 'admin_login' : isFounderSalesPath() ? 'founder_sales' : 'home'
+    isLoginAdminPath() ? 'admin_login' : isFounderSalesPath() ? 'founder_sales' : isBannerAdPagePath() ? 'banner_ad_page' : 'home'
   );
   const [businessPortalTab, setBusinessPortalTab] = useState<BusinessPortalTab>('dashboard');
 
@@ -749,7 +763,9 @@ export const DirectoryProvider: React.FC<{ children: React.ReactNode }> = ({ chi
           ? '/loginadmin'
           : view === 'founder_sales'
           ? '/socio-fundador'
-          : (isLoginAdminPath() && view !== 'admin') || isFounderSalesPath()
+          : view === 'banner_ad_page'
+          ? '/anunciar-banner'
+          : (isLoginAdminPath() && view !== 'admin') || isFounderSalesPath() || isBannerAdPagePath()
           ? '/'
           : null;
 
@@ -785,6 +801,49 @@ export const DirectoryProvider: React.FC<{ children: React.ReactNode }> = ({ chi
   useEffect(() => {
     localStorage.setItem('achenacidade_banners', JSON.stringify(banners));
   }, [banners]);
+
+  // Banner Pricing Plans State
+  const [bannerPlans, setBannerPlans] = useState<BannerPlan[]>(() => {
+    try {
+      const saved = localStorage.getItem('achenacidade_banner_plans');
+      return saved ? JSON.parse(saved) : initialBannerPlans;
+    } catch {
+      return initialBannerPlans;
+    }
+  });
+
+  useEffect(() => {
+    localStorage.setItem('achenacidade_banner_plans', JSON.stringify(bannerPlans));
+    trackDbMutation(saveSettingToDb('bannerPlans', bannerPlans));
+  }, [bannerPlans]);
+
+  const addBannerPlan = (planData: Omit<BannerPlan, 'id'>) => {
+    const newPlan: BannerPlan = {
+      ...planData,
+      id: `bplan-${Date.now()}`,
+    };
+    setBannerPlans((prev) => [...prev, newPlan]);
+  };
+
+  const updateBannerPlan = (id: string, updates: Partial<BannerPlan>) => {
+    setBannerPlans((prev) => prev.map((p) => (p.id === id ? { ...p, ...updates } : p)));
+  };
+
+  const deleteBannerPlan = (id: string) => {
+    setBannerPlans((prev) => prev.filter((p) => p.id !== id));
+  };
+
+  const addMerchantBanner = (bannerData: Omit<AdBanner, 'id' | 'clicksCount' | 'isActive'>): { success: boolean; error?: string } => {
+    const newBanner: AdBanner = {
+      ...bannerData,
+      id: `banner-${Date.now()}`,
+      clicksCount: 0,
+      isActive: true,
+    };
+    setBanners((prev) => [newBanner, ...prev]);
+    trackDbMutation(createEntityInDb('banners', newBanner));
+    return { success: true };
+  };
 
   // Session Configuration (Configurable in Admin)
   const defaultSessionConfig: SessionConfig = {
@@ -2779,6 +2838,34 @@ export const DirectoryProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     return { success: true };
   };
 
+  const loginDemoStoreOwner = async (): Promise<{ success: boolean; error?: string }> => {
+    if (authSession.isAuthenticated && authSession.role === 'business') {
+      setCurrentView('business_portal');
+      setBusinessPortalTab('dashboard');
+      return { success: true };
+    }
+
+    const res = await loginDemoBusinessViaApi();
+    if (!res.success || !res.session) {
+      return {
+        success: false,
+        error: res.error || 'Não foi possível acessar automaticamente a área do lojista.',
+      };
+    }
+
+    const matchedBiz =
+      businesses.find((b) => b.id === res.session?.businessId) ||
+      businesses.find((b) => b.id === 'biz-1') ||
+      null;
+    if (matchedBiz) {
+      setCurrentBusinessAuth(matchedBiz);
+    }
+    setAuthSession(res.session);
+    setCurrentView('business_portal');
+    setBusinessPortalTab('dashboard');
+    return { success: true };
+  };
+
   const registerBusinessAndLogin = async (
     bizData: Omit<Business, 'id' | 'slug' | 'createdAt'>,
     navigateToPortal: boolean = true
@@ -3101,6 +3188,7 @@ export const DirectoryProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       });
     }
     if (data.settings?.sessionConfig) setSessionConfig(data.settings.sessionConfig);
+    if (Array.isArray((data.settings as any)?.bannerPlans)) setBannerPlans((data.settings as any).bannerPlans);
     if (data.settings?.appGeneralConfig) {
       setAppGeneralConfig({ ...defaultAppGeneralConfig, ...data.settings.appGeneralConfig });
     }
@@ -3395,6 +3483,7 @@ export const DirectoryProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         renewSession,
         authenticateAdmin,
         authenticateStoreOwner,
+        loginDemoStoreOwner,
         registerBusinessAndLogin,
         switchActiveBusiness,
         logout,
@@ -3406,6 +3495,11 @@ export const DirectoryProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         deleteBanner,
         toggleBannerStatus,
         recordBannerClick,
+        bannerPlans,
+        addBannerPlan,
+        updateBannerPlan,
+        deleteBannerPlan,
+        addMerchantBanner,
 
         adminTheme,
         setAdminTheme,

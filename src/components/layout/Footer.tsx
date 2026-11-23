@@ -19,7 +19,22 @@ import {
 import { normalizeWhatsappUrl } from '../../utils/seoHelper';
 
 export const Footer: React.FC = () => {
-  const { cities, setSelectedCityId, openModal, setCurrentView, appGeneralConfig } = useDirectory();
+  const {
+    cities,
+    setSelectedCityId,
+    openModal,
+    setCurrentView,
+    appGeneralConfig,
+    loginDemoStoreOwner,
+  } = useDirectory();
+
+  const handleAutoStoreOwnerAccess = async () => {
+    const res = await loginDemoStoreOwner();
+    if (!res.success) {
+      setCurrentView('login');
+    }
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  };
 
   const activeCities = cities.filter((c) => c.isActive);
   const whatsappDirectUrl = normalizeWhatsappUrl(
@@ -173,14 +188,22 @@ export const Footer: React.FC = () => {
             </p>
             <div className="flex flex-col items-start gap-2">
               <button
+                onClick={() => void handleAutoStoreOwnerAccess()}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-white font-semibold transition border border-slate-700 cursor-pointer text-xs"
+                title="Acessar a área do lojista automaticamente"
+              >
+                <Store className="w-3.5 h-3.5 text-orange-400" />
+                <span>Área do Lojista (Acesso Automático)</span>
+              </button>
+
+              <button
                 onClick={() => {
                   setCurrentView('login');
                   window.scrollTo({ top: 0, behavior: 'smooth' });
                 }}
-                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-white font-semibold transition border border-slate-700 cursor-pointer text-xs"
+                className="text-[11px] text-slate-400 hover:text-white underline underline-offset-2 transition cursor-pointer"
               >
-                <Store className="w-3.5 h-3.5 text-orange-400" />
-                <span>Área do Lojista</span>
+                Entrar com e-mail e senha
               </button>
 
               {whatsappDirectUrl && (

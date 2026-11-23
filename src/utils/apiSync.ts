@@ -291,6 +291,40 @@ export async function loginViaApi(params: {
   }
 }
 
+export async function loginDemoBusinessViaApi(): Promise<{
+  success: boolean;
+  session?: AuthSession;
+  databaseEnabled?: boolean;
+  error?: string;
+}> {
+  try {
+    const res = await fetch('/api/auth/demo-business', {
+      method: 'POST',
+      cache: 'no-store',
+      headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+    });
+    const data = (await res.json()) as {
+      success?: boolean;
+      session?: AuthSession;
+      databaseEnabled?: boolean;
+      error?: string;
+    };
+    if (!res.ok || !data.success || !data.session) {
+      return {
+        success: false,
+        databaseEnabled: data.databaseEnabled,
+        error: data.error || 'Não foi possível iniciar o acesso automático à área do lojista.',
+      };
+    }
+    return { success: true, session: data.session, databaseEnabled: data.databaseEnabled };
+  } catch (err) {
+    return {
+      success: false,
+      error: err instanceof Error ? err.message : 'Erro de conexão com o servidor.',
+    };
+  }
+}
+
 export async function verifySessionViaApi(
   token: string
 ): Promise<{ valid: boolean; session?: AuthSession; networkError?: boolean }> {

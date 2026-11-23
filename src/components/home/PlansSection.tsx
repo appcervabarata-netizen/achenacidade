@@ -31,7 +31,7 @@ export const PlansSection: React.FC = () => {
   };
 
   return (
-    <section id="planos" className="py-16 bg-slate-100 dark:bg-slate-950 border-t border-slate-200 dark:border-slate-800">
+    <section id="planos" className="hidden md:block py-16 bg-slate-100 dark:bg-slate-950 border-t border-slate-200 dark:border-slate-800">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
         
         {/* Section Header */}

@@ -2432,6 +2432,84 @@ export async function authenticateWithDb(
   }
 }
 
+export async function authenticateDemoBusinessInDb(params: {
+  ipAddress?: string;
+  userAgent?: string;
+}): Promise<{ success: boolean; session?: DbAuthSessionPayload; error?: string }> {
+  const activePool = getPool();
+  if (!activePool) {
+    return { success: false, error: 'Database not configured.' };
+  }
+
+  await ensureDatabaseSchema();
+  const conn = await activePool.getConnection();
+  try {
+    await cleanupExpiredSessions(conn);
+    const sessionCfg = await getSessionConfigFromDb(conn);
+    const now = Date.now();
+
+    const [bizRows] = await conn.query<RowDataPacket[]>(
+      `SELECT id, name, email, owner_email
+       FROM businesses
+       WHERE id = 'biz-1' OR LOWER(owner_email) = 'lojista@achenacidade.com.br'
+       ORDER BY (id = 'biz-1') DESC, sort_order ASC, id ASC
+       LIMIT 1`
+    );
+
+    if (bizRows.length === 0) {
+      return {
+        success: false,
+        error: 'Loja demonstrativa não encontrada. Cadastre ou entre com o e-mail e senha da sua loja.',
+      };
+    }
+
+    const demoBiz = bizRows[0];
+    const durationMinutes = sessionCfg.businessSessionDurationMinutes;
+    const expiresAt = now + durationMinutes * 60 * 1000;
+    const token = crypto.randomBytes(32).toString('hex');
+    const resolvedEmail = String(
+      demoBiz.owner_email || demoBiz.email || 'lojista@achenacidade.com.br'
+    );
+
+    await conn.query(
+      `INSERT INTO auth_sessions (
+         token, role, user_id, email, name, business_id, ip_address, user_agent,
+         created_at, expires_at, last_activity_at, revoked
+       ) VALUES (?, 'business', ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)`,
+      [
+        token,
+        demoBiz.id,
+        resolvedEmail,
+        demoBiz.name,
+        demoBiz.id,
+        params.ipAddress || null,
+        (params.userAgent || '').slice(0, 480) || null,
+        now,
+        expiresAt,
+        now,
+      ]
+    );
+
+    return {
+      success: true,
+      session: {
+        isAuthenticated: true,
+        role: 'business',
+        userId: String(demoBiz.id),
+        name: String(demoBiz.name),
+        email: resolvedEmail,
+        businessId: String(demoBiz.id),
+        token,
+        loginTimestamp: now,
+        expiresAt,
+        durationMinutes,
+      },
+    };
+  } finally {
+    conn.release();
+  }
+}
+
 export async function verifySessionTokenInDb(token: string): Promise<DbAuthSessionPayload | null> {
   const activePool = getPool();
   if (!activePool || !token) return null;

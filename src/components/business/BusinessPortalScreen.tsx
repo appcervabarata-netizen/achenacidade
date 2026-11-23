@@ -733,7 +733,7 @@ export const BusinessPortalScreen: React.FC = () => {
           }`}
         >
           <BarChart3 className="w-4 h-4" />
-          <span>Dashboard & Métricas</span>
+          <span>Dashboard</span>
         </button>
 
         <button
@@ -745,7 +745,7 @@ export const BusinessPortalScreen: React.FC = () => {
           }`}
         >
           <Package className="w-4 h-4" />
-          <span>Meus Produtos ({businessProducts.length})</span>
+          <span>Produtos ({businessProducts.length})</span>
         </button>
 
         <button
@@ -757,7 +757,7 @@ export const BusinessPortalScreen: React.FC = () => {
           }`}
         >
           <Wrench className="w-4 h-4" />
-          <span>Meus Serviços ({businessServices.length})</span>
+          <span>Serviços ({businessServices.length})</span>
         </button>
 
         <button
@@ -769,7 +769,7 @@ export const BusinessPortalScreen: React.FC = () => {
           }`}
         >
           <FolderPlus className="w-4 h-4 text-emerald-500" />
-          <span>Categorias de Produtos ({activeStoreCategories.length})</span>
+          <span>Categorias({activeStoreCategories.length})</span>
         </button>
 
         <button
@@ -781,7 +781,7 @@ export const BusinessPortalScreen: React.FC = () => {
           }`}
         >
           <Edit2 className="w-4 h-4" />
-          <span>Editar Perfil & Horários</span>
+          <span>Editar Perfil</span>
         </button>
 
         <button
@@ -793,7 +793,7 @@ export const BusinessPortalScreen: React.FC = () => {
           }`}
         >
           <Zap className="w-4 h-4 text-amber-500" />
-          <span>Meu Plano ({activePlan?.name})</span>
+          <span>Meu Plano</span>
         </button>
 
         <button
@@ -805,7 +805,7 @@ export const BusinessPortalScreen: React.FC = () => {
           }`}
         >
           <Plus className="w-4 h-4" />
-          <span>Cadastrar Nova Loja</span>
+          <span>Nova Loja</span>
         </button>
       </div>
 

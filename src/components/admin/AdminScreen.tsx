@@ -98,6 +98,10 @@ export const AdminScreen: React.FC = () => {
     updateBanner,
     deleteBanner,
     toggleBannerStatus,
+    bannerPlans,
+    addBannerPlan,
+    updateBannerPlan,
+    deleteBannerPlan,
     adminTheme,
     setAdminTheme,
     resetToDemoData,
@@ -257,6 +261,37 @@ export const AdminScreen: React.FC = () => {
     }
 
     resetBannerForm();
+  };
+
+  const [bannerPlanForm, setBannerPlanForm] = useState({
+    name: '',
+    durationDays: 30,
+    price: 150,
+    viewsLimit: 15000,
+    description: '',
+    highlighted: false,
+  });
+  const [editingBannerPlanId, setEditingBannerPlanId] = useState<string | null>(null);
+
+  const handleSaveBannerPlan = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!bannerPlanForm.name.trim()) return;
+    if (editingBannerPlanId) {
+      updateBannerPlan(editingBannerPlanId, bannerPlanForm);
+      setEditingBannerPlanId(null);
+      showAdminToast(`Plano de banner "${bannerPlanForm.name}" atualizado com sucesso!`);
+    } else {
+      addBannerPlan(bannerPlanForm);
+      showAdminToast(`Plano de banner "${bannerPlanForm.name}" criado com sucesso!`);
+    }
+    setBannerPlanForm({
+      name: '',
+      durationDays: 30,
+      price: 150,
+      viewsLimit: 15000,
+      description: '',
+      highlighted: false,
+    });
   };
 
   // City form
@@ -2618,6 +2653,125 @@ export const AdminScreen: React.FC = () => {
                 <div className="text-2xl font-black text-orange-600 mt-1">
                   {banners.reduce((acc, b) => acc + (b.clicksCount || 0), 0)}
                 </div>
+              </div>
+            </div>
+
+            {/* Banner Pricing Plans Management */}
+            <div className="p-5 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-xs space-y-4">
+              <div className="flex items-center justify-between">
+                <h4 className="text-sm font-bold text-slate-900 dark:text-white flex items-center gap-2">
+                  <CreditCard className="w-4 h-4 text-emerald-600" />
+                  <span>Planos de Banners para Visitantes & Lojistas ({bannerPlans.length})</span>
+                </h4>
+              </div>
+
+              <form onSubmit={handleSaveBannerPlan} className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-6 gap-3 items-end p-4 rounded-xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700">
+                <div className="lg:col-span-2">
+                  <label className="block text-[11px] font-bold text-slate-700 dark:text-slate-300 mb-1">
+                    Nome do Plano *
+                  </label>
+                  <input
+                    type="text"
+                    required
+                    value={bannerPlanForm.name}
+                    onChange={(e) => setBannerPlanForm({ ...bannerPlanForm, name: e.target.value })}
+                    placeholder="Ex: 15 dias de veiculação"
+                    className="w-full px-3 py-2 text-xs rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-white outline-none"
+                  />
+                </div>
+                <div>
+                  <label className="block text-[11px] font-bold text-slate-700 dark:text-slate-300 mb-1">
+                    Dias (Duração) *
+                  </label>
+                  <input
+                    type="number"
+                    min={1}
+                    required
+                    value={bannerPlanForm.durationDays}
+                    onChange={(e) => setBannerPlanForm({ ...bannerPlanForm, durationDays: parseInt(e.target.value) || 30 })}
+                    className="w-full px-3 py-2 text-xs rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-white outline-none"
+                  />
+                </div>
+                <div>
+                  <label className="block text-[11px] font-bold text-slate-700 dark:text-slate-300 mb-1">
+                    Preço (R$) *
+                  </label>
+                  <input
+                    type="number"
+                    min={0}
+                    step="0.01"
+                    required
+                    value={bannerPlanForm.price}
+                    onChange={(e) => setBannerPlanForm({ ...bannerPlanForm, price: parseFloat(e.target.value) || 0 })}
+                    className="w-full px-3 py-2 text-xs rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-white outline-none"
+                  />
+                </div>
+                <div>
+                  <label className="block text-[11px] font-bold text-slate-700 dark:text-slate-300 mb-1">
+                    Visualizações Estimadas
+                  </label>
+                  <input
+                    type="number"
+                    min={0}
+                    value={bannerPlanForm.viewsLimit}
+                    onChange={(e) => setBannerPlanForm({ ...bannerPlanForm, viewsLimit: parseInt(e.target.value) || 10000 })}
+                    className="w-full px-3 py-2 text-xs rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-white outline-none"
+                  />
+                </div>
+                <div>
+                  <button
+                    type="submit"
+                    className="w-full py-2 px-3 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs transition cursor-pointer shadow-xs whitespace-nowrap"
+                  >
+                    {editingBannerPlanId ? 'Atualizar Plano' : 'Criar Plano de Banner'}
+                  </button>
+                </div>
+              </form>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 pt-2">
+                {bannerPlans.map((bp) => (
+                  <div key={bp.id} className="p-3.5 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 flex flex-col justify-between gap-3">
+                    <div>
+                      <div className="flex items-center justify-between">
+                        <span className="font-bold text-xs text-slate-900 dark:text-white">{bp.name}</span>
+                        <span className="text-xs font-mono font-black text-emerald-600">{formatBRL(bp.price)}</span>
+                      </div>
+                      <div className="text-[11px] text-slate-500 mt-1">
+                        Duração: <strong>{bp.durationDays} dias</strong>
+                        {bp.viewsLimit ? ` · ${bp.viewsLimit.toLocaleString()} views` : ''}
+                      </div>
+                      {bp.description && (
+                        <p className="text-[11px] text-slate-400 mt-1">{bp.description}</p>
+                      )}
+                    </div>
+                    <div className="flex items-center justify-end gap-2 pt-2 border-t border-slate-100 dark:border-slate-800">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setEditingBannerPlanId(bp.id);
+                          setBannerPlanForm({
+                            name: bp.name,
+                            durationDays: bp.durationDays,
+                            price: bp.price,
+                            viewsLimit: bp.viewsLimit || 10000,
+                            description: bp.description || '',
+                            highlighted: !!bp.highlighted,
+                          });
+                        }}
+                        className="text-[11px] font-bold text-blue-600 hover:underline cursor-pointer"
+                      >
+                        Editar
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => deleteBannerPlan(bp.id)}
+                        className="text-[11px] font-bold text-red-500 hover:underline cursor-pointer"
+                      >
+                        Excluir
+                      </button>
+                    </div>
+                  </div>
+                ))}
               </div>
             </div>
 

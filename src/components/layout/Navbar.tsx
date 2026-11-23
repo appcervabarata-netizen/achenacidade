@@ -216,7 +216,7 @@ export const Navbar: React.FC = () => {
                       ? 'bg-orange-600 text-white'
                       : 'bg-slate-900 hover:bg-slate-800 text-white dark:bg-slate-100 dark:hover:bg-white dark:text-slate-900'
                   }`}
-                  title="Abrir Painel Administrativo"
+                  title="Painel Administrativo"
                 >
                   <ShieldCheck className="w-3.5 h-3.5 text-orange-400" />
                   <span className="hidden sm:inline">Painel Admin</span>
@@ -250,7 +250,7 @@ export const Navbar: React.FC = () => {
               <button
                 onClick={() => setCurrentView('register_store')}
                 className="hidden sm:flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-orange-200 dark:border-orange-900 bg-orange-50 dark:bg-orange-950/40 text-orange-700 dark:text-orange-300 hover:bg-orange-100 text-xs font-bold transition-colors cursor-pointer whitespace-nowrap shadow-xs"
-                title="Cadastrar Nova Loja no Achenacidade"
+                title="Cadastrar Loja"
               >
                 <PlusCircle className="w-3.5 h-3.5 text-orange-600" />
                 <span>Cadastrar Loja</span>
@@ -260,7 +260,7 @@ export const Navbar: React.FC = () => {
               <button
                 onClick={() => setCurrentView('login')}
                 className="hidden sm:flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold shadow-xs transition-colors cursor-pointer whitespace-nowrap"
-                title="Entrar no Portal da Loja"
+                title="Entrar no Perfil da Loja"
               >
                 <User className="w-3.5 h-3.5" />
                 <span>Entrar</span>

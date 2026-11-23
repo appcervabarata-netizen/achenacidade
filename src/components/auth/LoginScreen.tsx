@@ -17,12 +17,14 @@ import {
   KeyRound,
   CheckCircle,
   Send,
+  Zap,
 } from 'lucide-react';
 
 export const LoginScreen: React.FC = () => {
   const {
     setCurrentView,
     authenticateStoreOwner,
+    loginDemoStoreOwner,
     sessionConfig,
     smtpConfig,
   } = useDirectory();
@@ -63,6 +65,22 @@ export const LoginScreen: React.FC = () => {
       }
     } catch {
       setErrorMsg('Falha de comunicação ao validar credenciais.');
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  const handleDemoAutoLogin = async () => {
+    setErrorMsg(null);
+    setSuccessMsg(null);
+    setIsSubmitting(true);
+    try {
+      const result = await loginDemoStoreOwner();
+      if (!result.success) {
+        setErrorMsg(result.error || 'Não foi possível entrar automaticamente na área do lojista.');
+      }
+    } catch {
+      setErrorMsg('Falha de comunicação ao acessar a área do lojista.');
     } finally {
       setIsSubmitting(false);
     }
@@ -303,8 +321,18 @@ export const LoginScreen: React.FC = () => {
                 <ArrowRight className="w-4 h-4" />
               </button>
 
-              {/* Option: Cadastrar Nova Empresa */}
-              <div className="pt-2 border-t border-slate-100 dark:border-slate-800 text-center">
+              {/* Option: Acesso Automático & Cadastrar Nova Empresa */}
+              <div className="pt-3 border-t border-slate-100 dark:border-slate-800 space-y-2.5 text-center">
+                <button
+                  type="button"
+                  disabled={isSubmitting}
+                  onClick={() => void handleDemoAutoLogin()}
+                  className="w-full py-2.5 px-4 rounded-xl border border-emerald-300 dark:border-emerald-800 bg-emerald-50 dark:bg-emerald-950/40 text-emerald-800 dark:text-emerald-300 hover:bg-emerald-100 dark:hover:bg-emerald-950/70 text-xs font-bold transition flex items-center justify-center gap-2 cursor-pointer shadow-xs disabled:opacity-60"
+                >
+                  <Zap className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400" />
+                  <span>Acessar Área do Lojista Automaticamente</span>
+                </button>
+
                 <button
                   type="button"
                   onClick={() => setCurrentView('register_store')}

@@ -17,6 +17,7 @@ import { ProductsPage } from './components/pages/ProductsPage';
 import { ServicesPage } from './components/pages/ServicesPage';
 import { PlansPage } from './components/pages/PlansPage';
 import { FounderSalesPage } from './components/pages/FounderSalesPage';
+import { BannerAdPage } from './components/pages/BannerAdPage';
 import { LaunchPage } from './components/pages/LaunchPage';
 import { MaintenancePage } from './components/pages/MaintenancePage';
 import { LoginScreen } from './components/auth/LoginScreen';
@@ -64,9 +65,9 @@ function AppContent() {
   }
 
   const isRestrictedMode = siteModeConfig.mode !== 'normal';
-  const allowedRestrictedViews = ['login', 'admin_login', 'admin', 'business_portal', 'plans', 'founder_sales', 'register_store', 'checkout'];
+  const allowedRestrictedViews = ['login', 'admin_login', 'admin', 'business_portal', 'plans', 'founder_sales', 'banner_ad_page', 'register_store', 'checkout'];
   const showRestrictedLanding = isRestrictedMode && !allowedRestrictedViews.includes(currentView);
-  const hideChrome = isRestrictedMode || currentView === 'checkout' || currentView === 'admin_login' || currentView === 'founder_sales';
+  const hideChrome = isRestrictedMode || currentView === 'checkout' || currentView === 'admin_login' || currentView === 'founder_sales' || currentView === 'banner_ad_page';
   const showStoreOwnerBottomMenu =
     authSession.isAuthenticated &&
     authSession.role === 'business' &&
@@ -119,6 +120,7 @@ function AppContent() {
       {currentView === 'services' && <ServicesPage />}
       {currentView === 'plans' && <PlansPage />}
       {currentView === 'founder_sales' && <FounderSalesPage />}
+      {currentView === 'banner_ad_page' && <BannerAdPage />}
       {currentView === 'home' && (
         <main className="flex-1">
           {/* Banner Rotativo Superior (acima dos campos de pesquisa) */}

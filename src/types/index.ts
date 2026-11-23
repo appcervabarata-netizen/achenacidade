@@ -167,9 +167,19 @@ export interface StoreProductCategory {
   description?: string;
 }
 
+export interface BannerPlan {
+  id: string;
+  name: string;
+  durationDays: number;
+  price: number;
+  viewsLimit?: number;
+  description?: string;
+  highlighted?: boolean;
+}
+
 export interface SessionConfig {
-  adminSessionDurationMinutes: number; // e.g. 120 (2h)
-  businessSessionDurationMinutes: number; // e.g. 1440 (24h)
+  adminSessionDurationMinutes: number;
+  businessSessionDurationMinutes: number;
 }
 
 export interface AuthSession {
@@ -193,6 +203,7 @@ export type AppView =
   | 'services'
   | 'plans'
   | 'founder_sales'
+  | 'banner_ad_page'
   | 'admin'
   | 'admin_login'
   | 'business_portal'
@@ -205,6 +216,7 @@ export type BusinessPortalTab =
   | 'products'
   | 'services'
   | 'prod_categories'
+  | 'banners'
   | 'edit_profile'
   | 'plans'
   | 'register_new';

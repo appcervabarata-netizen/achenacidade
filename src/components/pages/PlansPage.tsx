@@ -441,19 +441,23 @@ export const PlansPage: React.FC = () => {
                   <span className="text-xs text-amber-300">Cobrado Separadamente</span>
                 </div>
                 <h3 className="text-lg sm:text-xl font-bold text-white">
-                  Quer Banners Rotativos no Topo e Rodapé?
+                  Anuncie sua Marca em Banners Rotativos no Topo e Rodapé!
                 </h3>
                 <p className="mt-1 text-xs sm:text-sm text-slate-300 max-w-xl">
-                  Os banners publicitários são cadastrados exclusivamente pelo administrador e possuem contratação avulsa para máximo alcance da sua marca para visitantes de toda a cidade.
+                  Escolha seu plano de veiculação (7 dias, 15 dias, 30 dias ou 1 ano) e faça o pré-cadastro do seu banner para exibição imediata em toda a cidade.
                 </p>
               </div>
             </div>
 
             <button
-              onClick={() => setCurrentView('login')}
-              className="px-5 py-2.5 rounded-xl bg-orange-600 hover:bg-orange-500 text-white text-xs sm:text-sm font-bold shrink-0 transition shadow-md cursor-pointer"
+              onClick={() => {
+                setCurrentView('banner_ad_page');
+                window.scrollTo({ top: 0, behavior: 'smooth' });
+              }}
+              className="px-5 py-3 rounded-xl bg-orange-600 hover:bg-orange-500 text-white text-xs sm:text-sm font-bold shrink-0 transition shadow-md cursor-pointer flex items-center gap-2"
             >
-              Falar com Admin
+              <span>Anunciar Banner Aqui</span>
+              <ArrowRight className="w-4 h-4" />
             </button>
           </div>
         </div>

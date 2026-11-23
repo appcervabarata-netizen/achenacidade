@@ -1,4 +1,4 @@
-import { City, Category, Plan, Business, Product, Service, AdminTheme, AdBanner, StoreProductCategory, MercadoPagoConfig, PaymentTransaction, SiteModeConfig, SmtpConfig, EmailTemplate, EmailTemplateKey, PlanDiscountConfig, AppGeneralConfig } from '../types';
+import { City, Category, Plan, Business, Product, Service, AdminTheme, AdBanner, BannerPlan, StoreProductCategory, MercadoPagoConfig, PaymentTransaction, SiteModeConfig, SmtpConfig, EmailTemplate, EmailTemplateKey, PlanDiscountConfig, AppGeneralConfig } from '../types';
 import serviceTechRepairImg from '../assets/images/service_tech_repair_1794881238745.jpg';
 import servicePetGroomingImg from '../assets/images/service_pet_grooming_1794881240613.jpg';
 import serviceCoffeeCateringImg from '../assets/images/service_coffee_catering_1794881242678.jpg';
@@ -765,6 +765,45 @@ export const initialBanners: AdBanner[] = [
     isActive: true,
     clicksCount: 308,
     badgeText: 'Super Destaque',
+  },
+];
+
+export const initialBannerPlans: BannerPlan[] = [
+  {
+    id: 'bplan-7d',
+    name: '7 dias de veiculação',
+    durationDays: 7,
+    price: 50,
+    viewsLimit: 2500,
+    description: 'Ideal para promoções relâmpago, eventos de fim de semana ou campanhas de curta duração.',
+    highlighted: false,
+  },
+  {
+    id: 'bplan-15d',
+    name: '15 dias de veiculação',
+    durationDays: 15,
+    price: 90,
+    viewsLimit: 6000,
+    description: 'Perfeito para campanhas quinzenais e divulgação de novas coleções.',
+    highlighted: true,
+  },
+  {
+    id: 'bplan-30d',
+    name: '30 dias de veiculação',
+    durationDays: 30,
+    price: 150,
+    viewsLimit: 15000,
+    description: 'Máxima visibilidade durante todo o mês no topo do portal e rotativo.',
+    highlighted: false,
+  },
+  {
+    id: 'bplan-1yr',
+    name: 'Promoção de Lançamento 1 Ano',
+    durationDays: 365,
+    price: 500,
+    viewsLimit: 200000,
+    description: 'Presença garantida o ano inteiro com super desconto para anunciantes de prestígio.',
+    highlighted: false,
   },
 ];
 

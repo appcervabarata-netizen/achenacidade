@@ -28,6 +28,7 @@ import {
   migrateDatabaseSchema,
   cleanupLegacyTables,
   authenticateWithDb,
+  authenticateDemoBusinessInDb,
   verifySessionTokenInDb,
   renewSessionTokenInDb,
   revokeSessionTokenInDb,
@@ -1045,6 +1046,68 @@ app.get('/api/auth/session', async (req, res) => {
   } catch (err) {
     const message = err instanceof Error ? err.message : 'Erro ao validar sessão.';
     res.status(500).json({ authenticated: false, error: message });
+  }
+});
+
+app.post('/api/auth/demo-business', async (req, res) => {
+  const ip = getClientIp(req);
+  const now = Date.now();
+  const buildLocalDemoSession = () => {
+    const demoLocal =
+      localBusinessUsers.get('biz-1') ||
+      Array.from(localBusinessUsers.values()).find(
+        (b) => b.ownerEmail.toLowerCase() === 'lojista@achenacidade.com.br'
+      );
+    const token = crypto.randomBytes(32).toString('hex');
+    const durationMinutes = localSessionConfig.businessSessionDurationMinutes;
+    const session: DbAuthSessionPayload = {
+      isAuthenticated: true,
+      role: 'business',
+      userId: demoLocal?.id || 'biz-1',
+      name: demoLocal?.name || 'Café & Bistrô Grão Nobre',
+      email: demoLocal?.ownerEmail || demoLocal?.email || 'lojista@achenacidade.com.br',
+      businessId: demoLocal?.id || 'biz-1',
+      token,
+      loginTimestamp: now,
+      expiresAt: now + durationMinutes * 60 * 1000,
+      durationMinutes,
+    };
+    localSessions.set(token, session);
+    return session;
+  };
+
+  if (!isDatabaseConfigured()) {
+    const session = buildLocalDemoSession();
+    res.json({ success: true, databaseEnabled: false, session });
+    return;
+  }
+
+  try {
+    const result = await authenticateDemoBusinessInDb({
+      ipAddress: ip,
+      userAgent: req.headers['user-agent'] || '',
+    });
+
+    if (!result.success || !result.session) {
+      res.status(404).json({
+        success: false,
+        databaseEnabled: true,
+        error: result.error || 'Loja demonstrativa não encontrada.',
+      });
+      return;
+    }
+
+    res.json({ success: true, databaseEnabled: true, session: result.session });
+  } catch (err) {
+    const rawMessage = err instanceof Error ? err.message : 'Erro ao acessar área demo do lojista.';
+    console.error('Error in /api/auth/demo-business:', rawMessage);
+    if (isTransientConnectionError(err)) {
+      await closePool().catch(() => {});
+      const session = buildLocalDemoSession();
+      res.json({ success: true, databaseEnabled: false, session });
+      return;
+    }
+    res.status(500).json({ success: false, databaseEnabled: true, error: rawMessage });
   }
 });
 
