@@ -4,6 +4,7 @@ import dotenv from 'dotenv';
 import path from 'path';
 import fs from 'fs';
 import crypto from 'crypto';
+import QRCode from 'qrcode';
 import { fileURLToPath } from 'url';
 import {
   DEFAULT_ADMIN_EMAIL,
@@ -138,6 +139,252 @@ const localBusinessMetrics = new Map<
   Map<string, { views: number; whatsappClicks: number; showcaseClicks: number }>
 >();
 const localPlanInvites = new Map<string, DbPlanInvite>();
+const localSettingsMirror = new Map<string, any>();
+
+interface ServerMercadoPagoConfig {
+  enabled: boolean;
+  environment: 'sandbox' | 'production';
+  publicKey: string;
+  accessToken: string;
+  pixKey?: string;
+  statementDescriptor: string;
+  autoApproveInSandbox?: boolean;
+}
+
+interface LocalMercadoPagoPaymentRecord {
+  paymentId: string;
+  mode: 'mercadopago_api' | 'sandbox_simulation';
+  environment: 'sandbox' | 'production';
+  status: 'pending' | 'approved' | 'rejected';
+  statusDetail: string;
+  amount: number;
+  description: string;
+  externalReference: string;
+  payerEmail: string;
+  qrCode?: string;
+  qrCodeBase64?: string;
+  createdAt: number;
+  paidAt?: string | null;
+}
+
+const localMercadoPagoPayments = new Map<string, LocalMercadoPagoPaymentRecord>();
+
+function maskSecretToken(token?: string): string {
+  const clean = (token || '').trim();
+  if (!clean) return '';
+  if (clean.length <= 12) return '••••••••';
+  const prefixMatch = clean.match(/^(APP_USR-|TEST-)/);
+  const prefix = prefixMatch ? prefixMatch[1] : '';
+  const tail = clean.slice(-4);
+  return `${prefix}••••••••••••${tail}`;
+}
+
+function sanitizeMercadoPagoConfigForPublic(raw: any) {
+  if (!raw || typeof raw !== 'object') return raw;
+  const envToken = process.env.MERCADOPAGO_ACCESS_TOKEN?.trim() || '';
+  const storedToken = typeof raw.accessToken === 'string' ? raw.accessToken.trim() : '';
+  const effectiveToken = storedToken || envToken;
+  return {
+    enabled: Boolean(raw.enabled ?? true),
+    environment: raw.environment === 'production' ? 'production' : 'sandbox',
+    publicKey: typeof raw.publicKey === 'string' ? raw.publicKey : '',
+    accessToken: '',
+    hasAccessToken: Boolean(effectiveToken),
+    accessTokenMasked: effectiveToken ? maskSecretToken(effectiveToken) : '',
+    pixKey: typeof raw.pixKey === 'string' ? raw.pixKey : '',
+    statementDescriptor:
+      typeof raw.statementDescriptor === 'string' && raw.statementDescriptor.trim()
+        ? raw.statementDescriptor.trim()
+        : 'ACHENACIDADE',
+    autoApproveInSandbox: raw.autoApproveInSandbox ?? true,
+  };
+}
+
+function sanitizeBootstrapDataForPublic(data: any) {
+  if (!data || typeof data !== 'object') return data;
+  if (data.settings && data.settings.mercadoPagoConfig) {
+    return {
+      ...data,
+      settings: {
+        ...data.settings,
+        mercadoPagoConfig: sanitizeMercadoPagoConfigForPublic(data.settings.mercadoPagoConfig),
+      },
+    };
+  }
+  return data;
+}
+
+async function getServerMercadoPagoConfig(): Promise<ServerMercadoPagoConfig> {
+  let dbCfg: Partial<ServerMercadoPagoConfig> | null = null;
+  if (isDatabaseConfigured()) {
+    try {
+      dbCfg = await getSettingFromDb<Partial<ServerMercadoPagoConfig>>('mercadoPagoConfig');
+    } catch (err) {
+      if (isTransientConnectionError(err)) {
+        await closePool().catch(() => {});
+      }
+    }
+  }
+  const mirrorCfg = localSettingsMirror.get('mercadoPagoConfig') as Partial<ServerMercadoPagoConfig> | undefined;
+  const merged = { ...(mirrorCfg || {}), ...(dbCfg || {}) };
+
+  const storedToken = typeof merged.accessToken === 'string' ? merged.accessToken.trim() : '';
+  const envToken = (process.env.MERCADOPAGO_ACCESS_TOKEN || '').trim();
+  const accessToken = storedToken || envToken;
+
+  const environment: 'sandbox' | 'production' =
+    merged.environment === 'production'
+      ? 'production'
+      : merged.environment === 'sandbox'
+      ? 'sandbox'
+      : accessToken.startsWith('APP_USR-')
+      ? 'production'
+      : 'sandbox';
+
+  const descriptorRaw = typeof merged.statementDescriptor === 'string' ? merged.statementDescriptor : 'ACHENACIDADE';
+  const statementDescriptor =
+    descriptorRaw
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .replace(/[^A-Za-z0-9 ]/g, '')
+      .trim()
+      .toUpperCase()
+      .slice(0, 16) || 'ACHENACIDADE';
+
+  return {
+    enabled: merged.enabled !== false,
+    environment,
+    publicKey: typeof merged.publicKey === 'string' ? merged.publicKey.trim() : '',
+    accessToken,
+    pixKey: typeof merged.pixKey === 'string' ? merged.pixKey.trim() : '',
+    statementDescriptor,
+    autoApproveInSandbox: merged.autoApproveInSandbox ?? true,
+  };
+}
+
+function serverEmvTlv(id: string, value: string): string {
+  return `${id}${String(value.length).padStart(2, '0')}${value}`;
+}
+
+function computeServerPixCrc16(payloadWithTag6304: string): string {
+  let crc = 0xffff;
+  for (let i = 0; i < payloadWithTag6304.length; i++) {
+    crc ^= payloadWithTag6304.charCodeAt(i) << 8;
+    for (let j = 0; j < 8; j++) {
+      if ((crc & 0x8000) !== 0) {
+        crc = ((crc << 1) ^ 0x1021) & 0xffff;
+      } else {
+        crc = (crc << 1) & 0xffff;
+      }
+    }
+  }
+  return crc.toString(16).toUpperCase().padStart(4, '0');
+}
+
+function buildServerPixPayload(params: {
+  pixKey?: string;
+  descriptor?: string;
+  amount: number;
+  reference?: string;
+}): string {
+  const key = (params.pixKey || 'financeiro@achenacidade.com.br').trim().slice(0, 77);
+  const merchantName =
+    (params.descriptor || 'ACHENACIDADE')
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .replace(/[^A-Za-z0-9 ]/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim()
+      .toUpperCase()
+      .slice(0, 25) || 'ACHENACIDADE';
+  const formattedAmount = Math.max(0.01, Number(params.amount.toFixed(2))).toFixed(2);
+  const ref = (params.reference || 'PLANO').replace(/[^A-Za-z0-9]/g, '').slice(0, 25) || 'PLANO';
+
+  const merchantAccountInfo = serverEmvTlv('00', 'br.gov.bcb.pix') + serverEmvTlv('01', key);
+  const additionalData = serverEmvTlv('05', ref);
+  const body =
+    serverEmvTlv('00', '01') +
+    serverEmvTlv('26', merchantAccountInfo) +
+    serverEmvTlv('52', '0000') +
+    serverEmvTlv('53', '986') +
+    serverEmvTlv('54', formattedAmount) +
+    serverEmvTlv('58', 'BR') +
+    serverEmvTlv('59', merchantName) +
+    serverEmvTlv('60', 'ALAGOINHAS') +
+    serverEmvTlv('62', additionalData) +
+    '6304';
+  return body + computeServerPixCrc16(body);
+}
+
+function buildPublicNotificationUrl(req: express.Request): string | undefined {
+  const candidates = [
+    process.env.APP_URL,
+    req.headers['x-forwarded-host']
+      ? `https://${String(req.headers['x-forwarded-host']).split(',')[0].trim()}`
+      : undefined,
+    req.headers.origin,
+  ];
+  for (const raw of candidates) {
+    if (!raw || typeof raw !== 'string') continue;
+    try {
+      const parsed = new URL(raw.trim());
+      if (parsed.protocol !== 'https:') continue;
+      const host = parsed.hostname.toLowerCase();
+      if (
+        !host ||
+        host === 'localhost' ||
+        host === '127.0.0.1' ||
+        host.endsWith('.local') ||
+        /^10\.|^192\.168\.|^172\.(1[6-9]|2\d|3[0-1])\./.test(host)
+      ) {
+        continue;
+      }
+      return `${parsed.origin}/api/webhooks/mercadopago`;
+    } catch {
+      continue;
+    }
+  }
+  return undefined;
+}
+
+function translateMercadoPagoError(statusCode: number, data: any, environment: 'sandbox' | 'production'): string {
+  const rawMessage = typeof data?.message === 'string' ? data.message : '';
+  const causes: Array<{ code?: number | string; description?: string }> = Array.isArray(data?.cause)
+    ? data.cause
+    : [];
+  const causeText = causes
+    .map((c) => `${c.code ?? ''} ${c.description ?? ''}`.trim())
+    .filter(Boolean)
+    .join(' | ');
+  const combined = `${rawMessage} ${causeText}`.toLowerCase();
+
+  if (statusCode === 401 || /invalid_token|unauthorized|malformed access_token|bad_request.*token/.test(combined)) {
+    return 'Access Token inválido ou expirado no Mercado Pago. Acesse o Mercado Pago Developers, copie o Access Token oficial de Produção (APP_USR-...) e salve novamente no Painel Admin.';
+  }
+  if (/13253|financial identity|not enabled.*pix|pix.*not enabled|key.*pix|without key/.test(combined)) {
+    return 'Sua conta do Mercado Pago não possui uma Chave PIX cadastrada/ativa para gerar cobranças PIX em produção. Abra o app do Mercado Pago > Área Pix > Cadastrar Chave Pix.';
+  }
+  if (/collector.*involved|self.?payment|same user|payer cannot be the same/.test(combined)) {
+    return 'O Mercado Pago bloqueia o pagamento quando o e-mail do pagador é o mesmo e-mail da conta dona do Mercado Pago. Informe um e-mail diferente no campo "E-mail do Pagador".';
+  }
+  if (/identification|cpf|cnpj|document/.test(combined)) {
+    return 'O Mercado Pago exigiu um CPF ou CNPJ válido do pagador para emitir este QR Code PIX. Preencha o campo CPF/CNPJ do pagador e tente novamente.';
+  }
+  if (/payer\.email|invalid.*email/.test(combined)) {
+    return 'E-mail do pagador inválido para o Mercado Pago. Verifique o endereço de e-mail informado.';
+  }
+  if (/test_user|sandbox|live_credentials|cannot use test/.test(combined)) {
+    return environment === 'production'
+      ? 'Conflito de credenciais: o ambiente está em Produção, mas foi informado um token ou usuário de teste (Sandbox).'
+      : 'Conflito de credenciais de Sandbox no Mercado Pago.';
+  }
+  if (/notification_url/.test(combined)) {
+    return 'URL de notificação rejeitada pelo Mercado Pago. Verifique a URL pública da aplicação.';
+  }
+
+  const detail = causeText || rawMessage || `Erro HTTP ${statusCode}`;
+  return `Mercado Pago recusou a requisição (${statusCode}): ${detail}`;
+}
 
 function computeLocalInviteStatus(invite: DbPlanInvite): DbPlanInvite['status'] {
   if (invite.status === 'revoked') return 'revoked';
@@ -672,9 +919,18 @@ app.get('/api/bootstrap', async (_req, res) => {
       return;
     }
     const data = await readAllDirectoryData();
-    res.json({ databaseEnabled: true, seeded: true, data });
+    if (data?.settings?.mercadoPagoConfig) {
+      localSettingsMirror.set('mercadoPagoConfig', data.settings.mercadoPagoConfig);
+    }
+    res.json({ databaseEnabled: true, seeded: true, data: sanitizeBootstrapDataForPublic(data) });
   } catch (err) {
     const message = err instanceof Error ? err.message : 'Database bootstrap error.';
+    if (isTransientConnectionError(err)) {
+      await closePool().catch(() => {});
+      console.warn('Database temporarily unreachable in /api/bootstrap, using local preview fallback:', message);
+      res.status(200).json({ databaseEnabled: false, seeded: false, transientFallback: true, warning: message });
+      return;
+    }
     console.error('Error in /api/bootstrap:', message);
     res.status(500).json({ databaseEnabled: true, seeded: false, error: message });
   }
@@ -688,9 +944,19 @@ app.post('/api/bootstrap/seed', async (req, res) => {
 
   try {
     const result = await seedInitialDirectoryIfEmpty(req.body, false);
-    res.json({ databaseEnabled: true, seeded: true, seededNow: result.seededNow, data: result.data });
+    res.json({
+      databaseEnabled: true,
+      seeded: true,
+      seededNow: result.seededNow,
+      data: sanitizeBootstrapDataForPublic(result.data),
+    });
   } catch (err) {
     const message = err instanceof Error ? err.message : 'Database seed error.';
+    if (isTransientConnectionError(err)) {
+      await closePool().catch(() => {});
+      res.status(200).json({ databaseEnabled: false, seeded: false, transientFallback: true, warning: message });
+      return;
+    }
     console.error('Error in /api/bootstrap/seed:', message);
     res.status(500).json({ success: false, error: message });
   }
@@ -704,7 +970,7 @@ app.post('/api/bootstrap/reset', async (req, res) => {
 
   try {
     const result = await seedInitialDirectoryIfEmpty(req.body, true);
-    res.json({ databaseEnabled: true, reset: true, data: result.data });
+    res.json({ databaseEnabled: true, reset: true, data: sanitizeBootstrapDataForPublic(result.data) });
   } catch (err) {
     const message = err instanceof Error ? err.message : 'Database reset error.';
     console.error('Error in /api/bootstrap/reset:', message);
@@ -725,6 +991,11 @@ app.put('/api/sync/:collection', async (req, res) => {
     res.json({ success: true, databaseEnabled: true });
   } catch (err) {
     const message = err instanceof Error ? err.message : 'Database sync error.';
+    if (isTransientConnectionError(err)) {
+      await closePool().catch(() => {});
+      res.status(200).json({ success: true, databaseEnabled: false, transientFallback: true });
+      return;
+    }
     console.error(`Error syncing collection ${req.params.collection}:`, message);
     res.status(500).json({ success: false, error: message });
   }
@@ -732,7 +1003,33 @@ app.put('/api/sync/:collection', async (req, res) => {
 
 app.put('/api/settings/:key', async (req, res) => {
   const { key } = req.params;
-  const { value } = req.body as { value?: any };
+  let { value } = req.body as { value?: any };
+
+  if (key === 'mercadoPagoConfig') {
+    const adminSess = await requireAdminSession(req, res);
+    if (!adminSess) return;
+  }
+
+  if (key === 'mercadoPagoConfig' && value && typeof value === 'object') {
+    const existingCfg = await getServerMercadoPagoConfig();
+    const incomingToken = typeof value.accessToken === 'string' ? value.accessToken.trim() : '';
+    const isMaskedPlaceholder = !incomingToken || incomingToken.includes('••••');
+    const resolvedAccessToken = isMaskedPlaceholder ? existingCfg.accessToken : incomingToken;
+    value = {
+      enabled: value.enabled !== false,
+      environment: value.environment === 'production' ? 'production' : 'sandbox',
+      publicKey: typeof value.publicKey === 'string' ? value.publicKey.trim() : existingCfg.publicKey,
+      accessToken: resolvedAccessToken,
+      pixKey: typeof value.pixKey === 'string' ? value.pixKey.trim() : existingCfg.pixKey || '',
+      statementDescriptor:
+        typeof value.statementDescriptor === 'string' && value.statementDescriptor.trim()
+          ? value.statementDescriptor.trim().toUpperCase().slice(0, 16)
+          : existingCfg.statementDescriptor,
+      autoApproveInSandbox: value.autoApproveInSandbox ?? true,
+    };
+  }
+
+  localSettingsMirror.set(key, value);
 
   if (key === 'sessionConfig' && value && typeof value === 'object') {
     const adminMins = Number(value.adminSessionDurationMinutes);
@@ -757,6 +1054,11 @@ app.put('/api/settings/:key', async (req, res) => {
     res.json({ success: true, databaseEnabled: true });
   } catch (err) {
     const message = err instanceof Error ? err.message : 'Settings sync error.';
+    if (isTransientConnectionError(err)) {
+      await closePool().catch(() => {});
+      res.status(200).json({ success: true, databaseEnabled: false, transientFallback: true });
+      return;
+    }
     console.error(`Error saving setting ${req.params.key}:`, message);
     res.status(500).json({ success: false, error: message });
   }
@@ -774,7 +1076,12 @@ app.post('/api/bootstrap/sync-all', async (req, res) => {
 
   try {
     const result = await seedInitialDirectoryIfEmpty(req.body, true);
-    res.json({ success: true, databaseEnabled: true, seeded: true, data: result.data });
+    res.json({
+      success: true,
+      databaseEnabled: true,
+      seeded: true,
+      data: sanitizeBootstrapDataForPublic(result.data),
+    });
   } catch (err) {
     const message = err instanceof Error ? err.message : 'Database full sync error.';
     console.error('Error in /api/bootstrap/sync-all:', message);
@@ -817,6 +1124,11 @@ app.post('/api/entities/:resource', async (req, res) => {
     res.json({ success: true, databaseEnabled: true });
   } catch (err) {
     const message = err instanceof Error ? err.message : 'Entity create/upsert error.';
+    if (isTransientConnectionError(err)) {
+      await closePool().catch(() => {});
+      res.status(200).json({ success: true, databaseEnabled: false, transientFallback: true });
+      return;
+    }
     console.error(`Error creating/upserting ${req.params.resource}:`, message);
     res.status(500).json({ success: false, databaseEnabled: true, error: message });
   }
@@ -857,6 +1169,11 @@ app.put('/api/entities/:resource/:id', async (req, res) => {
     res.json({ success: true, updated: result.updated, databaseEnabled: true });
   } catch (err) {
     const message = err instanceof Error ? err.message : 'Entity update error.';
+    if (isTransientConnectionError(err)) {
+      await closePool().catch(() => {});
+      res.status(200).json({ success: true, updated: false, databaseEnabled: false, transientFallback: true });
+      return;
+    }
     console.error(`Error updating ${req.params.resource}/${req.params.id}:`, message);
     res.status(500).json({ success: false, databaseEnabled: true, error: message });
   }
@@ -879,6 +1196,11 @@ app.delete('/api/entities/:resource/:id', async (req, res) => {
     res.json({ success: true, deleted: result.deleted, databaseEnabled: true });
   } catch (err) {
     const message = err instanceof Error ? err.message : 'Entity delete error.';
+    if (isTransientConnectionError(err)) {
+      await closePool().catch(() => {});
+      res.status(200).json({ success: true, deleted: false, databaseEnabled: false, transientFallback: true });
+      return;
+    }
     console.error(`Error deleting ${req.params.resource}/${req.params.id}:`, message);
     res.status(500).json({ success: false, databaseEnabled: true, error: message });
   }
@@ -2115,6 +2437,602 @@ app.post('/api/plan-invites/redeem', async (req, res) => {
     }
     const message = err instanceof Error ? err.message : 'Erro ao resgatar convite.';
     res.status(500).json({ success: false, error: message });
+  }
+});
+
+// ========================================================
+// Mercado Pago REST API v1 (PIX Dinâmico, Cartão, Webhook)
+// ========================================================
+
+app.get('/api/mercadopago/admin-config', async (req, res) => {
+  const adminSess = await requireAdminSession(req, res);
+  if (!adminSess) return;
+  const cfg = await getServerMercadoPagoConfig();
+  res.json({
+    success: true,
+    config: {
+      ...sanitizeMercadoPagoConfigForPublic(cfg),
+      hasEnvToken: Boolean(process.env.MERCADOPAGO_ACCESS_TOKEN?.trim()),
+    },
+  });
+});
+
+app.post('/api/mercadopago/test-connection', async (req, res) => {
+  const adminSess = await requireAdminSession(req, res);
+  if (!adminSess) return;
+
+  const { accessToken: bodyToken, publicKey: bodyPublicKey, environment: bodyEnv } = (req.body || {}) as {
+    accessToken?: string;
+    publicKey?: string;
+    environment?: 'sandbox' | 'production';
+  };
+
+  const savedCfg = await getServerMercadoPagoConfig();
+  const rawIncomingToken = typeof bodyToken === 'string' ? bodyToken.trim() : '';
+  const effectiveToken =
+    rawIncomingToken && !rawIncomingToken.includes('••••') ? rawIncomingToken : savedCfg.accessToken;
+  const effectivePublicKey = typeof bodyPublicKey === 'string' && bodyPublicKey.trim()
+    ? bodyPublicKey.trim()
+    : savedCfg.publicKey;
+  const effectiveEnv: 'sandbox' | 'production' =
+    bodyEnv === 'production' || bodyEnv === 'sandbox' ? bodyEnv : savedCfg.environment;
+
+  if (!effectiveToken) {
+    res.status(400).json({
+      success: false,
+      error: 'Access Token não informado. Cole seu Access Token do Mercado Pago e tente novamente.',
+    });
+    return;
+  }
+
+  const isSandboxToken = effectiveToken.startsWith('TEST-');
+  const isSandboxPk = effectivePublicKey.startsWith('TEST-');
+  if (effectiveEnv === 'production' && (isSandboxToken || isSandboxPk)) {
+    res.status(400).json({
+      success: false,
+      error:
+        'Ambiente configurado como Produção, mas uma das chaves inicia com TEST- (Sandbox). Utilize as Credenciais de Produção (APP_USR-...).',
+    });
+    return;
+  }
+  if (effectiveEnv === 'sandbox' && effectiveToken.startsWith('APP_USR-')) {
+    res.status(400).json({
+      success: false,
+      error:
+        'Ambiente está marcado como Sandbox, mas o Access Token inicia com APP_USR- (Produção). Mude o ambiente para Produção ou use um token TEST-.',
+    });
+    return;
+  }
+
+  try {
+    const userRes = await fetch('https://api.mercadopago.com/users/me', {
+      method: 'GET',
+      headers: {
+        Authorization: `Bearer ${effectiveToken}`,
+        Accept: 'application/json',
+      },
+    });
+    const userData = (await userRes.json().catch(() => ({}))) as any;
+
+    if (!userRes.ok) {
+      res.status(400).json({
+        success: false,
+        error: translateMercadoPagoError(userRes.status, userData, effectiveEnv),
+      });
+      return;
+    }
+
+    let pixAvailable = true;
+    try {
+      const pmRes = await fetch('https://api.mercadopago.com/v1/payment_methods', {
+        method: 'GET',
+        headers: {
+          Authorization: `Bearer ${effectiveToken}`,
+          Accept: 'application/json',
+        },
+      });
+      if (pmRes.ok) {
+        const methods = (await pmRes.json()) as Array<{ id?: string; status?: string }>;
+        if (Array.isArray(methods) && methods.length > 0) {
+          const pixMethod = methods.find((m) => m.id === 'pix');
+          pixAvailable = Boolean(pixMethod && pixMethod.status !== 'deactive');
+        }
+      }
+    } catch {
+      // Non-fatal check
+    }
+
+    res.json({
+      success: true,
+      environment: effectiveEnv,
+      pixAvailable,
+      account: {
+        id: userData.id,
+        nickname: userData.nickname,
+        email: userData.email,
+        siteId: userData.site_id,
+        firstName: userData.first_name,
+        lastName: userData.last_name,
+      },
+      message: `Conexão autenticada na conta ${userData.nickname || userData.email || userData.id} (${
+        effectiveEnv === 'production' ? 'Produção Ao Vivo' : 'Sandbox'
+      }).`,
+    });
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : 'Erro de rede ao consultar api.mercadopago.com';
+    res.status(502).json({
+      success: false,
+      error: `Não foi possível conectar ao servidor do Mercado Pago: ${msg}`,
+    });
+  }
+});
+
+app.post('/api/mercadopago/pix', async (req, res) => {
+  const {
+    amount,
+    description,
+    payerEmail,
+    payerName,
+    payerCpfCnpj,
+    externalReference,
+  } = (req.body || {}) as {
+    amount?: number;
+    description?: string;
+    payerEmail?: string;
+    payerName?: string;
+    payerCpfCnpj?: string;
+    externalReference?: string;
+  };
+
+  const numericAmount = Number(amount);
+  if (!Number.isFinite(numericAmount) || numericAmount <= 0 || numericAmount > 500000) {
+    res.status(400).json({ success: false, error: 'Valor inválido para cobrança PIX.' });
+    return;
+  }
+
+  const cleanEmail = (payerEmail || '').trim().toLowerCase();
+  if (!cleanEmail || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(cleanEmail)) {
+    res.status(400).json({
+      success: false,
+      error: 'Informe um e-mail válido do pagador para gerar o PIX no Mercado Pago.',
+    });
+    return;
+  }
+
+  const cfg = await getServerMercadoPagoConfig();
+  if (!cfg.enabled) {
+    res.status(400).json({
+      success: false,
+      error: 'Pagamentos via Mercado Pago estão desativados no painel administrativo.',
+    });
+    return;
+  }
+
+  const cleanDesc =
+    (description || 'Assinatura Achenacidade').replace(/\s+/g, ' ').trim().slice(0, 120) ||
+    'Assinatura Achenacidade';
+  const cleanRef =
+    (externalReference || `ACH-${Date.now()}`).replace(/[^A-Za-z0-9_-]/g, '').slice(0, 64) ||
+    `ACH-${Date.now()}`;
+
+  const nameParts = (payerName || 'Cliente Achenacidade').trim().split(/\s+/).filter(Boolean);
+  const firstName = (nameParts[0] || 'Cliente').slice(0, 40);
+  const lastName = (nameParts.slice(1).join(' ') || 'Achenacidade').slice(0, 40);
+  const docDigits = (payerCpfCnpj || '').replace(/\D/g, '');
+  const hasValidDoc = docDigits.length === 11 || docDigits.length === 14;
+
+  // In Sandbox without an explicit TEST- token, generate valid CRC16 BRCode + real QR PNG
+  if (cfg.environment === 'sandbox' && !cfg.accessToken) {
+    const simId = `SANDBOX-${Date.now()}-${crypto.randomInt(1000, 9999)}`;
+    const qrCode = buildServerPixPayload({
+      pixKey: cfg.pixKey,
+      descriptor: cfg.statementDescriptor,
+      amount: numericAmount,
+      reference: cleanRef,
+    });
+    const qrCodeBase64 = await QRCode.toDataURL(qrCode, { width: 320, margin: 2 });
+    const record: LocalMercadoPagoPaymentRecord = {
+      paymentId: simId,
+      mode: 'sandbox_simulation',
+      environment: 'sandbox',
+      status: 'pending',
+      statusDetail: 'pending_waiting_transfer',
+      amount: Number(numericAmount.toFixed(2)),
+      description: cleanDesc,
+      externalReference: cleanRef,
+      payerEmail: cleanEmail,
+      qrCode,
+      qrCodeBase64,
+      createdAt: Date.now(),
+    };
+    localMercadoPagoPayments.set(simId, record);
+    res.json({
+      success: true,
+      mode: record.mode,
+      environment: record.environment,
+      paymentId: record.paymentId,
+      status: record.status,
+      statusDetail: record.statusDetail,
+      qrCode: record.qrCode,
+      qrCodeBase64: record.qrCodeBase64,
+      autoApproveInSandbox: cfg.autoApproveInSandbox,
+    });
+    return;
+  }
+
+  if (!cfg.accessToken) {
+    res.status(400).json({
+      success: false,
+      error:
+        'Access Token de Produção do Mercado Pago não configurado. Acesse Painel Admin -> Pagamentos Mercado Pago e salve seu Access Token (APP_USR-...).',
+    });
+    return;
+  }
+
+  if (cfg.environment === 'production' && cfg.accessToken.startsWith('TEST-')) {
+    res.status(400).json({
+      success: false,
+      error:
+        'O sistema está em modo Produção, mas o Access Token salvo é de Teste (TEST-...). Troque pelo Access Token de Produção (APP_USR-...) no Painel Admin.',
+    });
+    return;
+  }
+
+  try {
+    const notificationUrl = buildPublicNotificationUrl(req);
+    const mpPayload: Record<string, any> = {
+      transaction_amount: Number(numericAmount.toFixed(2)),
+      description: cleanDesc,
+      payment_method_id: 'pix',
+      statement_descriptor: cfg.statementDescriptor,
+      external_reference: cleanRef,
+      payer: {
+        email: cleanEmail,
+        first_name: firstName,
+        last_name: lastName,
+        ...(hasValidDoc
+          ? {
+              identification: {
+                type: docDigits.length === 14 ? 'CNPJ' : 'CPF',
+                number: docDigits,
+              },
+            }
+          : {}),
+      },
+      ...(notificationUrl ? { notification_url: notificationUrl } : {}),
+    };
+
+    const mpRes = await fetch('https://api.mercadopago.com/v1/payments', {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${cfg.accessToken}`,
+        'Content-Type': 'application/json',
+        Accept: 'application/json',
+        'X-Idempotency-Key': crypto.randomUUID(),
+      },
+      body: JSON.stringify(mpPayload),
+    });
+
+    const mpData = (await mpRes.json().catch(() => ({}))) as any;
+
+    if (!mpRes.ok) {
+      res.status(400).json({
+        success: false,
+        error: translateMercadoPagoError(mpRes.status, mpData, cfg.environment),
+        mpStatus: mpRes.status,
+      });
+      return;
+    }
+
+    const txData = mpData?.point_of_interaction?.transaction_data || {};
+    const qrCode = typeof txData.qr_code === 'string' ? txData.qr_code.trim() : '';
+    const rawBase64 = typeof txData.qr_code_base64 === 'string' ? txData.qr_code_base64.trim() : '';
+
+    if (!qrCode) {
+      res.status(400).json({
+        success: false,
+        error:
+          'O Mercado Pago criou a cobrança mas não retornou o código PIX Copia e Cola. Verifique se sua conta Mercado Pago possui chave PIX ativa para recebimento.',
+      });
+      return;
+    }
+
+    const qrCodeBase64 = rawBase64
+      ? rawBase64.startsWith('data:image')
+        ? rawBase64
+        : `data:image/png;base64,${rawBase64}`
+      : await QRCode.toDataURL(qrCode, { width: 320, margin: 2 });
+
+    const paymentId = String(mpData.id);
+    localMercadoPagoPayments.set(paymentId, {
+      paymentId,
+      mode: 'mercadopago_api',
+      environment: cfg.environment,
+      status: mpData.status === 'approved' ? 'approved' : mpData.status === 'rejected' ? 'rejected' : 'pending',
+      statusDetail: String(mpData.status_detail || 'pending_waiting_transfer'),
+      amount: Number(mpData.transaction_amount || numericAmount),
+      description: cleanDesc,
+      externalReference: cleanRef,
+      payerEmail: cleanEmail,
+      qrCode,
+      qrCodeBase64,
+      createdAt: Date.now(),
+      paidAt: mpData.date_approved || null,
+    });
+
+    res.json({
+      success: true,
+      mode: 'mercadopago_api',
+      environment: cfg.environment,
+      paymentId,
+      status: mpData.status || 'pending',
+      statusDetail: mpData.status_detail || 'pending_waiting_transfer',
+      qrCode,
+      qrCodeBase64,
+      ticketUrl: txData.ticket_url || null,
+      expiresAt: mpData.date_of_expiration || null,
+    });
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : 'Erro de comunicação com o Mercado Pago.';
+    res.status(502).json({
+      success: false,
+      error: `Falha ao conectar com a API PIX do Mercado Pago: ${msg}`,
+    });
+  }
+});
+
+app.get('/api/mercadopago/payment/:paymentId', async (req, res) => {
+  const { paymentId } = req.params;
+  if (!paymentId || !/^[A-Za-z0-9_-]{4,80}$/.test(paymentId)) {
+    res.status(400).json({ success: false, error: 'ID de pagamento inválido.' });
+    return;
+  }
+
+  if (paymentId.startsWith('SANDBOX-')) {
+    const localRec = localMercadoPagoPayments.get(paymentId);
+    const approveRequested = req.query.simulateApprove === '1';
+    if (localRec && approveRequested) {
+      localRec.status = 'approved';
+      localRec.statusDetail = 'accredited';
+      localRec.paidAt = new Date().toISOString();
+    }
+    res.json({
+      success: true,
+      mode: 'sandbox_simulation',
+      paymentId,
+      status: localRec?.status || (approveRequested ? 'approved' : 'pending'),
+      statusDetail: localRec?.statusDetail || 'pending_waiting_transfer',
+      paidAt: localRec?.paidAt || null,
+    });
+    return;
+  }
+
+  const cfg = await getServerMercadoPagoConfig();
+  if (!cfg.accessToken) {
+    res.status(400).json({ success: false, error: 'Access Token do Mercado Pago não configurado no servidor.' });
+    return;
+  }
+
+  try {
+    const mpRes = await fetch(`https://api.mercadopago.com/v1/payments/${encodeURIComponent(paymentId)}`, {
+      method: 'GET',
+      headers: {
+        Authorization: `Bearer ${cfg.accessToken}`,
+        Accept: 'application/json',
+      },
+    });
+    const mpData = (await mpRes.json().catch(() => ({}))) as any;
+    if (!mpRes.ok) {
+      res.status(400).json({
+        success: false,
+        error: translateMercadoPagoError(mpRes.status, mpData, cfg.environment),
+      });
+      return;
+    }
+
+    res.json({
+      success: true,
+      mode: 'mercadopago_api',
+      paymentId: String(mpData.id || paymentId),
+      status: mpData.status || 'pending',
+      statusDetail: mpData.status_detail || '',
+      paidAt: mpData.date_approved || null,
+      amount: mpData.transaction_amount,
+      externalReference: mpData.external_reference || null,
+    });
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : 'Erro de comunicação';
+    res.status(502).json({ success: false, error: `Falha ao consultar pagamento no Mercado Pago: ${msg}` });
+  }
+});
+
+app.post('/api/mercadopago/card', async (req, res) => {
+  const {
+    amount,
+    description,
+    token,
+    installments,
+    paymentMethodId,
+    issuerId,
+    payerEmail,
+    payerName,
+    payerCpfCnpj,
+    externalReference,
+  } = (req.body || {}) as {
+    amount?: number;
+    description?: string;
+    token?: string;
+    installments?: number;
+    paymentMethodId?: string;
+    issuerId?: string | number;
+    payerEmail?: string;
+    payerName?: string;
+    payerCpfCnpj?: string;
+    externalReference?: string;
+  };
+
+  const numericAmount = Number(amount);
+  if (!Number.isFinite(numericAmount) || numericAmount <= 0 || numericAmount > 500000) {
+    res.status(400).json({ success: false, error: 'Valor inválido para pagamento no cartão.' });
+    return;
+  }
+
+  const cleanEmail = (payerEmail || '').trim().toLowerCase();
+  if (!cleanEmail || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(cleanEmail)) {
+    res.status(400).json({ success: false, error: 'E-mail do pagador inválido.' });
+    return;
+  }
+
+  const cfg = await getServerMercadoPagoConfig();
+  if (!cfg.enabled) {
+    res.status(400).json({ success: false, error: 'Pagamentos via Mercado Pago estão desativados.' });
+    return;
+  }
+
+  if (cfg.environment === 'sandbox' && !token) {
+    const simId = `MP-SANDBOX-${crypto.randomInt(100000000, 999999999)}`;
+    res.json({
+      success: true,
+      mode: 'sandbox_simulation',
+      paymentId: simId,
+      status: 'approved',
+      statusDetail: 'accredited',
+      paidAt: new Date().toISOString(),
+    });
+    return;
+  }
+
+  if (!cfg.accessToken) {
+    res.status(400).json({ success: false, error: 'Access Token do Mercado Pago não configurado no servidor.' });
+    return;
+  }
+  if (!token) {
+    res.status(400).json({
+      success: false,
+      error:
+        'Tokenização do cartão não concluída. Verifique se a Public Key do Mercado Pago está configurada corretamente em Produção.',
+    });
+    return;
+  }
+
+  const docDigits = (payerCpfCnpj || '').replace(/\D/g, '');
+  const hasValidDoc = docDigits.length === 11 || docDigits.length === 14;
+  const nameParts = (payerName || 'Cliente Achenacidade').trim().split(/\s+/).filter(Boolean);
+  const notificationUrl = buildPublicNotificationUrl(req);
+
+  try {
+    const mpPayload: Record<string, any> = {
+      transaction_amount: Number(numericAmount.toFixed(2)),
+      token: String(token).trim(),
+      description: (description || 'Assinatura Achenacidade').trim().slice(0, 120),
+      installments: Math.max(1, Math.min(12, Number(installments) || 1)),
+      ...(paymentMethodId ? { payment_method_id: String(paymentMethodId) } : {}),
+      ...(issuerId ? { issuer_id: issuerId } : {}),
+      statement_descriptor: cfg.statementDescriptor,
+      external_reference: (externalReference || `ACH-${Date.now()}`).replace(/[^A-Za-z0-9_-]/g, '').slice(0, 64),
+      payer: {
+        email: cleanEmail,
+        first_name: (nameParts[0] || 'Cliente').slice(0, 40),
+        last_name: (nameParts.slice(1).join(' ') || 'Achenacidade').slice(0, 40),
+        ...(hasValidDoc
+          ? {
+              identification: {
+                type: docDigits.length === 14 ? 'CNPJ' : 'CPF',
+                number: docDigits,
+              },
+            }
+          : {}),
+      },
+      ...(notificationUrl ? { notification_url: notificationUrl } : {}),
+    };
+
+    const mpRes = await fetch('https://api.mercadopago.com/v1/payments', {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${cfg.accessToken}`,
+        'Content-Type': 'application/json',
+        Accept: 'application/json',
+        'X-Idempotency-Key': crypto.randomUUID(),
+      },
+      body: JSON.stringify(mpPayload),
+    });
+    const mpData = (await mpRes.json().catch(() => ({}))) as any;
+
+    if (!mpRes.ok) {
+      res.status(400).json({
+        success: false,
+        error: translateMercadoPagoError(mpRes.status, mpData, cfg.environment),
+      });
+      return;
+    }
+
+    if (mpData.status === 'rejected') {
+      res.status(400).json({
+        success: false,
+        error: `Pagamento no cartão recusado pelo Mercado Pago (${mpData.status_detail || 'cc_rejected'}).`,
+      });
+      return;
+    }
+
+    res.json({
+      success: true,
+      mode: 'mercadopago_api',
+      paymentId: String(mpData.id),
+      status: mpData.status || 'pending',
+      statusDetail: mpData.status_detail || '',
+      paidAt: mpData.date_approved || null,
+    });
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : 'Erro de comunicação';
+    res.status(502).json({ success: false, error: `Falha ao processar cartão no Mercado Pago: ${msg}` });
+  }
+});
+
+app.post('/api/webhooks/mercadopago', async (req, res) => {
+  try {
+    const paymentIdRaw = req.body?.data?.id || req.query?.['data.id'] || req.query?.id;
+    const topic = req.body?.type || req.body?.topic || req.query?.topic;
+
+    if (!paymentIdRaw || (topic && !String(topic).includes('payment'))) {
+      res.status(200).json({ received: true });
+      return;
+    }
+
+    const paymentId = String(paymentIdRaw).trim();
+    if (!/^[A-Za-z0-9_-]{4,80}$/.test(paymentId)) {
+      res.status(200).json({ received: true });
+      return;
+    }
+
+    const cfg = await getServerMercadoPagoConfig();
+    if (!cfg.accessToken) {
+      res.status(200).json({ received: true });
+      return;
+    }
+
+    const mpRes = await fetch(`https://api.mercadopago.com/v1/payments/${encodeURIComponent(paymentId)}`, {
+      method: 'GET',
+      headers: {
+        Authorization: `Bearer ${cfg.accessToken}`,
+        Accept: 'application/json',
+      },
+    });
+    if (!mpRes.ok) {
+      res.status(200).json({ received: true });
+      return;
+    }
+
+    const mpData = (await mpRes.json()) as any;
+    const localRec = localMercadoPagoPayments.get(paymentId);
+    if (localRec) {
+      localRec.status = mpData.status === 'approved' ? 'approved' : mpData.status === 'rejected' ? 'rejected' : 'pending';
+      localRec.statusDetail = String(mpData.status_detail || '');
+      localRec.paidAt = mpData.date_approved || null;
+    }
+
+    res.status(200).json({ received: true, status: mpData.status || 'unknown' });
+  } catch {
+    res.status(200).json({ received: true });
   }
 });
 

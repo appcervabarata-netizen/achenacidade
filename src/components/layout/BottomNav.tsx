@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { useDirectory } from '../../context/DirectoryContext';
 import { BusinessPortalTab } from '../../types';
+import { canManageRotatingBanners } from '../../utils/planPricing';
 import {
   Home,
   Building2,
@@ -16,6 +17,7 @@ import {
   Edit2,
   LayoutGrid,
   FolderPlus,
+  Sparkles,
   Zap,
   Plus,
   LogOut,
@@ -31,6 +33,7 @@ export const BottomNav: React.FC = () => {
     setBusinessPortalTab,
     authSession,
     logout,
+    plans,
     businesses,
     currentBusinessAuth,
     switchActiveBusiness,
@@ -62,9 +65,13 @@ export const BottomNav: React.FC = () => {
         b.id === activeBusiness?.id
     );
 
+    const activePlan = plans.find((p) => p.id === activeBusiness?.planId);
+    const canBanners = canManageRotatingBanners(activePlan);
+
     const isSecondaryMerchantTab =
       currentView === 'business_portal' &&
       (businessPortalTab === 'prod_categories' ||
+        businessPortalTab === 'banners' ||
         businessPortalTab === 'plans' ||
         businessPortalTab === 'register_new');
 
@@ -147,6 +154,21 @@ export const BottomNav: React.FC = () => {
                   <FolderPlus className="w-4 h-4 text-emerald-600 shrink-0" />
                   <span className="truncate">Categorias</span>
                 </button>
+
+                {canBanners && (
+                  <button
+                    type="button"
+                    onClick={() => navigateMerchantTab('banners')}
+                    className={`flex items-center gap-2 p-3 rounded-2xl border text-left text-xs font-bold transition cursor-pointer ${
+                      currentView === 'business_portal' && businessPortalTab === 'banners'
+                        ? 'bg-amber-50 dark:bg-amber-950/40 border-amber-400 text-amber-700 dark:text-amber-300'
+                        : 'bg-slate-50 dark:bg-slate-800/70 border-slate-200 dark:border-slate-700 text-slate-800 dark:text-slate-200'
+                    }`}
+                  >
+                    <Sparkles className="w-4 h-4 text-amber-500 shrink-0" />
+                    <span className="truncate">Banners</span>
+                  </button>
+                )}
 
                 <button
                   type="button"

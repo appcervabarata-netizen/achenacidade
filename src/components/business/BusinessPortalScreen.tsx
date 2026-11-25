@@ -7,6 +7,7 @@ import { ConfirmModal } from '../common/ConfirmModal';
 import {
   BILLING_CYCLE_META,
   calculatePlanPricing,
+  canManageRotatingBanners,
   formatBRL,
   getPlanExpirationInfo,
   isFounderPlan,
@@ -115,6 +116,10 @@ export const BusinessPortalScreen: React.FC = () => {
     applyInviteCodeToBusiness,
     cancelBusinessSubscription,
     activeInviteCode,
+    banners,
+    addMerchantBanner,
+    toggleBannerStatus,
+    deleteBanner,
   } = useDirectory();
 
   // Strictly use authenticated business session (no unauthenticated demo fallback)
@@ -144,6 +149,24 @@ export const BusinessPortalScreen: React.FC = () => {
     : { productsCount: 0, servicesCount: 0, totalUsed: 0, limit: 3, remaining: 3, isFull: false };
   const productLimit = quota.limit;
   const isQuotaFull = quota.isFull;
+
+  const canCreateRotatingBanners = canManageRotatingBanners(activePlan);
+  const myMerchantBanners = activeBusiness
+    ? banners.filter(
+        (b) =>
+          b.advertiserName.trim().toLowerCase() === activeBusiness.name.trim().toLowerCase()
+      )
+    : [];
+
+  const [merchantBannerForm, setMerchantBannerForm] = useState({
+    title: '',
+    tagline: '',
+    position: 'rotating_header' as 'top' | 'bottom' | 'rotating_header',
+    linkUrl: '#produtos',
+    cityId: activeBusiness?.cityId || 'all',
+    imageUrl: 'https://images.unsplash.com/photo-1555396273-367ea4eb4db5?w=1200&h=300&fit=crop&q=80',
+    badgeText: 'Anunciante VIP',
+  });
 
   // Active Tab state synced via DirectoryContext for Mobile Bottom Menu
   const [upgradeCycle, setUpgradeCycle] = useState<BillingCycle>(
@@ -771,6 +794,20 @@ export const BusinessPortalScreen: React.FC = () => {
           <FolderPlus className="w-4 h-4 text-emerald-500" />
           <span>Categorias({activeStoreCategories.length})</span>
         </button>
+
+        {canCreateRotatingBanners && (
+          <button
+            onClick={() => setActiveTab('banners')}
+            className={`flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-xs font-bold whitespace-nowrap transition cursor-pointer ${
+              activeTab === 'banners'
+                ? 'bg-amber-600 text-white shadow-xs'
+                : 'text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800'
+            }`}
+          >
+            <Sparkles className="w-4 h-4 text-amber-500" />
+            <span>Banners ({myMerchantBanners.length})</span>
+          </button>
+        )}
 
         <button
           onClick={() => setActiveTab('edit_profile')}
@@ -2285,6 +2322,255 @@ export const BusinessPortalScreen: React.FC = () => {
               </button>
             </div>
           </form>
+        )}
+
+        {/* TAB: BANNERS ROTATIVOS (INCLUSO NOS PLANOS VIP) */}
+        {activeTab === 'banners' && activeBusiness && (
+          <div className="space-y-6">
+            {!canCreateRotatingBanners ? (
+              <div className="p-6 rounded-3xl bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800 text-center space-y-3">
+                <Sparkles className="w-8 h-8 text-amber-600 mx-auto" />
+                <h3 className="text-lg font-extrabold text-slate-900 dark:text-white font-display">
+                  Banners Rotativos Inclusos nos Planos VIP
+                </h3>
+                <p className="text-xs sm:text-sm text-slate-600 dark:text-slate-300 max-w-lg mx-auto">
+                  Seu plano atual ({activePlan?.name}) não inclui cadastro gratuito de banners rotativos no portal. Faça upgrade para o Plano Premium Ouro ou Sócio Fundador para liberar este recurso.
+                </p>
+                <button
+                  type="button"
+                  onClick={() => setActiveTab('plans')}
+                  className="px-5 py-2.5 rounded-xl bg-amber-600 hover:bg-amber-700 text-white text-xs font-bold cursor-pointer"
+                >
+                  Ver Planos VIP Disponíveis
+                </button>
+              </div>
+            ) : (
+              <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
+                <form
+                  onSubmit={(e) => {
+                    e.preventDefault();
+                    if (!merchantBannerForm.title.trim() || !merchantBannerForm.imageUrl.trim()) {
+                      setNotification({ type: 'error', text: 'Preencha o nome do banner e selecione uma imagem.' });
+                      return;
+                    }
+                    const res = addMerchantBanner({
+                      title: merchantBannerForm.title.trim(),
+                      tagline: merchantBannerForm.tagline.trim(),
+                      position: merchantBannerForm.position,
+                      imageUrl: merchantBannerForm.imageUrl.trim(),
+                      linkUrl: merchantBannerForm.linkUrl.trim() || '#produtos',
+                      advertiserName: activeBusiness.name,
+                      cityId: merchantBannerForm.cityId,
+                      priceMonthly: 0,
+                      badgeText: merchantBannerForm.badgeText.trim() || 'Anunciante VIP',
+                    });
+                    if (res.success) {
+                      setMerchantBannerForm({
+                        title: '',
+                        tagline: '',
+                        position: 'rotating_header',
+                        linkUrl: '#produtos',
+                        cityId: activeBusiness.cityId || 'all',
+                        imageUrl: 'https://images.unsplash.com/photo-1555396273-367ea4eb4db5?w=1200&h=300&fit=crop&q=80',
+                        badgeText: 'Anunciante VIP',
+                      });
+                      setNotification({ type: 'success', text: 'Banner rotativo cadastrado e publicado no guia!' });
+                    } else {
+                      setNotification({ type: 'error', text: res.error || 'Erro ao cadastrar banner.' });
+                    }
+                  }}
+                  className="lg:col-span-5 p-6 rounded-3xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-xs space-y-4"
+                >
+                  <div className="border-b border-slate-100 dark:border-slate-800 pb-3">
+                    <h3 className="text-base font-bold text-slate-900 dark:text-white flex items-center gap-2 font-display">
+                      <Sparkles className="w-5 h-5 text-amber-500" />
+                      <span>Novo Banner Rotativo (Incluso no Plano)</span>
+                    </h3>
+                    <p className="text-[11px] text-slate-500 mt-0.5">
+                      Recurso incluso na sua assinatura {activePlan?.name}, sem cobrança adicional.
+                    </p>
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">
+                      Nome do Banner *
+                    </label>
+                    <input
+                      type="text"
+                      required
+                      value={merchantBannerForm.title}
+                      onChange={(e) => setMerchantBannerForm({ ...merchantBannerForm, title: e.target.value })}
+                      placeholder="Ex: Promoção Relâmpago da Semana"
+                      className="w-full px-3 py-2.5 rounded-xl border border-slate-300 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-xs text-slate-900 dark:text-white"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">
+                      Frase de Chamada (Opcional)
+                    </label>
+                    <input
+                      type="text"
+                      value={merchantBannerForm.tagline}
+                      onChange={(e) => setMerchantBannerForm({ ...merchantBannerForm, tagline: e.target.value })}
+                      placeholder="Ex: Até 30% OFF em toda a loja"
+                      className="w-full px-3 py-2.5 rounded-xl border border-slate-300 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-xs text-slate-900 dark:text-white"
+                    />
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <div>
+                      <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">
+                        Posição
+                      </label>
+                      <select
+                        value={merchantBannerForm.position}
+                        onChange={(e) =>
+                          setMerchantBannerForm({ ...merchantBannerForm, position: e.target.value as any })
+                        }
+                        className="w-full px-3 py-2.5 rounded-xl border border-slate-300 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-xs text-slate-900 dark:text-white"
+                      >
+                        <option value="rotating_header">Cabeçalho Rotativo</option>
+                        <option value="top">Banner Topo da Home</option>
+                        <option value="bottom">Banner Rodapé</option>
+                      </select>
+                    </div>
+
+                    <div>
+                      <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">
+                        Cidade Alvo
+                      </label>
+                      <select
+                        value={merchantBannerForm.cityId}
+                        onChange={(e) => setMerchantBannerForm({ ...merchantBannerForm, cityId: e.target.value })}
+                        className="w-full px-3 py-2.5 rounded-xl border border-slate-300 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-xs text-slate-900 dark:text-white"
+                      >
+                        <option value="all">Todas as Cidades</option>
+                        {cities
+                          .filter((c) => c.isActive)
+                          .map((c) => (
+                            <option key={c.id} value={c.id}>
+                              {c.name} - {c.state}
+                            </option>
+                          ))}
+                      </select>
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <div>
+                      <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">
+                        Link de Destino
+                      </label>
+                      <input
+                        type="text"
+                        value={merchantBannerForm.linkUrl}
+                        onChange={(e) => setMerchantBannerForm({ ...merchantBannerForm, linkUrl: e.target.value })}
+                        placeholder="#produtos ou https://..."
+                        className="w-full px-3 py-2.5 rounded-xl border border-slate-300 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-xs text-slate-900 dark:text-white"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">
+                        Etiqueta / Selo
+                      </label>
+                      <input
+                        type="text"
+                        value={merchantBannerForm.badgeText}
+                        onChange={(e) => setMerchantBannerForm({ ...merchantBannerForm, badgeText: e.target.value })}
+                        placeholder="Anunciante VIP"
+                        className="w-full px-3 py-2.5 rounded-xl border border-slate-300 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-xs text-slate-900 dark:text-white"
+                      />
+                    </div>
+                  </div>
+
+                  <div>
+                    <ImageUploadField
+                      value={merchantBannerForm.imageUrl}
+                      onChange={(url) => setMerchantBannerForm({ ...merchantBannerForm, imageUrl: url })}
+                      label="Imagem do Banner (1200x300 recomendado)"
+                    />
+                  </div>
+
+                  <button
+                    type="submit"
+                    className="w-full py-3 rounded-xl bg-amber-600 hover:bg-amber-700 text-white text-xs font-bold flex items-center justify-center gap-2 shadow-sm cursor-pointer"
+                  >
+                    <Plus className="w-4 h-4" />
+                    <span>Publicar Banner Rotativo</span>
+                  </button>
+                </form>
+
+                <div className="lg:col-span-7 space-y-3">
+                  <h4 className="text-sm font-bold text-slate-900 dark:text-white">
+                    Seus Banners Cadastrados ({myMerchantBanners.length})
+                  </h4>
+                  {myMerchantBanners.length === 0 ? (
+                    <div className="p-8 rounded-3xl bg-white dark:bg-slate-900 border border-dashed border-slate-300 dark:border-slate-700 text-center text-xs text-slate-500">
+                      Você ainda não publicou nenhum banner rotativo pelo painel. Use o formulário ao lado para criar o primeiro!
+                    </div>
+                  ) : (
+                    myMerchantBanners.map((b) => (
+                      <div
+                        key={b.id}
+                        className="p-4 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 shadow-2xs"
+                      >
+                        <div className="flex items-center gap-3 min-w-0">
+                          <img
+                            src={b.imageUrl}
+                            alt={b.title}
+                            className="w-24 h-12 rounded-xl object-cover border border-slate-200 dark:border-slate-700 shrink-0"
+                          />
+                          <div className="min-w-0">
+                            <div className="flex items-center gap-2">
+                              <span className="font-bold text-xs text-slate-900 dark:text-white truncate">
+                                {b.title}
+                              </span>
+                              <span
+                                className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${
+                                  b.isActive
+                                    ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-950/60 dark:text-emerald-300'
+                                    : 'bg-slate-100 text-slate-500 dark:bg-slate-800'
+                                }`}
+                              >
+                                {b.isActive ? 'Ativo' : 'Pausado'}
+                              </span>
+                            </div>
+                            <p className="text-[11px] text-slate-500 truncate">
+                              {b.position === 'rotating_header'
+                                ? 'Cabeçalho Rotativo'
+                                : b.position === 'top'
+                                ? 'Topo da Home'
+                                : 'Rodapé'}{' '}
+                              · {b.clicksCount} cliques
+                            </p>
+                          </div>
+                        </div>
+
+                        <div className="flex items-center gap-2 shrink-0">
+                          <button
+                            type="button"
+                            onClick={() => toggleBannerStatus(b.id)}
+                            className="px-3 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 text-[11px] font-bold text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800 cursor-pointer"
+                          >
+                            {b.isActive ? 'Pausar' : 'Ativar'}
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => deleteBanner(b.id)}
+                            className="p-1.5 rounded-lg text-rose-500 hover:bg-rose-50 dark:hover:bg-rose-950/40 cursor-pointer"
+                            title="Excluir banner"
+                          >
+                            <Trash2 className="w-4 h-4" />
+                          </button>
+                        </div>
+                      </div>
+                    ))
+                  )}
+                </div>
+              </div>
+            )}
+          </div>
         )}
 
         {/* TAB 4: MEU PLANO & UPGRADE */}

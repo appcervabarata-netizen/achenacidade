@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { useDirectory } from '../../context/DirectoryContext';
 import {
   X,
@@ -16,17 +16,26 @@ import {
   AlertCircle,
   CheckCircle2,
   HelpCircle,
+  Loader2,
+  RefreshCw,
 } from 'lucide-react';
 import { BillingCycle, PaymentTransaction } from '../../types';
 import { BillingCycleSelector } from '../common/BillingCycleSelector';
 import {
   BILLING_CYCLE_META,
-  buildMercadoPagoPixPayload,
   calculatePlanPricing,
   formatBRL,
+  formatCpfCnpj,
   isLifetimePlan,
   isPaidPlan,
 } from '../../utils/planPricing';
+import {
+  checkMercadoPagoPaymentViaApi,
+  createMercadoPagoCardPaymentViaApi,
+  createMercadoPagoPixViaApi,
+  type MercadoPagoPixCreationResult,
+} from '../../utils/apiSync';
+import { tokenizeCardWithMercadoPago } from '../../utils/mercadoPagoClient';
 
 interface PlanPaymentModalProps {
   isOpen: boolean;
@@ -63,10 +72,15 @@ export const PlanPaymentModal: React.FC<PlanPaymentModalProps> = ({
   const [completedTx, setCompletedTx] = useState<PaymentTransaction | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
+  const [pixSession, setPixSession] = useState<MercadoPagoPixCreationResult | null>(null);
+  const [isGeneratingPix, setIsGeneratingPix] = useState(false);
+  const [pixError, setPixError] = useState<string | null>(null);
+  const [pixStatusNotice, setPixStatusNotice] = useState<string | null>(null);
+
   // Countdown timer for PIX (15 minutes)
   const [timeLeft, setTimeLeft] = useState(15 * 60);
 
-  // Credit card form state
+  // Credit card & Payer form state
   const [cardForm, setCardForm] = useState({
     number: '',
     holderName: '',
@@ -91,6 +105,9 @@ export const PlanPaymentModal: React.FC<PlanPaymentModalProps> = ({
       setCompletedTx(null);
       setIsProcessing(false);
       setErrorMessage(null);
+      setPixError(null);
+      setPixStatusNotice(null);
+      setPixSession(null);
       setTimeLeft(15 * 60);
       setCopiedPix(false);
       setBillingCycle(billingCycleProp || paymentModalData.billingCycle || 'monthly');
@@ -130,15 +147,115 @@ export const PlanPaymentModal: React.FC<PlanPaymentModalProps> = ({
     return `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
   };
 
-  // Generate dynamic Pix Copia e Cola code
-  const pixCode = buildMercadoPagoPixPayload({
-    pixKey: mercadoPagoConfig.pixKey,
-    descriptor: mercadoPagoConfig.statementDescriptor,
-    amount: pricing.totalAmount,
-    reference: targetBusiness?.id,
-  });
+  const pixCode = pixSession?.qrCode || '';
+  const effectivePayerEmail =
+    cardForm.payerEmail.trim() ||
+    targetBusiness?.ownerEmail ||
+    targetBusiness?.email ||
+    'lojista@achenacidade.com.br';
+
+  const generatePixCharge = useCallback(async () => {
+    if (!isOpen || !selectedPlan || completedTx) return;
+    setIsGeneratingPix(true);
+    setPixError(null);
+    setPixStatusNotice(null);
+    const res = await createMercadoPagoPixViaApi({
+      amount: pricing.totalAmount,
+      description: `Plano ${selectedPlan.name} (${pricing.label}) - ${targetBusiness?.name || 'Loja'}`,
+      payerEmail: effectivePayerEmail,
+      payerName: targetBusiness?.name || 'Lojista',
+      payerCpfCnpj: cardForm.cpf,
+      externalReference: `BIZ-${targetBusiness?.id || 'GUEST'}-${selectedPlan.id}`,
+    });
+    setIsGeneratingPix(false);
+    if (!res.success) {
+      setPixSession(null);
+      setPixError(res.error || 'Não foi possível gerar o QR Code PIX no Mercado Pago.');
+      return;
+    }
+    setPixSession(res);
+    setTimeLeft(15 * 60);
+  }, [
+    isOpen,
+    selectedPlan?.id,
+    selectedPlan?.name,
+    pricing.totalAmount,
+    pricing.label,
+    targetBusiness?.id,
+    targetBusiness?.name,
+    effectivePayerEmail,
+    cardForm.cpf,
+    completedTx,
+  ]);
+
+  useEffect(() => {
+    if (!isOpen || paymentMethod !== 'pix' || completedTx || !targetBusiness) return;
+    void generatePixCharge();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isOpen, paymentMethod, selectedPlan?.id, billingCycle, targetBusiness?.id, completedTx]);
+
+  const finalizeApprovedPix = useCallback(
+    async (paymentId: string, paidAt?: string | null) => {
+      if (!targetBusiness || completedTx) return;
+      setIsProcessing(true);
+      try {
+        const res = await processPlanPayment({
+          businessId: targetBusiness.id,
+          planId: selectedPlan.id,
+          billingCycle,
+          paymentMethod: 'pix',
+          payerEmail: effectivePayerEmail,
+          mercadoPagoPayment: {
+            paymentId,
+            status: 'approved',
+            qrCode: pixSession?.qrCodeBase64,
+            qrCodeText: pixSession?.qrCode,
+            paidAt,
+          },
+        });
+        if (res.success) {
+          setCompletedTx(res.transaction);
+        } else {
+          setErrorMessage(res.error || 'Erro ao ativar plano após confirmação.');
+        }
+      } finally {
+        setIsProcessing(false);
+      }
+    },
+    [
+      targetBusiness,
+      completedTx,
+      processPlanPayment,
+      selectedPlan?.id,
+      billingCycle,
+      effectivePayerEmail,
+      pixSession?.qrCodeBase64,
+      pixSession?.qrCode,
+    ]
+  );
+
+  useEffect(() => {
+    if (
+      !isOpen ||
+      paymentMethod !== 'pix' ||
+      completedTx ||
+      !pixSession?.paymentId ||
+      pixSession.mode !== 'mercadopago_api'
+    ) {
+      return;
+    }
+    const interval = window.setInterval(async () => {
+      const check = await checkMercadoPagoPaymentViaApi(pixSession.paymentId!);
+      if (check.success && check.status === 'approved') {
+        window.clearInterval(interval);
+        await finalizeApprovedPix(pixSession.paymentId!, check.paidAt);
+      }
+    }, 5000);
+    return () => window.clearInterval(interval);
+  }, [isOpen, paymentMethod, completedTx, pixSession?.paymentId, pixSession?.mode, finalizeApprovedPix]);
 
   const handleCopyPix = () => {
+    if (!pixCode) return;
     navigator.clipboard.writeText(pixCode);
     setCopiedPix(true);
     setTimeout(() => setCopiedPix(false), 3000);
@@ -177,49 +294,127 @@ export const PlanPaymentModal: React.FC<PlanPaymentModalProps> = ({
       return;
     }
 
-    if (paymentMethod === 'credit_card') {
-      const cleanNum = cardForm.number.replace(/\s+/g, '');
-      if (cleanNum.length < 15) {
-        setErrorMessage('Número de cartão incompleto.');
+    setErrorMessage(null);
+    setPixStatusNotice(null);
+
+    if (paymentMethod === 'pix') {
+      if (!pixSession?.paymentId) {
+        setErrorMessage('Gere o QR Code PIX antes de verificar o pagamento.');
         return;
       }
-      if (!cardForm.holderName.trim()) {
-        setErrorMessage('Informe o nome impresso no cartão.');
-        return;
+      setIsProcessing(true);
+      try {
+        const isSandboxSim = pixSession.mode === 'sandbox_simulation';
+        const statusRes = await checkMercadoPagoPaymentViaApi(pixSession.paymentId, {
+          simulateApprove: isSandboxSim,
+        });
+        if (!statusRes.success) {
+          setErrorMessage(statusRes.error || 'Erro ao verificar pagamento no Mercado Pago.');
+          return;
+        }
+        if (statusRes.status === 'approved') {
+          await finalizeApprovedPix(pixSession.paymentId, statusRes.paidAt);
+        } else if (statusRes.status === 'rejected' || statusRes.status === 'cancelled') {
+          setErrorMessage('Este PIX foi cancelado ou recusado. Gere um novo QR Code PIX.');
+        } else {
+          setPixStatusNotice(
+            'Pagamento ainda consta como pendente no Mercado Pago. Assim que concluir o PIX no seu banco, a confirmação será automática!'
+          );
+        }
+      } finally {
+        setIsProcessing(false);
       }
-      if (cardForm.expiry.length < 5) {
-        setErrorMessage('Informe a data de validade (MM/AA).');
-        return;
-      }
-      if (cardForm.cvv.length < 3) {
-        setErrorMessage('Informe o código de segurança (CVV).');
-        return;
-      }
+      return;
     }
 
-    setErrorMessage(null);
+    const cleanNum = cardForm.number.replace(/\s+/g, '');
+    if (cleanNum.length < 15) {
+      setErrorMessage('Número de cartão incompleto.');
+      return;
+    }
+    if (!cardForm.holderName.trim()) {
+      setErrorMessage('Informe o nome impresso no cartão.');
+      return;
+    }
+    if (cardForm.expiry.length < 5) {
+      setErrorMessage('Informe a data de validade (MM/AA).');
+      return;
+    }
+    if (cardForm.cvv.length < 3) {
+      setErrorMessage('Informe o código de segurança (CVV).');
+      return;
+    }
+
     setIsProcessing(true);
 
     try {
-      // Simulate real Mercado Pago secure tokenization & verification latency
-      await new Promise((resolve) => setTimeout(resolve, 1400));
+      let cardToken: string | undefined;
+      let tokenLastFour: string | undefined;
+      let tokenMethodId: string | undefined;
+
+      if (mercadoPagoConfig.environment === 'production') {
+        const tok = await tokenizeCardWithMercadoPago({
+          publicKey: mercadoPagoConfig.publicKey,
+          cardNumber: cardForm.number,
+          holderName: cardForm.holderName,
+          expiry: cardForm.expiry,
+          cvv: cardForm.cvv,
+          cpfCnpj: cardForm.cpf,
+        });
+        if (!tok.success || !tok.token) {
+          setErrorMessage(tok.error || 'Falha ao validar cartão no Mercado Pago.');
+          setIsProcessing(false);
+          return;
+        }
+        cardToken = tok.token;
+        tokenLastFour = tok.lastFourDigits;
+        tokenMethodId = tok.paymentMethodId;
+      }
+
+      const cardRes = await createMercadoPagoCardPaymentViaApi({
+        amount: pricing.totalAmount,
+        description: `Plano ${selectedPlan.name} (${pricing.label}) - ${targetBusiness.name}`,
+        token: cardToken,
+        installments: Number(validInstallments),
+        paymentMethodId: tokenMethodId,
+        payerEmail: effectivePayerEmail,
+        payerName: cardForm.holderName || targetBusiness.name,
+        payerCpfCnpj: cardForm.cpf,
+        externalReference: `BIZ-${targetBusiness.id}-${selectedPlan.id}`,
+      });
+
+      if (!cardRes.success || !cardRes.paymentId) {
+        setErrorMessage(cardRes.error || 'Erro ao processar transação no Mercado Pago.');
+        return;
+      }
+
+      if (cardRes.status !== 'approved') {
+        setErrorMessage(
+          `Pagamento em análise no Mercado Pago (status: ${cardRes.status || 'in_process'}).`
+        );
+        return;
+      }
 
       const res = await processPlanPayment({
         businessId: targetBusiness.id,
         planId: selectedPlan.id,
         billingCycle,
-        paymentMethod,
-        cardData:
-          paymentMethod === 'credit_card'
-            ? {
-                number: cardForm.number,
-                holderName: cardForm.holderName,
-                expiry: cardForm.expiry,
-                cvv: cardForm.cvv,
-                installments: Number(validInstallments),
-              }
-            : undefined,
-        payerEmail: cardForm.payerEmail,
+        paymentMethod: 'credit_card',
+        cardData: {
+          number: cardForm.number,
+          holderName: cardForm.holderName,
+          expiry: cardForm.expiry,
+          cvv: cardForm.cvv,
+          installments: Number(validInstallments),
+        },
+        payerEmail: effectivePayerEmail,
+        mercadoPagoPayment: {
+          paymentId: cardRes.paymentId,
+          status: 'approved',
+          cardLastFour: tokenLastFour || cleanNum.slice(-4),
+          installments: Number(validInstallments),
+          paidAt: cardRes.paidAt,
+        },
       });
 
       if (res.success) {
@@ -510,62 +705,98 @@ export const PlanPaymentModal: React.FC<PlanPaymentModalProps> = ({
                 </div>
               </div>
 
+              {/* Dados do Pagador (exigidos/recomendados pelo Mercado Pago) */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-[11px] font-bold text-slate-600 dark:text-slate-300 mb-1">
+                    E-mail do Pagador (Comprovante)
+                  </label>
+                  <input
+                    type="email"
+                    value={cardForm.payerEmail}
+                    onChange={(e) => setCardForm({ ...cardForm, payerEmail: e.target.value })}
+                    placeholder="cliente@email.com"
+                    className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-xs text-slate-900 dark:text-white outline-none"
+                  />
+                </div>
+                <div>
+                  <label className="block text-[11px] font-bold text-slate-600 dark:text-slate-300 mb-1">
+                    CPF / CNPJ do Pagador (PIX Oficial)
+                  </label>
+                  <input
+                    type="text"
+                    inputMode="numeric"
+                    value={cardForm.cpf}
+                    onChange={(e) => setCardForm({ ...cardForm, cpf: formatCpfCnpj(e.target.value) })}
+                    placeholder="000.000.000-00"
+                    className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-xs font-mono text-slate-900 dark:text-white outline-none"
+                  />
+                </div>
+              </div>
+
               {/* ABA 1: CONTEÚDO PIX */}
               {paymentMethod === 'pix' && (
                 <div className="p-5 rounded-2xl border border-emerald-200 dark:border-emerald-900/60 bg-emerald-50/30 dark:bg-emerald-950/20 space-y-4 animate-fade-in">
-                  <div className="flex items-center justify-between">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
                     <div className="flex items-center gap-2 text-xs font-bold text-emerald-800 dark:text-emerald-300">
                       <Clock className="w-4 h-4 text-emerald-600 animate-pulse" />
                       <span>Expira em: <strong className="font-mono">{formatTimer(timeLeft)}</strong></span>
                     </div>
-                    <span className="text-[11px] text-slate-500">
-                      Aprovação em segundos
-                    </span>
+                    <button
+                      type="button"
+                      onClick={() => void generatePixCharge()}
+                      disabled={isGeneratingPix}
+                      className="inline-flex items-center gap-1 text-[11px] font-bold text-blue-600 hover:underline cursor-pointer disabled:opacity-50"
+                    >
+                      <RefreshCw className={`w-3 h-3 ${isGeneratingPix ? 'animate-spin' : ''}`} />
+                      <span>Gerar Novo QR Code</span>
+                    </button>
                   </div>
 
-                  <div className="flex flex-col sm:flex-row items-center gap-6 justify-center py-2">
-                    {/* SVG QR CODE REPRESENTATION */}
-                    <div className="p-3 bg-white rounded-2xl border border-slate-200 shadow-sm shrink-0 text-center">
-                      <svg
-                        className="w-36 h-36 mx-auto"
-                        viewBox="0 0 100 100"
-                        shapeRendering="crispEdges"
+                  {pixError && (
+                    <div className="p-3.5 rounded-xl bg-rose-50 dark:bg-rose-950/50 border border-rose-200 dark:border-rose-800 text-xs text-rose-800 dark:text-rose-200 space-y-2">
+                      <div className="flex items-start gap-2 font-bold">
+                        <AlertCircle className="w-4 h-4 text-rose-600 shrink-0 mt-0.5" />
+                        <span>{pixError}</span>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => void generatePixCharge()}
+                        className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-rose-600 hover:bg-rose-700 text-white text-[11px] font-bold cursor-pointer"
                       >
-                        {/* Realistic PIX QR Code Pattern in Clean SVG */}
-                        <rect width="100" height="100" fill="#ffffff" />
-                        {/* Corner 1 */}
-                        <rect x="5" y="5" width="25" height="25" fill="#0f172a" />
-                        <rect x="9" y="9" width="17" height="17" fill="#ffffff" />
-                        <rect x="13" y="13" width="9" height="9" fill="#00b4d8" />
-                        {/* Corner 2 */}
-                        <rect x="70" y="5" width="25" height="25" fill="#0f172a" />
-                        <rect x="74" y="9" width="17" height="17" fill="#ffffff" />
-                        <rect x="78" y="13" width="9" height="9" fill="#00b4d8" />
-                        {/* Corner 3 */}
-                        <rect x="5" y="70" width="25" height="25" fill="#0f172a" />
-                        <rect x="9" y="74" width="17" height="17" fill="#ffffff" />
-                        <rect x="13" y="78" width="9" height="9" fill="#00b4d8" />
-                        {/* Data Matrix Dots */}
-                        <rect x="35" y="10" width="8" height="5" fill="#0f172a" />
-                        <rect x="47" y="10" width="5" height="12" fill="#0f172a" />
-                        <rect x="56" y="8" width="8" height="6" fill="#0f172a" />
-                        <rect x="35" y="22" width="6" height="15" fill="#0f172a" />
-                        <rect x="45" y="27" width="18" height="6" fill="#0f172a" />
-                        <rect x="10" y="36" width="15" height="6" fill="#0f172a" />
-                        <rect x="10" y="48" width="8" height="12" fill="#0f172a" />
-                        <rect x="25" y="44" width="12" height="6" fill="#0f172a" />
-                        <rect x="35" y="48" width="10" height="10" fill="#0096c7" />
-                        <rect x="50" y="44" width="12" height="12" fill="#0f172a" />
-                        <rect x="68" y="36" width="24" height="6" fill="#0f172a" />
-                        <rect x="75" y="48" width="18" height="8" fill="#0f172a" />
-                        <rect x="68" y="62" width="8" height="15" fill="#0f172a" />
-                        <rect x="82" y="64" width="10" height="10" fill="#0f172a" />
-                        <rect x="36" y="68" width="18" height="6" fill="#0f172a" />
-                        <rect x="42" y="78" width="12" height="14" fill="#0f172a" />
-                        <rect x="60" y="82" width="15" height="10" fill="#0f172a" />
-                        <rect x="80" y="80" width="12" height="12" fill="#00b4d8" />
-                      </svg>
-                      <span className="text-[10px] font-bold text-slate-500 mt-1 block">
+                        <RefreshCw className="w-3.5 h-3.5" />
+                        <span>Tentar Novamente</span>
+                      </button>
+                    </div>
+                  )}
+
+                  {pixStatusNotice && (
+                    <div className="p-3 rounded-xl bg-amber-50 dark:bg-amber-950/50 border border-amber-200 dark:border-amber-800 text-xs text-amber-800 dark:text-amber-200 flex items-start gap-2 font-semibold">
+                      <Clock className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
+                      <span>{pixStatusNotice}</span>
+                    </div>
+                  )}
+
+                  <div className="flex flex-col sm:flex-row items-center gap-6 justify-center py-2">
+                    {/* REAL QR CODE IMAGE FROM MERCADO PAGO / QRCODE LIB */}
+                    <div className="p-3 bg-white rounded-2xl border border-slate-200 shadow-sm shrink-0 text-center">
+                      <div className="w-36 h-36 mx-auto flex items-center justify-center overflow-hidden rounded-xl bg-white">
+                        {isGeneratingPix ? (
+                          <div className="flex flex-col items-center gap-1.5 text-slate-500">
+                            <Loader2 className="w-7 h-7 animate-spin text-emerald-600" />
+                            <span className="text-[10px] font-bold">Gerando PIX...</span>
+                          </div>
+                        ) : pixSession?.qrCodeBase64 ? (
+                          <img
+                            src={pixSession.qrCodeBase64}
+                            alt="QR Code PIX Mercado Pago"
+                            className="w-full h-full object-contain"
+                          />
+                        ) : (
+                          <QrCode className="w-16 h-16 text-slate-300" />
+                        )}
+                      </div>
+                      <span className="text-[10px] font-bold text-slate-500 mt-1.5 block">
                         Aponte a câmera do seu banco
                       </span>
                     </div>
@@ -579,22 +810,26 @@ export const PlanPaymentModal: React.FC<PlanPaymentModalProps> = ({
                         <textarea
                           readOnly
                           rows={3}
-                          value={pixCode}
+                          value={isGeneratingPix ? 'Gerando código PIX oficial no Mercado Pago...' : pixCode}
+                          placeholder="O código PIX Copia e Cola será exibido aqui"
                           className="w-full p-2.5 rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 text-[11px] font-mono text-slate-700 dark:text-slate-300 outline-none resize-none select-all"
                         />
                       </div>
                       <button
                         type="button"
+                        disabled={!pixCode || isGeneratingPix}
                         onClick={handleCopyPix}
-                        className={`w-full py-2.5 px-4 rounded-xl text-xs font-bold flex items-center justify-center gap-2 transition cursor-pointer shadow-xs ${
-                          copiedPix
-                            ? 'bg-emerald-600 text-white'
-                            : 'bg-emerald-600 hover:bg-emerald-700 text-white'
-                        }`}
+                        className="w-full py-2.5 px-4 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold flex items-center justify-center gap-2 transition cursor-pointer shadow-xs disabled:opacity-50"
                       >
                         {copiedPix ? <Check className="w-4 h-4" /> : <Copy className="w-4 h-4" />}
                         <span>{copiedPix ? 'Chave PIX Copiada com Sucesso!' : 'Copiar Chave PIX'}</span>
                       </button>
+                      {pixSession?.mode === 'mercadopago_api' && (
+                        <p className="text-[10px] font-bold text-emerald-700 dark:text-emerald-400 flex items-center gap-1">
+                          <ShieldCheck className="w-3.5 h-3.5" />
+                          <span>PIX Oficial #{pixSession.paymentId} · Verificação automática a cada 5s</span>
+                        </p>
+                      )}
                     </div>
                   </div>
 
@@ -606,7 +841,7 @@ export const PlanPaymentModal: React.FC<PlanPaymentModalProps> = ({
                       <li>Abra o aplicativo do seu banco de preferência</li>
                       <li>Escolha a opção <strong>PIX</strong> e depois <strong>Copia e Cola</strong> ou <strong>Ler QR Code</strong></li>
                       <li>Cole o código ou aponte a câmera para confirmar o valor</li>
-                      <li>Após a confirmação, seu plano é liberado imediatamente no sistema!</li>
+                      <li>Após a confirmação pelo Mercado Pago, seu plano é liberado imediatamente!</li>
                     </ol>
                   </div>
                 </div>
@@ -768,8 +1003,8 @@ export const PlanPaymentModal: React.FC<PlanPaymentModalProps> = ({
               <button
                 type="button"
                 onClick={handleExecutePayment}
-                disabled={isProcessing}
-                className={`w-1/2 sm:w-auto px-6 py-2.5 rounded-xl text-white text-xs font-bold shadow-md transition flex items-center justify-center gap-2 cursor-pointer ${
+                disabled={isProcessing || (paymentMethod === 'pix' && (isGeneratingPix || !pixSession?.paymentId))}
+                className={`w-1/2 sm:w-auto px-6 py-2.5 rounded-xl text-white text-xs font-bold shadow-md transition flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50 ${
                   paymentMethod === 'pix'
                     ? 'bg-emerald-600 hover:bg-emerald-700'
                     : 'bg-blue-600 hover:bg-blue-700'
@@ -778,12 +1013,16 @@ export const PlanPaymentModal: React.FC<PlanPaymentModalProps> = ({
                 {isProcessing ? (
                   <>
                     <div className="w-3.5 h-3.5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
-                    <span>Processando...</span>
+                    <span>Verificando...</span>
                   </>
                 ) : paymentMethod === 'pix' ? (
                   <>
                     <Check className="w-4 h-4" />
-                    <span>Confirmar PIX ({formatBRL(pricing.totalAmount)})</span>
+                    <span>
+                      {pixSession?.mode === 'sandbox_simulation'
+                        ? `Confirmar PIX Sandbox (${formatBRL(pricing.totalAmount)})`
+                        : `Já paguei via PIX (${formatBRL(pricing.totalAmount)})`}
+                    </span>
                   </>
                 ) : (
                   <>

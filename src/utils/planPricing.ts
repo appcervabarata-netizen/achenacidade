@@ -267,17 +267,91 @@ export function calculatePlanPricing(
   };
 }
 
+function emvTlv(id: string, value: string): string {
+  const len = String(value.length).padStart(2, '0');
+  return `${id}${len}${value}`;
+}
+
+export function computePixCrc16(payloadWithTag6304: string): string {
+  let crc = 0xffff;
+  for (let i = 0; i < payloadWithTag6304.length; i++) {
+    crc ^= payloadWithTag6304.charCodeAt(i) << 8;
+    for (let j = 0; j < 8; j++) {
+      if ((crc & 0x8000) !== 0) {
+        crc = ((crc << 1) ^ 0x1021) & 0xffff;
+      } else {
+        crc = (crc << 1) & 0xffff;
+      }
+    }
+  }
+  return crc.toString(16).toUpperCase().padStart(4, '0');
+}
+
+function normalizeAsciiText(raw: string, fallback: string, maxLen: number): string {
+  const cleaned = raw
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^A-Za-z0-9 ]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .toUpperCase()
+    .slice(0, maxLen);
+  return cleaned || fallback;
+}
+
 export function buildMercadoPagoPixPayload(params: {
   pixKey?: string;
   descriptor?: string;
   amount: number;
   reference?: string;
+  city?: string;
 }): string {
-  const key = (params.pixKey || 'financeiro@achenacidade.com.br').slice(0, 40);
-  const desc = (params.descriptor || 'ACHENACIDADE').replace(/[^A-Za-z0-9]/g, '').slice(0, 20) || 'ACHENACIDADE';
-  const formattedAmount = roundCurrency(params.amount).toFixed(2);
-  const ref = (params.reference || 'PLANO').replace(/[^A-Za-z0-9]/g, '').slice(0, 12) || 'PLANO';
-  return `00020126580014br.gov.bcb.pix01${String(key.length).padStart(2, '0')}${key}52040000530398654${String(formattedAmount.length).padStart(2, '0')}${formattedAmount}5802BR59${String(desc.length).padStart(2, '0')}${desc}6010ALAGOINHAS62${String(ref.length + 4).padStart(2, '0')}05${String(ref.length).padStart(2, '0')}${ref}6304`;
+  const key = (params.pixKey || 'financeiro@achenacidade.com.br').trim().slice(0, 77);
+  const merchantName = normalizeAsciiText(params.descriptor || 'ACHENACIDADE', 'ACHENACIDADE', 25);
+  const merchantCity = normalizeAsciiText(params.city || 'ALAGOINHAS', 'ALAGOINHAS', 15);
+  const formattedAmount = Math.max(0.01, roundCurrency(params.amount)).toFixed(2);
+  const ref =
+    (params.reference || 'PLANO')
+      .replace(/[^A-Za-z0-9]/g, '')
+      .slice(0, 25) || 'PLANO';
+
+  const merchantAccountInfo = emvTlv('00', 'br.gov.bcb.pix') + emvTlv('01', key);
+  const additionalData = emvTlv('05', ref);
+
+  const payloadBody =
+    emvTlv('00', '01') +
+    emvTlv('26', merchantAccountInfo) +
+    emvTlv('52', '0000') +
+    emvTlv('53', '986') +
+    emvTlv('54', formattedAmount) +
+    emvTlv('58', 'BR') +
+    emvTlv('59', merchantName) +
+    emvTlv('60', merchantCity) +
+    emvTlv('62', additionalData) +
+    '6304';
+
+  return payloadBody + computePixCrc16(payloadBody);
+}
+
+export function canManageRotatingBanners(plan?: Plan | null): boolean {
+  if (!plan) return false;
+  if (plan.vipTier === 'premium' || plan.vipTier === 'founder') return true;
+  return (plan.features || []).some((f) => /banner/i.test(f));
+}
+
+export function formatCpfCnpj(raw: string): string {
+  const digits = raw.replace(/\D/g, '').slice(0, 14);
+  if (digits.length <= 11) {
+    return digits
+      .replace(/^(\d{3})(\d)/, '$1.$2')
+      .replace(/^(\d{3})\.(\d{3})(\d)/, '$1.$2.$3')
+      .replace(/\.(\d{3})(\d)/, '.$1-$2');
+  }
+  return digits
+    .replace(/^(\d{2})(\d)/, '$1.$2')
+    .replace(/^(\d{2})\.(\d{3})(\d)/, '$1.$2.$3')
+    .replace(/\.(\d{3})(\d)/, '.$1/$2')
+    .replace(/(\d{4})(\d)/, '$1-$2');
 }
 
 export function calculatePlanExpirationDate(months: number): string {

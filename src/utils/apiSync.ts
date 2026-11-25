@@ -626,14 +626,19 @@ export async function confirmPasswordResetViaApi(params: {
 async function sendJsonMutation(
   url: string,
   method: 'POST' | 'PUT' | 'DELETE',
-  body?: unknown
+  body?: unknown,
+  token?: string
 ): Promise<ApiMutationResult> {
   try {
+    const headers: Record<string, string> = {};
+    if (body !== undefined) headers['Content-Type'] = 'application/json';
+    if (token) headers.Authorization = `Bearer ${token}`;
+
     const res = await fetch(url, {
       method,
       keepalive: true,
       cache: 'no-store',
-      headers: body !== undefined ? { 'Content-Type': 'application/json' } : undefined,
+      headers: Object.keys(headers).length > 0 ? headers : undefined,
       body: body !== undefined ? JSON.stringify(body) : undefined,
     });
     if (!res.ok) {
@@ -685,8 +690,8 @@ export function syncCollectionToDb(collection: string, items: unknown[]): Promis
   return sendJsonMutation(`/api/sync/${encodeURIComponent(collection)}`, 'PUT', { items });
 }
 
-export function saveSettingToDb(key: string, value: unknown): Promise<ApiMutationResult> {
-  return sendJsonMutation(`/api/settings/${encodeURIComponent(key)}`, 'PUT', { value });
+export function saveSettingToDb(key: string, value: unknown, token?: string): Promise<ApiMutationResult> {
+  return sendJsonMutation(`/api/settings/${encodeURIComponent(key)}`, 'PUT', { value }, token);
 }
 
 export function recordBannerClickInDb(id: string): Promise<ApiMutationResult> {
@@ -988,3 +993,196 @@ export async function redeemPlanInviteViaApi(
   }
 }
 
+export async function fetchAdminMercadoPagoConfigViaApi(token: string): Promise<{
+  success: boolean;
+  config?: {
+    enabled: boolean;
+    environment: 'sandbox' | 'production';
+    publicKey: string;
+    hasAccessToken: boolean;
+    accessTokenMasked: string;
+    pixKey?: string;
+    statementDescriptor: string;
+    autoApproveInSandbox?: boolean;
+    hasEnvToken?: boolean;
+  };
+  error?: string;
+}> {
+  if (!token) return { success: false, error: 'Sessão administrativa ausente.' };
+  try {
+    const res = await fetch('/api/mercadopago/admin-config', {
+      method: 'GET',
+      cache: 'no-store',
+      headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' },
+    });
+    const data = (await res.json()) as { success?: boolean; config?: any; error?: string };
+    if (!res.ok || !data.success || !data.config) {
+      return { success: false, error: data.error || 'Erro ao consultar configuração do Mercado Pago.' };
+    }
+    return { success: true, config: data.config };
+  } catch (err) {
+    return {
+      success: false,
+      error: err instanceof Error ? err.message : 'Erro de conexão ao consultar Mercado Pago.',
+    };
+  }
+}
+
+export async function testMercadoPagoViaApi(
+  token: string,
+  params: { accessToken?: string; publicKey?: string; environment: 'sandbox' | 'production' }
+): Promise<{
+  success: boolean;
+  message?: string;
+  pixAvailable?: boolean;
+  account?: { id?: string | number; nickname?: string; email?: string; siteId?: string };
+  error?: string;
+}> {
+  if (!token) return { success: false, error: 'Sessão administrativa ausente.' };
+  try {
+    const res = await fetch('/api/mercadopago/test-connection', {
+      method: 'POST',
+      cache: 'no-store',
+      headers: {
+        Authorization: `Bearer ${token}`,
+        'Content-Type': 'application/json',
+        Accept: 'application/json',
+      },
+      body: JSON.stringify(params),
+    });
+    const data = (await res.json()) as any;
+    if (!res.ok || !data.success) {
+      return { success: false, error: data.error || 'Falha ao validar credenciais no Mercado Pago.' };
+    }
+    return {
+      success: true,
+      message: data.message,
+      pixAvailable: data.pixAvailable,
+      account: data.account,
+    };
+  } catch (err) {
+    return {
+      success: false,
+      error: err instanceof Error ? err.message : 'Erro de rede ao testar conexão com o Mercado Pago.',
+    };
+  }
+}
+
+export interface MercadoPagoPixCreationResult {
+  success: boolean;
+  mode?: 'mercadopago_api' | 'sandbox_simulation';
+  environment?: 'sandbox' | 'production';
+  paymentId?: string;
+  status?: string;
+  statusDetail?: string;
+  qrCode?: string;
+  qrCodeBase64?: string;
+  ticketUrl?: string | null;
+  expiresAt?: string | null;
+  autoApproveInSandbox?: boolean;
+  error?: string;
+}
+
+export async function createMercadoPagoPixViaApi(params: {
+  amount: number;
+  description: string;
+  payerEmail: string;
+  payerName?: string;
+  payerCpfCnpj?: string;
+  externalReference?: string;
+}): Promise<MercadoPagoPixCreationResult> {
+  try {
+    const res = await fetch('/api/mercadopago/pix', {
+      method: 'POST',
+      cache: 'no-store',
+      headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+      body: JSON.stringify(params),
+    });
+    const data = (await res.json()) as MercadoPagoPixCreationResult;
+    if (!res.ok || !data.success) {
+      return {
+        success: false,
+        error: data.error || 'Não foi possível gerar o QR Code PIX no Mercado Pago.',
+      };
+    }
+    return data;
+  } catch (err) {
+    return {
+      success: false,
+      error: err instanceof Error ? err.message : 'Erro de conexão ao gerar PIX no servidor.',
+    };
+  }
+}
+
+export async function checkMercadoPagoPaymentViaApi(
+  paymentId: string,
+  options?: { simulateApprove?: boolean }
+): Promise<{
+  success: boolean;
+  mode?: 'mercadopago_api' | 'sandbox_simulation';
+  paymentId?: string;
+  status?: 'pending' | 'approved' | 'rejected' | 'cancelled' | string;
+  statusDetail?: string;
+  paidAt?: string | null;
+  error?: string;
+}> {
+  if (!paymentId) return { success: false, error: 'ID de pagamento ausente.' };
+  try {
+    const qs = options?.simulateApprove ? '?simulateApprove=1' : '';
+    const res = await fetch(`/api/mercadopago/payment/${encodeURIComponent(paymentId)}${qs}`, {
+      method: 'GET',
+      cache: 'no-store',
+      headers: { Accept: 'application/json' },
+    });
+    const data = (await res.json()) as any;
+    if (!res.ok || !data.success) {
+      return { success: false, error: data.error || 'Não foi possível verificar o status do pagamento.' };
+    }
+    return data;
+  } catch (err) {
+    return {
+      success: false,
+      error: err instanceof Error ? err.message : 'Erro de conexão ao verificar pagamento.',
+    };
+  }
+}
+
+export async function createMercadoPagoCardPaymentViaApi(params: {
+  amount: number;
+  description: string;
+  token?: string;
+  installments: number;
+  paymentMethodId?: string;
+  issuerId?: string | number;
+  payerEmail: string;
+  payerName?: string;
+  payerCpfCnpj?: string;
+  externalReference?: string;
+}): Promise<{
+  success: boolean;
+  mode?: 'mercadopago_api' | 'sandbox_simulation';
+  paymentId?: string;
+  status?: string;
+  statusDetail?: string;
+  paidAt?: string | null;
+  error?: string;
+}> {
+  try {
+    const res = await fetch('/api/mercadopago/card', {
+      method: 'POST',
+      cache: 'no-store',
+      headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+      body: JSON.stringify(params),
+    });
+    const data = (await res.json()) as any;
+    if (!res.ok || !data.success) {
+      return { success: false, error: data.error || 'Erro ao processar cartão no Mercado Pago.' };
+    }
+    return data;
+  } catch (err) {
+    return {
+      success: false,
+      error: err instanceof Error ? err.message : 'Erro de rede ao processar cartão.',
+    };
+  }
+}

@@ -55,7 +55,11 @@ import { AdminEmailTab } from './AdminEmailTab';
 import { AdminDatabaseTab } from './AdminDatabaseTab';
 import { AdminGeneralSettingsTab } from './AdminGeneralSettingsTab';
 import { generateHostGatorPackage, downloadFile } from '../../utils/hostgatorGenerator';
-import { changeAdminPasswordViaApi } from '../../utils/apiSync';
+import {
+  changeAdminPasswordViaApi,
+  fetchAdminMercadoPagoConfigViaApi,
+  testMercadoPagoViaApi,
+} from '../../utils/apiSync';
 import {
   BILLING_CYCLE_LIST,
   BILLING_CYCLE_META,
@@ -198,12 +202,70 @@ export const AdminScreen: React.FC = () => {
     statementDescriptor: mercadoPagoConfig.statementDescriptor || 'ACHENACIDADE',
     autoApproveInSandbox: mercadoPagoConfig.autoApproveInSandbox ?? true,
   });
+  const [mpServerMeta, setMpServerMeta] = useState<{
+    hasAccessToken: boolean;
+    accessTokenMasked: string;
+    hasEnvToken: boolean;
+  }>({
+    hasAccessToken: Boolean(mercadoPagoConfig.hasAccessToken || mercadoPagoConfig.accessToken),
+    accessTokenMasked: mercadoPagoConfig.accessTokenMasked || '',
+    hasEnvToken: false,
+  });
   const [showAccessToken, setShowAccessToken] = useState(false);
   const [isTestingConnection, setIsTestingConnection] = useState(false);
   const [connectionTestResult, setConnectionTestResult] = useState<{
     status: 'success' | 'error' | 'idle';
     message: string;
   }>({ status: 'idle', message: '' });
+
+  useEffect(() => {
+    setMpForm((prev) => ({
+      ...prev,
+      enabled: mercadoPagoConfig.enabled,
+      environment: mercadoPagoConfig.environment,
+      publicKey: mercadoPagoConfig.publicKey,
+      pixKey: mercadoPagoConfig.pixKey || '',
+      statementDescriptor: mercadoPagoConfig.statementDescriptor || 'ACHENACIDADE',
+      autoApproveInSandbox: mercadoPagoConfig.autoApproveInSandbox ?? true,
+    }));
+    if (mercadoPagoConfig.hasAccessToken || mercadoPagoConfig.accessTokenMasked) {
+      setMpServerMeta((prev) => ({
+        ...prev,
+        hasAccessToken: Boolean(mercadoPagoConfig.hasAccessToken || prev.hasAccessToken),
+        accessTokenMasked: mercadoPagoConfig.accessTokenMasked || prev.accessTokenMasked,
+      }));
+    }
+  }, [
+    mercadoPagoConfig.enabled,
+    mercadoPagoConfig.environment,
+    mercadoPagoConfig.publicKey,
+    mercadoPagoConfig.pixKey,
+    mercadoPagoConfig.statementDescriptor,
+    mercadoPagoConfig.autoApproveInSandbox,
+    mercadoPagoConfig.hasAccessToken,
+    mercadoPagoConfig.accessTokenMasked,
+  ]);
+
+  useEffect(() => {
+    if (activeTab !== 'payments' || !authSession.token) return;
+    void fetchAdminMercadoPagoConfigViaApi(authSession.token).then((res) => {
+      if (!res.success || !res.config) return;
+      setMpForm((prev) => ({
+        ...prev,
+        enabled: res.config!.enabled,
+        environment: res.config!.environment,
+        publicKey: res.config!.publicKey || prev.publicKey,
+        pixKey: res.config!.pixKey || prev.pixKey,
+        statementDescriptor: res.config!.statementDescriptor || prev.statementDescriptor,
+        autoApproveInSandbox: res.config!.autoApproveInSandbox ?? true,
+      }));
+      setMpServerMeta({
+        hasAccessToken: res.config.hasAccessToken,
+        accessTokenMasked: res.config.accessTokenMasked,
+        hasEnvToken: Boolean(res.config.hasEnvToken),
+      });
+    });
+  }, [activeTab, authSession.token]);
 
   // Banner form state
   const [bannerForm, setBannerForm] = useState({
@@ -397,15 +459,24 @@ export const AdminScreen: React.FC = () => {
 
   const handleSaveMercadoPagoConfig = (e: React.FormEvent) => {
     e.preventDefault();
+    const trimmedToken = mpForm.accessToken.trim();
     updateMercadoPagoConfig({
       enabled: mpForm.enabled,
       environment: mpForm.environment,
       publicKey: mpForm.publicKey.trim(),
-      accessToken: mpForm.accessToken.trim(),
+      accessToken: trimmedToken,
       pixKey: mpForm.pixKey.trim(),
       statementDescriptor: mpForm.statementDescriptor.trim() || 'ACHENACIDADE',
       autoApproveInSandbox: mpForm.autoApproveInSandbox,
     });
+    if (trimmedToken && !trimmedToken.includes('••••')) {
+      setMpServerMeta((prev) => ({
+        ...prev,
+        hasAccessToken: true,
+        accessTokenMasked: `${trimmedToken.slice(0, 8)}••••••••${trimmedToken.slice(-4)}`,
+      }));
+      setMpForm((prev) => ({ ...prev, accessToken: '' }));
+    }
     setAdminToast('Configurações do Mercado Pago salvas com sucesso!');
     setTimeout(() => setAdminToast(null), 3500);
   };
@@ -414,30 +485,50 @@ export const AdminScreen: React.FC = () => {
     setIsTestingConnection(true);
     setConnectionTestResult({ status: 'idle', message: '' });
 
-    await new Promise((resolve) => setTimeout(resolve, 800));
-
-    if (!mpForm.publicKey.trim() || !mpForm.accessToken.trim()) {
+    if (!mpForm.publicKey.trim()) {
       setConnectionTestResult({
         status: 'error',
-        message: 'Preencha a Public Key e o Access Token para realizar o teste de conexão.',
+        message: 'Preencha a Public Key para realizar o teste de conexão.',
       });
       setIsTestingConnection(false);
       return;
     }
 
-    const isSandboxKey = mpForm.publicKey.startsWith('TEST-') || mpForm.accessToken.startsWith('TEST-');
-    if (mpForm.environment === 'production' && isSandboxKey) {
+    const rawToken = mpForm.accessToken.trim();
+    if (!rawToken && !mpServerMeta.hasAccessToken) {
       setConnectionTestResult({
         status: 'error',
-        message: 'Aviso: O ambiente está marcado como Produção, mas as chaves informadas iniciam com TEST- (Sandbox). Use chaves de produção (APP_USR-...).',
+        message: 'Informe o Access Token (APP_USR-... ou TEST-...) antes de testar a conexão.',
       });
       setIsTestingConnection(false);
       return;
     }
+
+    const res = await testMercadoPagoViaApi(authSession.token || '', {
+      accessToken: rawToken || undefined,
+      publicKey: mpForm.publicKey.trim(),
+      environment: mpForm.environment,
+    });
+
+    if (!res.success) {
+      setConnectionTestResult({
+        status: 'error',
+        message: res.error || 'Falha ao validar credenciais no Mercado Pago.',
+      });
+      setIsTestingConnection(false);
+      return;
+    }
+
+    const pixNotice =
+      res.pixAvailable === false
+        ? ' Atenção: o método PIX não apareceu ativo nesta conta — cadastre uma Chave PIX no app do Mercado Pago!'
+        : ' Método PIX habilitado e pronto para emissão de QR Codes.';
 
     setConnectionTestResult({
       status: 'success',
-      message: `Credenciais válidas! Conexão com Mercado Pago (${mpForm.environment === 'production' ? 'Produção Ao Vivo' : 'Sandbox Teste'}) estabelecida com sucesso.`,
+      message: `${res.message || 'Credenciais validadas com sucesso!'}${
+        res.account?.email ? ` (${res.account.email})` : ''
+      }${pixNotice}`,
     });
     setIsTestingConnection(false);
   };
@@ -3202,17 +3293,28 @@ export const AdminScreen: React.FC = () => {
 
                 {/* Access Token */}
                 <div>
-                  <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">
-                    Access Token (Token de Acesso Privado) *
-                  </label>
+                  <div className="flex items-center justify-between gap-2 mb-1">
+                    <label className="block text-xs font-bold text-slate-700 dark:text-slate-300">
+                      Access Token (Token de Acesso Privado) *
+                    </label>
+                    {mpServerMeta.hasAccessToken && (
+                      <span className="text-[10px] font-bold text-emerald-600 dark:text-emerald-400">
+                        Salvo: {mpServerMeta.accessTokenMasked || 'Configurado no servidor'}
+                      </span>
+                    )}
+                  </div>
                   <div className="relative">
                     <Lock className="w-4 h-4 absolute left-3 top-3 text-slate-400" />
                     <input
                       type={showAccessToken ? 'text' : 'password'}
-                      required
+                      required={!mpServerMeta.hasAccessToken}
                       value={mpForm.accessToken}
                       onChange={(e) => setMpForm({ ...mpForm, accessToken: e.target.value.trim() })}
-                      placeholder="Ex: TEST-192837465012-... ou APP_USR-..."
+                      placeholder={
+                        mpServerMeta.hasAccessToken
+                          ? 'Deixe em branco para manter o token atual ou cole um novo'
+                          : 'Ex: TEST-192837465012-... ou APP_USR-...'
+                      }
                       className="w-full pl-9 pr-10 py-2.5 rounded-xl border border-slate-300 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-xs font-mono text-slate-900 dark:text-white outline-none focus:ring-2 focus:ring-blue-500"
                     />
                     <button
@@ -3225,14 +3327,14 @@ export const AdminScreen: React.FC = () => {
                     </button>
                   </div>
                   <span className="text-[10px] text-slate-500 mt-1 block">
-                    Token secreto para autorização de cobranças e emissão de QR Code PIX.
+                    Token secreto mantido apenas no servidor para gerar QR Code PIX oficial e validar pagamentos.
                   </span>
                 </div>
 
                 {/* Chave PIX Padrão */}
                 <div className="md:col-span-2">
                   <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">
-                    Chave PIX Principal da Plataforma (E-mail, CNPJ ou Aleatória)
+                    Chave PIX Principal da Plataforma (Referência / Fallback Sandbox)
                   </label>
                   <div className="relative">
                     <QrCode className="w-4 h-4 absolute left-3 top-3 text-emerald-600" />
@@ -3245,15 +3347,40 @@ export const AdminScreen: React.FC = () => {
                     />
                   </div>
                   <span className="text-[10px] text-slate-500 mt-1 block">
-                    Chave PIX associada à sua conta Mercado Pago para geração do payload dinâmico.
+                    Em Produção, o PIX é gerado diretamente na API do Mercado Pago (certifique-se de ter uma chave PIX ativa cadastrada dentro do app Mercado Pago).
                   </span>
+                </div>
+
+                {/* Webhook URL */}
+                <div className="md:col-span-2 p-3.5 rounded-2xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700 flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                  <div className="text-xs">
+                    <strong className="text-slate-800 dark:text-slate-200 block">
+                      URL de Webhook (Notificações Instantâneas MP)
+                    </strong>
+                    <span className="font-mono text-[11px] text-slate-500 break-all">
+                      {typeof window !== 'undefined' ? `${window.location.origin}/api/webhooks/mercadopago` : '/api/webhooks/mercadopago'}
+                    </span>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() =>
+                      handleCopy(
+                        'mp-webhook',
+                        typeof window !== 'undefined' ? `${window.location.origin}/api/webhooks/mercadopago` : '/api/webhooks/mercadopago'
+                      )
+                    }
+                    className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-slate-900 text-white text-[11px] font-bold cursor-pointer shrink-0"
+                  >
+                    {copiedKey === 'mp-webhook' ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
+                    <span>{copiedKey === 'mp-webhook' ? 'Copiado' : 'Copiar Webhook'}</span>
+                  </button>
                 </div>
               </div>
 
               {/* Botões do Formulário */}
               <div className="flex flex-col sm:flex-row items-center justify-between gap-3 pt-3 border-t border-slate-200 dark:border-slate-800">
                 <span className="text-xs text-slate-500">
-                  As chaves ficam salvas no sistema e são exportadas automaticamente nos arquivos de configuração HostGator.
+                  Clique em Salvar e depois em Testar Conexão para validar suas credenciais ao vivo no Mercado Pago.
                 </span>
 
                 <button
@@ -3399,9 +3526,19 @@ export const AdminScreen: React.FC = () => {
                           {tx.mercadoPagoPaymentId}
                         </td>
                         <td className="p-3 text-right">
-                          <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-black bg-emerald-100 text-emerald-800 dark:bg-emerald-950/60 dark:text-emerald-300">
-                            <Check className="w-3 h-3 text-emerald-600" /> Aprovado
-                          </span>
+                          {tx.status === 'approved' ? (
+                            <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-black bg-emerald-100 text-emerald-800 dark:bg-emerald-950/60 dark:text-emerald-300">
+                              <Check className="w-3 h-3 text-emerald-600" /> Aprovado
+                            </span>
+                          ) : tx.status === 'rejected' ? (
+                            <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-black bg-rose-100 text-rose-800 dark:bg-rose-950/60 dark:text-rose-300">
+                              Recusado
+                            </span>
+                          ) : (
+                            <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-black bg-amber-100 text-amber-800 dark:bg-amber-950/60 dark:text-amber-300">
+                              Pendente
+                            </span>
+                          )}
                         </td>
                       </tr>
                     ))}

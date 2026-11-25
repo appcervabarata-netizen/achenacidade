@@ -283,6 +283,16 @@ interface DirectoryContextType {
       installments: number;
     };
     payerEmail?: string;
+    mercadoPagoPayment?: {
+      paymentId: string;
+      status?: 'approved' | 'pending' | 'rejected';
+      qrCode?: string;
+      qrCodeText?: string;
+      cardLastFour?: string;
+      cardBrand?: string;
+      installments?: number;
+      paidAt?: string | null;
+    };
   }) => Promise<{ success: boolean; transaction: PaymentTransaction; error?: string }>;
 
   // Site Mode (Normal | Launch | Maintenance) & Funnel State
@@ -814,7 +824,6 @@ export const DirectoryProvider: React.FC<{ children: React.ReactNode }> = ({ chi
 
   useEffect(() => {
     localStorage.setItem('achenacidade_banner_plans', JSON.stringify(bannerPlans));
-    trackDbMutation(saveSettingToDb('bannerPlans', bannerPlans));
   }, [bannerPlans]);
 
   const addBannerPlan = (planData: Omit<BannerPlan, 'id'>) => {
@@ -822,15 +831,27 @@ export const DirectoryProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       ...planData,
       id: `bplan-${Date.now()}`,
     };
-    setBannerPlans((prev) => [...prev, newPlan]);
+    setBannerPlans((prev) => {
+      const next = [...prev, newPlan];
+      trackDbMutation(saveSettingToDb('bannerPlans', next));
+      return next;
+    });
   };
 
   const updateBannerPlan = (id: string, updates: Partial<BannerPlan>) => {
-    setBannerPlans((prev) => prev.map((p) => (p.id === id ? { ...p, ...updates } : p)));
+    setBannerPlans((prev) => {
+      const next = prev.map((p) => (p.id === id ? { ...p, ...updates } : p));
+      trackDbMutation(saveSettingToDb('bannerPlans', next));
+      return next;
+    });
   };
 
   const deleteBannerPlan = (id: string) => {
-    setBannerPlans((prev) => prev.filter((p) => p.id !== id));
+    setBannerPlans((prev) => {
+      const next = prev.filter((p) => p.id !== id);
+      trackDbMutation(saveSettingToDb('bannerPlans', next));
+      return next;
+    });
   };
 
   const addMerchantBanner = (bannerData: Omit<AdBanner, 'id' | 'clicksCount' | 'isActive'>): { success: boolean; error?: string } => {
@@ -1008,13 +1029,30 @@ export const DirectoryProvider: React.FC<{ children: React.ReactNode }> = ({ chi
   });
 
   useEffect(() => {
-    localStorage.setItem('achenacidade_mercadopago_config', JSON.stringify(mercadoPagoConfig));
+    const safeForStorage: MercadoPagoConfig = {
+      ...mercadoPagoConfig,
+      accessToken: '',
+      hasAccessToken: Boolean(mercadoPagoConfig.hasAccessToken || mercadoPagoConfig.accessToken),
+    };
+    localStorage.setItem('achenacidade_mercadopago_config', JSON.stringify(safeForStorage));
   }, [mercadoPagoConfig]);
 
+
   const updateMercadoPagoConfig = (updates: Partial<MercadoPagoConfig>) => {
-    const next = { ...mercadoPagoConfig, ...updates };
-    setMercadoPagoConfig(next);
-    trackDbMutation(saveSettingToDb('mercadoPagoConfig', next));
+    const incomingToken = typeof updates.accessToken === 'string' ? updates.accessToken.trim() : '';
+    const hasNewToken = Boolean(incomingToken && !incomingToken.includes('••••'));
+    const serverPayload: MercadoPagoConfig = {
+      ...mercadoPagoConfig,
+      ...updates,
+      accessToken: hasNewToken ? incomingToken : mercadoPagoConfig.accessToken || '',
+    };
+    const safeClientState: MercadoPagoConfig = {
+      ...serverPayload,
+      accessToken: '',
+      hasAccessToken: hasNewToken || Boolean(mercadoPagoConfig.hasAccessToken || serverPayload.accessToken),
+    };
+    setMercadoPagoConfig(safeClientState);
+    trackDbMutation(saveSettingToDb('mercadoPagoConfig', serverPayload, authSession.token || undefined));
   };
 
   // Payment Transactions History
@@ -1333,6 +1371,16 @@ export const DirectoryProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       installments: number;
     };
     payerEmail?: string;
+    mercadoPagoPayment?: {
+      paymentId: string;
+      status?: 'approved' | 'pending' | 'rejected';
+      qrCode?: string;
+      qrCodeText?: string;
+      cardLastFour?: string;
+      cardBrand?: string;
+      installments?: number;
+      paidAt?: string | null;
+    };
   }): Promise<{ success: boolean; transaction: PaymentTransaction; error?: string }> => {
     const targetBusiness = businesses.find((b) => b.id === params.businessId);
     const targetPlan = plans.find((p) => p.id === params.planId);
@@ -1357,17 +1405,23 @@ export const DirectoryProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         })`
       : targetPlan.name;
 
-    const mpPaymentId = 'MP-' + Math.floor(1000000000 + Math.random() * 9000000000).toString();
+    const mpPaymentId =
+      params.mercadoPagoPayment?.paymentId ||
+      'MP-' + Math.floor(1000000000 + Math.random() * 9000000000).toString();
     const txId = `tx-${Date.now()}`;
     const now = new Date();
     const nowStr = now.toLocaleDateString('pt-BR') + ' ' + now.toLocaleTimeString('pt-BR');
 
-    const cardLastFour = params.cardData?.number ? params.cardData.number.replace(/\s+/g, '').slice(-4) : undefined;
-    let cardBrand = 'Mastercard';
-    if (params.cardData?.number.startsWith('4')) cardBrand = 'Visa';
-    else if (params.cardData?.number.startsWith('5')) cardBrand = 'Mastercard';
-    else if (params.cardData?.number.startsWith('6')) cardBrand = 'Elo';
-    else if (params.cardData?.number.startsWith('3')) cardBrand = 'Amex';
+    const cardLastFour =
+      params.mercadoPagoPayment?.cardLastFour ||
+      (params.cardData?.number ? params.cardData.number.replace(/\s+/g, '').slice(-4) : undefined);
+    let cardBrand = params.mercadoPagoPayment?.cardBrand || 'Mastercard';
+    if (!params.mercadoPagoPayment?.cardBrand) {
+      if (params.cardData?.number.startsWith('4')) cardBrand = 'Visa';
+      else if (params.cardData?.number.startsWith('5')) cardBrand = 'Mastercard';
+      else if (params.cardData?.number.startsWith('6')) cardBrand = 'Elo';
+      else if (params.cardData?.number.startsWith('3')) cardBrand = 'Amex';
+    }
 
     const newTransaction: PaymentTransaction = {
       id: txId,
@@ -1382,14 +1436,19 @@ export const DirectoryProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       discountAmount: pricing.discountAmount,
       amount: pricing.totalAmount,
       paymentMethod: params.paymentMethod,
-      status: 'approved',
+      status: params.mercadoPagoPayment?.status || 'approved',
       mercadoPagoPaymentId: mpPaymentId,
-      installments: params.paymentMethod === 'credit_card' ? params.cardData?.installments || 1 : 1,
+      qrCode: params.mercadoPagoPayment?.qrCode,
+      qrCodeText: params.mercadoPagoPayment?.qrCodeText,
+      installments:
+        params.paymentMethod === 'credit_card'
+          ? params.mercadoPagoPayment?.installments || params.cardData?.installments || 1
+          : 1,
       cardLastFour,
       cardBrand: params.paymentMethod === 'credit_card' ? cardBrand : undefined,
       payerEmail: params.payerEmail || targetBusiness.ownerEmail || targetBusiness.email || 'lojista@achenacidade.com.br',
       createdAt: nowStr,
-      paidAt: nowStr,
+      paidAt: params.mercadoPagoPayment?.paidAt || nowStr,
     };
 
     const wasPendingPaid = targetBusiness.paymentStatus === 'pending_payment';
@@ -1492,6 +1551,29 @@ export const DirectoryProvider: React.FC<{ children: React.ReactNode }> = ({ chi
   useEffect(() => {
     localStorage.setItem('achenacidade_auth', JSON.stringify(authSession));
   }, [authSession]);
+
+  // One-time migration if legacy localStorage held a raw accessToken before server-side storage
+  useEffect(() => {
+    const legacyToken = (mercadoPagoConfig.accessToken || '').trim();
+    if (
+      authSession.isAuthenticated &&
+      authSession.role === 'admin' &&
+      authSession.token &&
+      legacyToken &&
+      !legacyToken.includes('••••')
+    ) {
+      void saveSettingToDb('mercadoPagoConfig', mercadoPagoConfig, authSession.token).then((res) => {
+        if (res.ok) {
+          setMercadoPagoConfig((prev) => ({
+            ...prev,
+            accessToken: '',
+            hasAccessToken: true,
+          }));
+        }
+      });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [authSession.isAuthenticated, authSession.role, authSession.token]);
 
   // Verify persisted session token with backend MySQL/server on mount
   useEffect(() => {

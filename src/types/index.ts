@@ -226,6 +226,8 @@ export interface MercadoPagoConfig {
   environment: 'sandbox' | 'production';
   publicKey: string;
   accessToken: string;
+  hasAccessToken?: boolean;
+  accessTokenMasked?: string;
   pixKey?: string;
   statementDescriptor: string; // Ex: ACHENACIDADE
   autoApproveInSandbox?: boolean;
