@@ -1349,6 +1349,9 @@ export const DirectoryProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         !isLoginAdminPath()
       ) {
         setCurrentViewState('founder_sales');
+      } else if (searchParams.get('cadastro') === 'gratis' && !isLoginAdminPath()) {
+        setPreselectedPlanId('plan-free');
+        setCurrentViewState('register_store');
       } else if (searchParams.get('painel') === '1' && !isLoginAdminPath()) {
         setCurrentViewState('login');
       }
