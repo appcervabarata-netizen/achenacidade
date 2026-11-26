@@ -20,6 +20,7 @@ import { FounderSalesPage } from './components/pages/FounderSalesPage';
 import { BannerAdPage } from './components/pages/BannerAdPage';
 import { LaunchPage } from './components/pages/LaunchPage';
 import { MaintenancePage } from './components/pages/MaintenancePage';
+import { VisitorDemoGuideBar } from './components/common/VisitorDemoGuideBar';
 import { LoginScreen } from './components/auth/LoginScreen';
 import { AdminLoginScreen } from './components/auth/AdminLoginScreen';
 import { AdminScreen } from './components/admin/AdminScreen';
@@ -44,6 +45,7 @@ function AppContent() {
     siteModeConfig,
     adminPreviewMode,
     setAdminPreviewMode,
+    visitorDemoActive,
   } = useDirectory();
 
   if (adminPreviewMode === 'launch') {
@@ -64,7 +66,7 @@ function AppContent() {
     );
   }
 
-  const isRestrictedMode = siteModeConfig.mode !== 'normal';
+  const isRestrictedMode = siteModeConfig.mode !== 'normal' && !visitorDemoActive;
   const allowedRestrictedViews = ['login', 'admin_login', 'admin', 'business_portal', 'plans', 'founder_sales', 'banner_ad_page', 'register_store', 'checkout'];
   const showRestrictedLanding = isRestrictedMode && !allowedRestrictedViews.includes(currentView);
   const hideChrome = isRestrictedMode || currentView === 'checkout' || currentView === 'admin_login' || currentView === 'founder_sales' || currentView === 'banner_ad_page';
@@ -89,6 +91,9 @@ function AppContent() {
         hideChrome && !showStoreOwnerBottomMenu ? '' : 'pb-16 md:pb-0'
       }`}
     >
+      {/* Guided Visitor Demo Bar (active when visitor enters Demo Mode from Launch Page) */}
+      {visitorDemoActive && !hideChrome && <VisitorDemoGuideBar />}
+
       {/* Top Navigation Bar (hidden when Launch/Maintenance funnel or dedicated Checkout is active) */}
       {!hideChrome && <Navbar />}
 

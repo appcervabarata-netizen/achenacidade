@@ -32,6 +32,7 @@ export const PlansPage: React.FC = () => {
     currentBusinessAuth,
     openPaymentModal,
     siteModeConfig,
+    visitorDemoActive,
     setPreselectedPlanId,
     planDiscountConfig,
     preselectedBillingCycle,
@@ -47,7 +48,7 @@ export const PlansPage: React.FC = () => {
   const [inviteChecking, setInviteChecking] = useState(false);
   const [inviteRedeemMsg, setInviteRedeemMsg] = useState<string | null>(null);
 
-  const isRestrictedMode = siteModeConfig.mode !== 'normal';
+  const isRestrictedMode = siteModeConfig.mode !== 'normal' && !visitorDemoActive;
   const publicPlans = plans.filter((p) => !p.isInviteOnly);
 
   const handleChoosePlan = (planId: string) => {

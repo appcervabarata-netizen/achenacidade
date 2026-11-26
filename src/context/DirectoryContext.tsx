@@ -304,6 +304,9 @@ interface DirectoryContextType {
   resetSiteModeConfig: () => void;
   adminPreviewMode: 'none' | 'launch' | 'maintenance';
   setAdminPreviewMode: (mode: 'none' | 'launch' | 'maintenance') => void;
+  visitorDemoActive: boolean;
+  enterVisitorDemo: (targetView?: AppView) => void;
+  exitVisitorDemo: () => void;
   preselectedPlanId: string | null;
   setPreselectedPlanId: (planId: string | null) => void;
   preselectedBillingCycle: BillingCycle;
@@ -954,8 +957,38 @@ export const DirectoryProvider: React.FC<{ children: React.ReactNode }> = ({ chi
   };
 
   const [adminPreviewMode, setAdminPreviewMode] = useState<'none' | 'launch' | 'maintenance'>('none');
+  const [visitorDemoActive, setVisitorDemoActive] = useState<boolean>(() => {
+    try {
+      return sessionStorage.getItem('achenacidade_visitor_demo') === '1';
+    } catch {
+      return false;
+    }
+  });
   const [preselectedPlanId, setPreselectedPlanId] = useState<string | null>(null);
   const [preselectedBillingCycle, setPreselectedBillingCycle] = useState<BillingCycle>('monthly');
+
+  const enterVisitorDemo = (targetView: AppView = 'home') => {
+    setVisitorDemoActive(true);
+    try {
+      sessionStorage.setItem('achenacidade_visitor_demo', '1');
+    } catch {
+      // Ignore sessionStorage errors
+    }
+    setAdminPreviewMode('none');
+    setCurrentView(targetView);
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  };
+
+  const exitVisitorDemo = () => {
+    setVisitorDemoActive(false);
+    try {
+      sessionStorage.removeItem('achenacidade_visitor_demo');
+    } catch {
+      // Ignore sessionStorage errors
+    }
+    setCurrentView('home');
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  };
 
   // Global Multi-Year Plan Discounts Configuration (Annual, Biennial, Triennial)
   const [planDiscountConfig, setPlanDiscountConfig] = useState<PlanDiscountConfig>(() => {
@@ -3644,6 +3677,9 @@ export const DirectoryProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         resetSiteModeConfig,
         adminPreviewMode,
         setAdminPreviewMode,
+        visitorDemoActive,
+        enterVisitorDemo,
+        exitVisitorDemo,
         preselectedPlanId,
         setPreselectedPlanId,
         preselectedBillingCycle,
