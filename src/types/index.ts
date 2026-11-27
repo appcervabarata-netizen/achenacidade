@@ -443,3 +443,48 @@ export interface PlanInvite {
   redeemedAt?: string;
   createdAt: string;
 }
+
+export type GoogleMapsDraftStatus = 'pending' | 'approved' | 'rejected';
+
+export interface GoogleMapsBusinessDraft {
+  id: string;
+  googlePlaceId: string;
+  name: string;
+  cityId: string;
+  cityName: string;
+  categoryId: string;
+  categoryName?: string;
+  description: string;
+  phone: string;
+  whatsapp: string;
+  address: string;
+  neighborhood: string;
+  openingHours?: string;
+  website?: string;
+  googleMapsUri?: string;
+  primaryType?: string;
+  rating?: number;
+  userRatingCount?: number;
+  sourceQuery: string;
+  sourceLocationLabel: string;
+  status: GoogleMapsDraftStatus;
+  approvedBusinessId?: string;
+  createdAt: string;
+  updatedAt?: string;
+}
+
+export interface GoogleMapsImporterConfig {
+  enabled: boolean;
+  intervalMinutes: number;
+  batchSize: number;
+  initialBatchSize: number;
+  nextQueryCursor: number;
+  totalImportedCount: number;
+  lastRunAt?: string;
+  nextRunAt?: string;
+  lastRunSummary?: string;
+  lastError?: string;
+  isRunning?: boolean;
+  hasApiKey?: boolean;
+}
+

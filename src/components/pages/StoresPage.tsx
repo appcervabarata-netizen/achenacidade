@@ -194,12 +194,18 @@ export const StoresPage: React.FC = () => {
                   <div>
                     {/* Cover image with favorite button and VIP badge */}
                     <div className="relative h-24 sm:h-36 w-full overflow-hidden bg-slate-100 dark:bg-slate-800">
-                      <img
-                        src={biz.coverUrl || biz.logoUrl}
-                        alt={biz.name}
-                        className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500"
-                        referrerPolicy="no-referrer"
-                      />
+                      {biz.coverUrl || biz.logoUrl ? (
+                        <img
+                          src={biz.coverUrl || biz.logoUrl}
+                          alt={biz.name}
+                          className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500"
+                          referrerPolicy="no-referrer"
+                        />
+                      ) : (
+                        <div className="w-full h-full bg-gradient-to-br from-slate-800 via-slate-900 to-blue-950 flex items-center justify-center">
+                          <Store className="w-8 h-8 sm:w-10 sm:h-10 text-slate-400/80" />
+                        </div>
+                      )}
                       <div className="absolute inset-0 bg-gradient-to-t from-slate-950/70 via-transparent to-transparent" />
 
                       {/* Favorite Button */}
@@ -236,13 +242,17 @@ export const StoresPage: React.FC = () => {
                     {/* Store Info */}
                     <div className="p-2.5 sm:p-4">
                       <div className="flex items-start gap-2">
-                        <div className="w-7 h-7 sm:w-9 sm:h-9 rounded-lg overflow-hidden border border-slate-200 dark:border-slate-700 shrink-0 bg-white">
-                          <img
-                            src={biz.logoUrl}
-                            alt=""
-                            className="w-full h-full object-cover"
-                            referrerPolicy="no-referrer"
-                          />
+                        <div className="w-7 h-7 sm:w-9 sm:h-9 rounded-lg overflow-hidden border border-slate-200 dark:border-slate-700 shrink-0 bg-slate-100 dark:bg-slate-800 flex items-center justify-center">
+                          {biz.logoUrl ? (
+                            <img
+                              src={biz.logoUrl}
+                              alt=""
+                              className="w-full h-full object-cover"
+                              referrerPolicy="no-referrer"
+                            />
+                          ) : (
+                            <Building2 className="w-4 h-4 text-slate-500 dark:text-slate-400" />
+                          )}
                         </div>
                         <div className="min-w-0 flex-1">
                           <div className="flex items-center gap-1">
@@ -274,13 +284,32 @@ export const StoresPage: React.FC = () => {
 
                   {/* Actions Bar */}
                   <div className="p-2.5 sm:p-4 pt-0">
-                    <button
-                      onClick={(e) => handleWhatsAppClick(e, biz.id, biz.whatsapp, biz.name)}
-                      className="w-full flex items-center justify-center gap-1.5 py-1.5 sm:py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-[11px] sm:text-xs font-bold transition shadow-xs cursor-pointer"
-                    >
-                      <MessageCircle className="w-3.5 h-3.5" />
-                      <span>WhatsApp</span>
-                    </button>
+                    {biz.whatsapp ? (
+                      <button
+                        onClick={(e) => handleWhatsAppClick(e, biz.id, biz.whatsapp, biz.name)}
+                        className="w-full flex items-center justify-center gap-1.5 py-1.5 sm:py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-[11px] sm:text-xs font-bold transition shadow-xs cursor-pointer"
+                      >
+                        <MessageCircle className="w-3.5 h-3.5" />
+                        <span>WhatsApp</span>
+                      </button>
+                    ) : biz.phone ? (
+                      <a
+                        href={`tel:${biz.phone.replace(/\D/g, '')}`}
+                        onClick={(e) => e.stopPropagation()}
+                        className="w-full flex items-center justify-center gap-1.5 py-1.5 sm:py-2 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-[11px] sm:text-xs font-bold transition shadow-xs cursor-pointer"
+                      >
+                        <Phone className="w-3.5 h-3.5" />
+                        <span>Ligar</span>
+                      </a>
+                    ) : (
+                      <button
+                        type="button"
+                        className="w-full flex items-center justify-center gap-1.5 py-1.5 sm:py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-white text-[11px] sm:text-xs font-bold transition shadow-xs cursor-pointer"
+                      >
+                        <ExternalLink className="w-3.5 h-3.5" />
+                        <span>Ver Detalhes</span>
+                      </button>
+                    )}
                   </div>
                 </div>
               );

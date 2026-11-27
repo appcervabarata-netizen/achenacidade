@@ -136,6 +136,10 @@ interface DirectoryContextType {
   addBusiness: (biz: Omit<Business, 'id' | 'slug' | 'createdAt'>) => string;
   updateBusiness: (id: string, updates: Partial<Business>) => void;
   deleteBusiness: (id: string) => void;
+  registerApprovedBusinessesFromDrafts: (newBusinesses: Business[]) => void;
+
+  // Google Maps Quota Banner Flag
+  gmpQuotaExceeded: boolean;
 
   // Products
   products: Product[];
@@ -502,6 +506,13 @@ export const DirectoryProvider: React.FC<{ children: React.ReactNode }> = ({ chi
   const [dbLastError, setDbLastError] = useState<string | null>(null);
   const [dbLastSyncedAt, setDbLastSyncedAt] = useState<string | null>(null);
   const isLocalOnlyRef = useRef(false);
+  const [gmpQuotaExceeded, setGmpQuotaExceeded] = useState(false);
+
+  useEffect(() => {
+    const handleQuotaExceeded = () => setGmpQuotaExceeded(true);
+    window.addEventListener('gmp-quota-exceeded', handleQuotaExceeded);
+    return () => window.removeEventListener('gmp-quota-exceeded', handleQuotaExceeded);
+  }, []);
 
   const trackDbMutation = (mutationPromise: Promise<ApiMutationResult>) => {
     if (isLocalOnlyRef.current) return;
@@ -2340,6 +2351,18 @@ export const DirectoryProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     return newBiz.id;
   };
 
+  const registerApprovedBusinessesFromDrafts = (newBusinesses: Business[]) => {
+    if (!Array.isArray(newBusinesses) || newBusinesses.length === 0) return;
+    setBusinesses((prev) => {
+      const existingIds = new Set(prev.map((b) => b.id));
+      const uniqueIncoming = newBusinesses
+        .filter((b) => b && b.id && !existingIds.has(b.id))
+        .map((b) => sanitizeBusinessForState(b));
+      if (uniqueIncoming.length === 0) return prev;
+      return [...uniqueIncoming, ...prev];
+    });
+  };
+
   const updateBusiness = (id: string, updates: Partial<Business>) => {
     const { password: rawPwd, ...safeUpdates } = updates;
     const stateUpdates: Partial<Business> = {
@@ -3560,6 +3583,8 @@ export const DirectoryProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         addBusiness,
         updateBusiness,
         deleteBusiness,
+        registerApprovedBusinessesFromDrafts,
+        gmpQuotaExceeded,
 
         products,
         filteredProducts,

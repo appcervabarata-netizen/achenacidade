@@ -18,6 +18,7 @@ import {
   Bell,
   BellRing,
   Award,
+  Building2,
 } from 'lucide-react';
 import { isFounderPlan } from '../../utils/planPricing';
 import { formatServicePrice, getServiceModeLabel, getServiceWhatsAppMessage } from '../../utils/serviceFormatters';
@@ -167,15 +168,20 @@ export const BusinessDetailModal: React.FC = () => {
 
           {/* Business Info inside Cover */}
           <div className="absolute bottom-4 left-6 right-6 flex items-end gap-4">
-            <img
-              src={business.logoUrl}
-              alt={business.name}
-              className="w-20 h-20 sm:w-24 sm:h-24 rounded-2xl object-cover border-3 border-white dark:border-slate-900 shadow-lg bg-white shrink-0"
-              onError={(e) => {
-                e.currentTarget.src =
-                  'https://images.unsplash.com/photo-1541888946425-d0fbb18086f6?w=200&h=200&fit=crop&q=80';
-              }}
-            />
+            {business.logoUrl ? (
+              <img
+                src={business.logoUrl}
+                alt={business.name}
+                className="w-20 h-20 sm:w-24 sm:h-24 rounded-2xl object-cover border-3 border-white dark:border-slate-900 shadow-lg bg-white shrink-0"
+                onError={(e) => {
+                  e.currentTarget.style.display = 'none';
+                }}
+              />
+            ) : (
+              <div className="w-20 h-20 sm:w-24 sm:h-24 rounded-2xl border-3 border-white dark:border-slate-900 shadow-lg bg-slate-800 flex items-center justify-center shrink-0">
+                <Building2 className="w-9 h-9 text-slate-300" />
+              </div>
+            )}
             <div className="text-white min-w-0">
               <div className="flex flex-wrap items-center gap-2">
                 <h2 className="text-xl sm:text-2xl font-extrabold truncate font-display">

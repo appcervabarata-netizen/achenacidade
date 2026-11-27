@@ -453,6 +453,31 @@ const EXPECTED_TABLE_COLUMNS: Record<string, Array<{ name: string; definition: s
     { name: 'sort_order', definition: 'INT NOT NULL DEFAULT 0' },
     { name: 'updated_at', definition: 'TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP' },
   ],
+  business_drafts: [
+    { name: 'google_place_id', definition: "VARCHAR(255) NOT NULL DEFAULT ''" },
+    { name: 'name', definition: "VARCHAR(255) NOT NULL DEFAULT ''" },
+    { name: 'city_id', definition: "VARCHAR(120) NOT NULL DEFAULT 'city-1'" },
+    { name: 'city_name', definition: "VARCHAR(255) NOT NULL DEFAULT 'Alagoinhas - BA'" },
+    { name: 'category_id', definition: "VARCHAR(120) NOT NULL DEFAULT 'cat-1'" },
+    { name: 'category_name', definition: 'VARCHAR(255) NULL' },
+    { name: 'description', definition: 'LONGTEXT NULL' },
+    { name: 'phone', definition: "VARCHAR(80) NOT NULL DEFAULT ''" },
+    { name: 'whatsapp', definition: "VARCHAR(80) NOT NULL DEFAULT ''" },
+    { name: 'address', definition: "VARCHAR(500) NOT NULL DEFAULT ''" },
+    { name: 'neighborhood', definition: "VARCHAR(255) NOT NULL DEFAULT ''" },
+    { name: 'opening_hours', definition: 'TEXT NULL' },
+    { name: 'website', definition: 'VARCHAR(500) NULL' },
+    { name: 'google_maps_uri', definition: 'VARCHAR(700) NULL' },
+    { name: 'primary_type', definition: 'VARCHAR(120) NULL' },
+    { name: 'rating', definition: 'DECIMAL(3,2) NULL' },
+    { name: 'user_rating_count', definition: 'INT NULL' },
+    { name: 'source_query', definition: "VARCHAR(255) NOT NULL DEFAULT ''" },
+    { name: 'source_location_label', definition: "VARCHAR(255) NOT NULL DEFAULT ''" },
+    { name: 'status', definition: "VARCHAR(32) NOT NULL DEFAULT 'pending'" },
+    { name: 'approved_business_id', definition: 'VARCHAR(120) NULL' },
+    { name: 'created_at', definition: "VARCHAR(64) NOT NULL DEFAULT ''" },
+    { name: 'updated_at', definition: 'TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP' },
+  ],
 };
 
 async function ensureMissingColumns(conn: PoolConnection): Promise<string[]> {
@@ -879,6 +904,37 @@ export async function ensureDatabaseSchema(forceMigrate = false): Promise<boolea
           sort_order INT NOT NULL DEFAULT 0,
           updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
           UNIQUE KEY uniq_plan_invite_code (code)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+      `);
+
+      await conn.query(`
+        CREATE TABLE IF NOT EXISTS business_drafts (
+          id VARCHAR(120) PRIMARY KEY,
+          google_place_id VARCHAR(255) NOT NULL,
+          name VARCHAR(255) NOT NULL,
+          city_id VARCHAR(120) NOT NULL DEFAULT 'city-1',
+          city_name VARCHAR(255) NOT NULL DEFAULT 'Alagoinhas - BA',
+          category_id VARCHAR(120) NOT NULL DEFAULT 'cat-1',
+          category_name VARCHAR(255) NULL,
+          description LONGTEXT NULL,
+          phone VARCHAR(80) NOT NULL DEFAULT '',
+          whatsapp VARCHAR(80) NOT NULL DEFAULT '',
+          address VARCHAR(500) NOT NULL DEFAULT '',
+          neighborhood VARCHAR(255) NOT NULL DEFAULT '',
+          opening_hours TEXT NULL,
+          website VARCHAR(500) NULL,
+          google_maps_uri VARCHAR(700) NULL,
+          primary_type VARCHAR(120) NULL,
+          rating DECIMAL(3,2) NULL,
+          user_rating_count INT NULL,
+          source_query VARCHAR(255) NOT NULL DEFAULT '',
+          source_location_label VARCHAR(255) NOT NULL DEFAULT '',
+          status VARCHAR(32) NOT NULL DEFAULT 'pending',
+          approved_business_id VARCHAR(120) NULL,
+          created_at VARCHAR(64) NOT NULL,
+          updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+          UNIQUE KEY uniq_draft_google_place_id (google_place_id),
+          KEY idx_draft_status (status)
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
       `);
 
@@ -3459,4 +3515,305 @@ export async function redeemPlanInviteInDb(params: {
     conn.release();
   }
 }
+
+export interface DbGoogleMapsBusinessDraft {
+  id: string;
+  googlePlaceId: string;
+  name: string;
+  cityId: string;
+  cityName: string;
+  categoryId: string;
+  categoryName?: string;
+  description: string;
+  phone: string;
+  whatsapp: string;
+  address: string;
+  neighborhood: string;
+  openingHours?: string;
+  website?: string;
+  googleMapsUri?: string;
+  primaryType?: string;
+  rating?: number;
+  userRatingCount?: number;
+  sourceQuery: string;
+  sourceLocationLabel: string;
+  status: 'pending' | 'approved' | 'rejected';
+  approvedBusinessId?: string;
+  createdAt: string;
+  updatedAt?: string;
+}
+
+function mapBusinessDraftRow(r: RowDataPacket): DbGoogleMapsBusinessDraft {
+  return {
+    id: String(r.id),
+    googlePlaceId: String(r.google_place_id || ''),
+    name: String(r.name || ''),
+    cityId: String(r.city_id || 'city-1'),
+    cityName: String(r.city_name || 'Alagoinhas - BA'),
+    categoryId: String(r.category_id || 'cat-1'),
+    ...(r.category_name ? { categoryName: String(r.category_name) } : {}),
+    description: String(r.description || ''),
+    phone: String(r.phone || ''),
+    whatsapp: String(r.whatsapp || ''),
+    address: String(r.address || ''),
+    neighborhood: String(r.neighborhood || ''),
+    ...(r.opening_hours ? { openingHours: String(r.opening_hours) } : {}),
+    ...(r.website ? { website: String(r.website) } : {}),
+    ...(r.google_maps_uri ? { googleMapsUri: String(r.google_maps_uri) } : {}),
+    ...(r.primary_type ? { primaryType: String(r.primary_type) } : {}),
+    ...(toOptionalNumber(r.rating) !== undefined ? { rating: toOptionalNumber(r.rating) } : {}),
+    ...(toOptionalNumber(r.user_rating_count) !== undefined
+      ? { userRatingCount: toOptionalNumber(r.user_rating_count) }
+      : {}),
+    sourceQuery: String(r.source_query || ''),
+    sourceLocationLabel: String(r.source_location_label || ''),
+    status:
+      r.status === 'approved' || r.status === 'rejected' ? r.status : 'pending',
+    ...(r.approved_business_id ? { approvedBusinessId: String(r.approved_business_id) } : {}),
+    createdAt: String(r.created_at || ''),
+    ...(r.updated_at ? { updatedAt: String(r.updated_at) } : {}),
+  };
+}
+
+export async function listBusinessDraftsFromDb(): Promise<DbGoogleMapsBusinessDraft[]> {
+  const activePool = getPool();
+  if (!activePool) return [];
+  await ensureDatabaseSchema();
+  const [rows] = await activePool.query<RowDataPacket[]>(
+    `SELECT * FROM business_drafts ORDER BY FIELD(status, 'pending', 'approved', 'rejected'), created_at DESC`
+  );
+  return rows.map(mapBusinessDraftRow);
+}
+
+export async function getExistingDraftPlaceIdsAndBusinessNamesFromDb(): Promise<{
+  placeIds: string[];
+  businesses: Array<{ name: string; phone: string }>;
+  categories: Array<{ id: string; name: string; slug: string }>;
+  cities: Array<{ id: string; name: string; state: string; isActive: boolean }>;
+}> {
+  const activePool = getPool();
+  if (!activePool) {
+    return { placeIds: [], businesses: [], categories: [], cities: [] };
+  }
+  await ensureDatabaseSchema();
+  const [draftRows] = await activePool.query<RowDataPacket[]>(
+    `SELECT google_place_id FROM business_drafts`
+  );
+  const [bizRows] = await activePool.query<RowDataPacket[]>(
+    `SELECT name, phone FROM businesses`
+  );
+  const [catRows] = await activePool.query<RowDataPacket[]>(
+    `SELECT id, name, slug FROM categories ORDER BY sort_order ASC`
+  );
+  const [cityRows] = await activePool.query<RowDataPacket[]>(
+    `SELECT id, name, state, is_active FROM cities ORDER BY sort_order ASC`
+  );
+
+  return {
+    placeIds: draftRows.map((r) => String(r.google_place_id || '')).filter(Boolean),
+    businesses: bizRows.map((r) => ({ name: String(r.name || ''), phone: String(r.phone || '') })),
+    categories: catRows.map((r) => ({ id: String(r.id), name: String(r.name), slug: String(r.slug) })),
+    cities: cityRows.map((r) => ({
+      id: String(r.id),
+      name: String(r.name),
+      state: String(r.state),
+      isActive: Boolean(r.is_active),
+    })),
+  };
+}
+
+export async function insertBusinessDraftsInDb(
+  drafts: DbGoogleMapsBusinessDraft[]
+): Promise<number> {
+  if (drafts.length === 0) return 0;
+  const activePool = getPool();
+  if (!activePool) return 0;
+  await ensureDatabaseSchema();
+
+  let insertedCount = 0;
+  for (const d of drafts) {
+    const [res] = await activePool.query<any>(
+      `INSERT IGNORE INTO business_drafts (
+         id, google_place_id, name, city_id, city_name, category_id, category_name,
+         description, phone, whatsapp, address, neighborhood, opening_hours, website,
+         google_maps_uri, primary_type, rating, user_rating_count, source_query,
+         source_location_label, status, approved_business_id, created_at
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        d.id,
+        d.googlePlaceId,
+        d.name,
+        d.cityId,
+        d.cityName,
+        d.categoryId,
+        d.categoryName || null,
+        d.description || '',
+        d.phone || '',
+        d.whatsapp || '',
+        d.address || '',
+        d.neighborhood || '',
+        d.openingHours || null,
+        d.website || null,
+        d.googleMapsUri || null,
+        d.primaryType || null,
+        d.rating ?? null,
+        d.userRatingCount ?? null,
+        d.sourceQuery || '',
+        d.sourceLocationLabel || '',
+        d.status || 'pending',
+        d.approvedBusinessId || null,
+        d.createdAt || new Date().toISOString(),
+      ]
+    );
+    if ((res?.affectedRows || 0) > 0) insertedCount += 1;
+  }
+  return insertedCount;
+}
+
+export async function updateBusinessDraftInDb(
+  id: string,
+  updates: Partial<DbGoogleMapsBusinessDraft>
+): Promise<DbGoogleMapsBusinessDraft | null> {
+  const activePool = getPool();
+  if (!activePool) return null;
+  await ensureDatabaseSchema();
+
+  const fieldMap: Array<{ key: keyof DbGoogleMapsBusinessDraft; col: string }> = [
+    { key: 'name', col: 'name' },
+    { key: 'cityId', col: 'city_id' },
+    { key: 'cityName', col: 'city_name' },
+    { key: 'categoryId', col: 'category_id' },
+    { key: 'categoryName', col: 'category_name' },
+    { key: 'description', col: 'description' },
+    { key: 'phone', col: 'phone' },
+    { key: 'whatsapp', col: 'whatsapp' },
+    { key: 'address', col: 'address' },
+    { key: 'neighborhood', col: 'neighborhood' },
+    { key: 'openingHours', col: 'opening_hours' },
+    { key: 'website', col: 'website' },
+    { key: 'status', col: 'status' },
+    { key: 'approvedBusinessId', col: 'approved_business_id' },
+  ];
+
+  const clauses: string[] = [];
+  const params: unknown[] = [];
+  for (const f of fieldMap) {
+    if (Object.prototype.hasOwnProperty.call(updates, f.key)) {
+      clauses.push(`${f.col} = ?`);
+      params.push((updates as any)[f.key] ?? null);
+    }
+  }
+  if (clauses.length === 0) return null;
+
+  await activePool.query(`UPDATE business_drafts SET ${clauses.join(', ')} WHERE id = ?`, [
+    ...params,
+    id,
+  ]);
+
+  const [rows] = await activePool.query<RowDataPacket[]>(
+    `SELECT * FROM business_drafts WHERE id = ? LIMIT 1`,
+    [id]
+  );
+  return rows.length > 0 ? mapBusinessDraftRow(rows[0]) : null;
+}
+
+export async function approveBusinessDraftInDb(
+  draftId: string,
+  businessRecord: {
+    id: string;
+    name: string;
+    slug: string;
+    cityId: string;
+    categoryId: string;
+    planId: string;
+    description: string;
+    phone: string;
+    whatsapp: string;
+    address: string;
+    neighborhood: string;
+    openingHours?: string;
+    logoUrl: string;
+    website?: string;
+    createdAt: string;
+  }
+): Promise<{ draft: DbGoogleMapsBusinessDraft | null; approved: boolean }> {
+  const activePool = getPool();
+  if (!activePool) return { draft: null, approved: false };
+  await ensureDatabaseSchema();
+
+  const conn = await activePool.getConnection();
+  try {
+    await conn.beginTransaction();
+
+    await conn.query(
+      `INSERT INTO businesses (
+         id, name, slug, city_id, category_id, plan_id, description, phone, whatsapp,
+         address, neighborhood, opening_hours, logo_url, website, is_verified, email_verified,
+         payment_status, subscription_status, created_at, sort_order
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 0, 'active', 'active', ?, ?)
+       ON DUPLICATE KEY UPDATE
+         name = VALUES(name),
+         city_id = VALUES(city_id),
+         category_id = VALUES(category_id),
+         plan_id = VALUES(plan_id),
+         description = VALUES(description),
+         phone = VALUES(phone),
+         whatsapp = VALUES(whatsapp),
+         address = VALUES(address),
+         neighborhood = VALUES(neighborhood),
+         opening_hours = VALUES(opening_hours),
+         website = VALUES(website)`,
+      [
+        businessRecord.id,
+        businessRecord.name,
+        businessRecord.slug,
+        businessRecord.cityId,
+        businessRecord.categoryId,
+        businessRecord.planId || 'plan-free',
+        businessRecord.description || '',
+        businessRecord.phone || '',
+        businessRecord.whatsapp || '',
+        businessRecord.address || '',
+        businessRecord.neighborhood || '',
+        businessRecord.openingHours || null,
+        businessRecord.logoUrl || '',
+        businessRecord.website || null,
+        businessRecord.createdAt || getSaoPauloDateKey(),
+        Date.now() % 2147483647,
+      ]
+    );
+
+    await conn.query(
+      `UPDATE business_drafts
+       SET status = 'approved', approved_business_id = ?
+       WHERE id = ?`,
+      [businessRecord.id, draftId]
+    );
+
+    const [rows] = await conn.query<RowDataPacket[]>(
+      `SELECT * FROM business_drafts WHERE id = ? LIMIT 1`,
+      [draftId]
+    );
+
+    await conn.commit();
+    return {
+      draft: rows.length > 0 ? mapBusinessDraftRow(rows[0]) : null,
+      approved: rows.length > 0,
+    };
+  } catch (err) {
+    await conn.rollback();
+    throw err;
+  } finally {
+    conn.release();
+  }
+}
+
+export async function deleteBusinessDraftInDb(id: string): Promise<boolean> {
+  const activePool = getPool();
+  if (!activePool) return false;
+  await ensureDatabaseSchema();
+  const [res] = await activePool.query<any>(`DELETE FROM business_drafts WHERE id = ?`, [id]);
+  return (res?.affectedRows || 0) > 0;
+}
+
 

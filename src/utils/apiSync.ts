@@ -9,6 +9,8 @@ import type {
   EmailLogEntry,
   EmailTemplate,
   EmailTemplateKey,
+  GoogleMapsBusinessDraft,
+  GoogleMapsImporterConfig,
   MercadoPagoConfig,
   PaymentTransaction,
   Plan,
@@ -1183,6 +1185,287 @@ export async function createMercadoPagoCardPaymentViaApi(params: {
     return {
       success: false,
       error: err instanceof Error ? err.message : 'Erro de rede ao processar cartão.',
+    };
+  }
+}
+
+function dispatchQuotaExceededIfNeeded(status: number, payload: any) {
+  if (typeof window === 'undefined') return;
+  const errStr = String(payload?.error || payload?.message || '');
+  if (
+    status === 429 ||
+    payload?.quotaExceeded === true ||
+    errStr.includes('RESOURCE_EXHAUSTED') ||
+    errStr.toLowerCase().includes('cota')
+  ) {
+    window.dispatchEvent(new CustomEvent('gmp-quota-exceeded'));
+  }
+}
+
+export async function fetchGoogleMapsDraftsViaApi(token: string): Promise<{
+  success: boolean;
+  databaseEnabled?: boolean;
+  drafts?: GoogleMapsBusinessDraft[];
+  config?: GoogleMapsImporterConfig;
+  error?: string;
+}> {
+  if (!token) return { success: false, error: 'Sessão administrativa ausente.' };
+  try {
+    const res = await fetch('/api/google-maps/drafts', {
+      method: 'GET',
+      cache: 'no-store',
+      headers: {
+        Authorization: `Bearer ${token}`,
+        Accept: 'application/json',
+      },
+    });
+    const data = (await res.json()) as any;
+    dispatchQuotaExceededIfNeeded(res.status, data);
+    if (!res.ok || !data.success) {
+      return { success: false, error: data.error || 'Erro ao carregar rascunhos do Google Maps.' };
+    }
+    return {
+      success: true,
+      databaseEnabled: Boolean(data.databaseEnabled),
+      drafts: Array.isArray(data.drafts) ? data.drafts : [],
+      config: data.config,
+    };
+  } catch (err) {
+    return {
+      success: false,
+      error: err instanceof Error ? err.message : 'Erro de rede ao consultar rascunhos.',
+    };
+  }
+}
+
+export async function runGoogleMapsImportBatchViaApi(
+  token: string,
+  count: number
+): Promise<{
+  success: boolean;
+  addedCount?: number;
+  skippedDuplicates?: number;
+  queriesExecuted?: number;
+  quotaExceeded?: boolean;
+  summary?: string;
+  drafts?: GoogleMapsBusinessDraft[];
+  config?: GoogleMapsImporterConfig;
+  error?: string;
+}> {
+  if (!token) return { success: false, error: 'Sessão administrativa ausente.' };
+  try {
+    const res = await fetch('/api/google-maps/import-batch', {
+      method: 'POST',
+      cache: 'no-store',
+      headers: {
+        Authorization: `Bearer ${token}`,
+        'Content-Type': 'application/json',
+        Accept: 'application/json',
+      },
+      body: JSON.stringify({ count }),
+    });
+    const data = (await res.json()) as any;
+    dispatchQuotaExceededIfNeeded(res.status, data);
+    return {
+      success: Boolean(res.ok && data.success),
+      addedCount: data.addedCount || 0,
+      skippedDuplicates: data.skippedDuplicates || 0,
+      queriesExecuted: data.queriesExecuted || 0,
+      quotaExceeded: Boolean(res.status === 429 || data.quotaExceeded),
+      summary: data.summary,
+      drafts: Array.isArray(data.drafts) ? data.drafts : undefined,
+      config: data.config,
+      error: data.error,
+    };
+  } catch (err) {
+    return {
+      success: false,
+      error: err instanceof Error ? err.message : 'Erro de rede ao buscar empresas no Google Maps.',
+    };
+  }
+}
+
+export async function updateGoogleMapsSchedulerViaApi(
+  token: string,
+  updates: { enabled?: boolean; intervalMinutes?: number; batchSize?: number }
+): Promise<{ success: boolean; config?: GoogleMapsImporterConfig; error?: string }> {
+  if (!token) return { success: false, error: 'Sessão administrativa ausente.' };
+  try {
+    const res = await fetch('/api/google-maps/scheduler', {
+      method: 'PUT',
+      cache: 'no-store',
+      headers: {
+        Authorization: `Bearer ${token}`,
+        'Content-Type': 'application/json',
+        Accept: 'application/json',
+      },
+      body: JSON.stringify(updates),
+    });
+    const data = (await res.json()) as any;
+    if (!res.ok || !data.success) {
+      return { success: false, error: data.error || 'Erro ao atualizar agendador.' };
+    }
+    return { success: true, config: data.config };
+  } catch (err) {
+    return {
+      success: false,
+      error: err instanceof Error ? err.message : 'Erro de rede ao salvar agendamento.',
+    };
+  }
+}
+
+export async function updateGoogleMapsDraftViaApi(
+  token: string,
+  id: string,
+  updates: Partial<GoogleMapsBusinessDraft>
+): Promise<{ success: boolean; draft?: GoogleMapsBusinessDraft; error?: string }> {
+  if (!token) return { success: false, error: 'Sessão administrativa ausente.' };
+  try {
+    const res = await fetch(`/api/google-maps/drafts/${encodeURIComponent(id)}`, {
+      method: 'PUT',
+      cache: 'no-store',
+      headers: {
+        Authorization: `Bearer ${token}`,
+        'Content-Type': 'application/json',
+        Accept: 'application/json',
+      },
+      body: JSON.stringify(updates),
+    });
+    const data = (await res.json()) as any;
+    if (!res.ok || !data.success) {
+      return { success: false, error: data.error || 'Erro ao salvar rascunho.' };
+    }
+    return { success: true, draft: data.draft };
+  } catch (err) {
+    return {
+      success: false,
+      error: err instanceof Error ? err.message : 'Erro de rede ao salvar rascunho.',
+    };
+  }
+}
+
+export async function approveGoogleMapsDraftViaApi(
+  token: string,
+  id: string
+): Promise<{
+  success: boolean;
+  draft?: GoogleMapsBusinessDraft;
+  business?: Business;
+  error?: string;
+}> {
+  if (!token) return { success: false, error: 'Sessão administrativa ausente.' };
+  try {
+    const res = await fetch(`/api/google-maps/drafts/${encodeURIComponent(id)}/approve`, {
+      method: 'POST',
+      cache: 'no-store',
+      headers: {
+        Authorization: `Bearer ${token}`,
+        Accept: 'application/json',
+      },
+    });
+    const data = (await res.json()) as any;
+    if (!res.ok || !data.success) {
+      return { success: false, error: data.error || 'Erro ao aprovar rascunho.' };
+    }
+    return { success: true, draft: data.draft, business: data.business };
+  } catch (err) {
+    return {
+      success: false,
+      error: err instanceof Error ? err.message : 'Erro de rede ao aprovar empresa.',
+    };
+  }
+}
+
+export async function bulkApproveGoogleMapsDraftsViaApi(
+  token: string,
+  ids: string[]
+): Promise<{
+  success: boolean;
+  approvedCount?: number;
+  drafts?: GoogleMapsBusinessDraft[];
+  createdBusinesses?: Business[];
+  error?: string;
+}> {
+  if (!token) return { success: false, error: 'Sessão administrativa ausente.' };
+  try {
+    const res = await fetch('/api/google-maps/drafts/approve-bulk', {
+      method: 'POST',
+      cache: 'no-store',
+      headers: {
+        Authorization: `Bearer ${token}`,
+        'Content-Type': 'application/json',
+        Accept: 'application/json',
+      },
+      body: JSON.stringify({ ids }),
+    });
+    const data = (await res.json()) as any;
+    if (!res.ok || !data.success) {
+      return { success: false, error: data.error || 'Erro ao aprovar rascunhos em lote.' };
+    }
+    return {
+      success: true,
+      approvedCount: data.approvedCount || 0,
+      drafts: data.drafts,
+      createdBusinesses: Array.isArray(data.createdBusinesses) ? data.createdBusinesses : [],
+    };
+  } catch (err) {
+    return {
+      success: false,
+      error: err instanceof Error ? err.message : 'Erro de rede ao aprovar lote.',
+    };
+  }
+}
+
+export async function rejectGoogleMapsDraftViaApi(
+  token: string,
+  id: string
+): Promise<{ success: boolean; draft?: GoogleMapsBusinessDraft; error?: string }> {
+  if (!token) return { success: false, error: 'Sessão administrativa ausente.' };
+  try {
+    const res = await fetch(`/api/google-maps/drafts/${encodeURIComponent(id)}/reject`, {
+      method: 'POST',
+      cache: 'no-store',
+      headers: {
+        Authorization: `Bearer ${token}`,
+        Accept: 'application/json',
+      },
+    });
+    const data = (await res.json()) as any;
+    if (!res.ok || !data.success) {
+      return { success: false, error: data.error || 'Erro ao rejeitar rascunho.' };
+    }
+    return { success: true, draft: data.draft };
+  } catch (err) {
+    return {
+      success: false,
+      error: err instanceof Error ? err.message : 'Erro de rede ao rejeitar rascunho.',
+    };
+  }
+}
+
+export async function deleteGoogleMapsDraftViaApi(
+  token: string,
+  id: string
+): Promise<{ success: boolean; error?: string }> {
+  if (!token) return { success: false, error: 'Sessão administrativa ausente.' };
+  try {
+    const res = await fetch(`/api/google-maps/drafts/${encodeURIComponent(id)}`, {
+      method: 'DELETE',
+      cache: 'no-store',
+      headers: {
+        Authorization: `Bearer ${token}`,
+        Accept: 'application/json',
+      },
+    });
+    const data = (await res.json()) as any;
+    if (!res.ok || !data.success) {
+      return { success: false, error: data.error || 'Erro ao excluir rascunho.' };
+    }
+    return { success: true };
+  } catch (err) {
+    return {
+      success: false,
+      error: err instanceof Error ? err.message : 'Erro de rede ao excluir rascunho.',
     };
   }
 }

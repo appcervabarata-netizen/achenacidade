@@ -36,6 +36,27 @@ import { PlanPaymentModal } from './components/payment/PlanPaymentModal';
 import { CheckoutPage } from './components/payment/CheckoutPage';
 import { OfflineIndicator } from './components/common/OfflineIndicator';
 
+function GmpQuotaBanner({ visible }: { visible: boolean }) {
+  if (!visible) return null;
+  return (
+    <div
+      role="alert"
+      className="sticky top-0 z-50 bg-amber-100 border-b border-amber-400 text-amber-900 px-4 py-2 text-sm text-center"
+    >
+      Google Maps Platform quota reached. If you are the app owner, visit{' '}
+      <a
+        href="https://developers.google.com/maps/ai/ai-studio?utm_campaign=gmp_mcp_codeassist_v1_aistudio#quota_exceeded_errors"
+        target="_blank"
+        rel="noopener noreferrer"
+        className="font-bold underline hover:text-amber-950"
+      >
+        maps developer site
+      </a>{' '}
+      for instructions to update your account.
+    </div>
+  );
+}
+
 function AppContent() {
   const {
     currentView,
@@ -46,11 +67,13 @@ function AppContent() {
     adminPreviewMode,
     setAdminPreviewMode,
     visitorDemoActive,
+    gmpQuotaExceeded,
   } = useDirectory();
 
   if (adminPreviewMode === 'launch') {
     return (
       <>
+        <GmpQuotaBanner visible={gmpQuotaExceeded} />
         <LaunchPage isPreview onExitPreview={() => setAdminPreviewMode('none')} />
         <OfflineIndicator />
       </>
@@ -60,6 +83,7 @@ function AppContent() {
   if (adminPreviewMode === 'maintenance') {
     return (
       <>
+        <GmpQuotaBanner visible={gmpQuotaExceeded} />
         <MaintenancePage isPreview onExitPreview={() => setAdminPreviewMode('none')} />
         <OfflineIndicator />
       </>
@@ -79,6 +103,7 @@ function AppContent() {
   if (showRestrictedLanding) {
     return (
       <>
+        <GmpQuotaBanner visible={gmpQuotaExceeded} />
         {siteModeConfig.mode === 'launch' ? <LaunchPage /> : <MaintenancePage />}
         <OfflineIndicator />
       </>
@@ -91,6 +116,8 @@ function AppContent() {
         hideChrome && !showStoreOwnerBottomMenu ? '' : 'pb-16 md:pb-0'
       }`}
     >
+      <GmpQuotaBanner visible={gmpQuotaExceeded} />
+
       {/* Guided Visitor Demo Bar (active when visitor enters Demo Mode from Launch Page) */}
       {visitorDemoActive && !hideChrome && <VisitorDemoGuideBar />}
 

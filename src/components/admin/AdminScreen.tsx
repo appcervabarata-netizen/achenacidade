@@ -46,6 +46,7 @@ import {
   Award,
   Link2,
   Ban,
+  Compass,
 } from 'lucide-react';
 import { AdminTheme, Business, Plan, PlanBillingType, PlanCycleDiscounts, PlanVipTier } from '../../types';
 import { AdminBusinessEditModal } from './AdminBusinessEditModal';
@@ -54,6 +55,7 @@ import { AdminSiteModeTab } from './AdminSiteModeTab';
 import { AdminEmailTab } from './AdminEmailTab';
 import { AdminDatabaseTab } from './AdminDatabaseTab';
 import { AdminGeneralSettingsTab } from './AdminGeneralSettingsTab';
+import { AdminGoogleMapsTab } from './AdminGoogleMapsTab';
 import { generateHostGatorPackage, downloadFile } from '../../utils/hostgatorGenerator';
 import {
   changeAdminPasswordViaApi,
@@ -131,7 +133,7 @@ export const AdminScreen: React.FC = () => {
 
   // Active admin tab
   const [activeTab, setActiveTab] = useState<
-    'dashboard' | 'cities' | 'categories' | 'plans' | 'businesses' | 'banners' | 'payments' | 'emails' | 'creatives' | 'sitemode' | 'theme' | 'general_seo' | 'security' | 'database' | 'hostgator'
+    'dashboard' | 'cities' | 'categories' | 'plans' | 'businesses' | 'google_maps' | 'banners' | 'payments' | 'emails' | 'creatives' | 'sitemode' | 'theme' | 'general_seo' | 'security' | 'database' | 'hostgator'
   >('dashboard');
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(true);
 
@@ -872,6 +874,7 @@ export const AdminScreen: React.FC = () => {
           { id: 'categories', label: 'Categorias', icon: Tag, count: categories.length },
           { id: 'plans', label: 'Planos', icon: CreditCard, count: plans.length },
           { id: 'businesses', label: 'Empresas', icon: Building2, count: businesses.length },
+          { id: 'google_maps', label: 'Google Maps', icon: Compass },
           { id: 'banners', label: 'Banners', icon: Megaphone, count: banners.length },
           { id: 'payments', label: 'Pagamentos', icon: DollarSign },
           { id: 'emails', label: 'E-mails', icon: Mail, count: emailLogs.length },
@@ -3553,6 +3556,11 @@ export const AdminScreen: React.FC = () => {
               </div>
             </div>
           </div>
+        )}
+
+        {/* TAB: GOOGLE MAPS IMPORTER */}
+        {activeTab === 'google_maps' && (
+          <AdminGoogleMapsTab onNotify={(msg) => showAdminToast(msg)} />
         )}
 
         {/* TAB: CRIATIVOS INSTAGRAM & STORIES */}

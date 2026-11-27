@@ -51,11 +51,25 @@ import {
   deletePlanInviteInDb,
   validatePlanInviteInDb,
   redeemPlanInviteInDb,
+  listBusinessDraftsFromDb,
+  getExistingDraftPlaceIdsAndBusinessNamesFromDb,
+  insertBusinessDraftsInDb,
+  updateBusinessDraftInDb,
+  approveBusinessDraftInDb,
+  deleteBusinessDraftInDb,
   type DbAuthSessionPayload,
   type DbBusinessMetricEventType,
   type DbBusinessMetricsSummary,
   type DbPlanInvite,
+  type DbGoogleMapsBusinessDraft,
 } from './server/db.ts';
+import {
+  runGoogleMapsImportBatch,
+  normalizeBusinessSignature,
+  resolveGoogleMapsApiKey,
+  type DirectoryCategoryTarget,
+  type DirectoryCityTarget,
+} from './server/googleMapsImporter.ts';
 
 dotenv.config();
 
@@ -140,6 +154,70 @@ const localBusinessMetrics = new Map<
 >();
 const localPlanInvites = new Map<string, DbPlanInvite>();
 const localSettingsMirror = new Map<string, any>();
+const localBusinessDrafts = new Map<string, DbGoogleMapsBusinessDraft>();
+const localBusinessesMirror = new Map<string, { id: string; name: string; slug: string; phone: string }>();
+
+const DEFAULT_REGIONAL_CITIES: DirectoryCityTarget[] = [
+  { id: 'city-1', name: 'Alagoinhas', state: 'BA', isActive: true },
+];
+
+const DEFAULT_DIRECTORY_CATEGORIES: DirectoryCategoryTarget[] = [
+  { id: 'cat-1', name: 'Gastronomia & Bares', slug: 'gastronomia' },
+  { id: 'cat-2', name: 'Moda & Acessórios', slug: 'moda' },
+  { id: 'cat-3', name: 'Saúde & Bem-Estar', slug: 'saude' },
+  { id: 'cat-4', name: 'Tecnologia & Celulares', slug: 'tecnologia' },
+  { id: 'cat-5', name: 'Construção & Reforma', slug: 'construcao' },
+  { id: 'cat-6', name: 'Pet Shop & Veterinária', slug: 'petshop' },
+  { id: 'cat-7', name: 'Serviços Automotivos', slug: 'automotivo' },
+  { id: 'cat-8', name: 'Beleza & Barbearia', slug: 'beleza' },
+  { id: 'cat-9', name: 'Educação & Cursos', slug: 'educacao' },
+  { id: 'cat-10', name: 'Imóveis & Imobiliárias', slug: 'imoveis' },
+  { id: 'cat-11', name: 'Supermercados & Empórios', slug: 'supermercados' },
+  { id: 'cat-12', name: 'Festas & Eventos', slug: 'eventos' },
+  { id: 'cat-13', name: 'Farmácias & Drogarias', slug: 'farmacias' },
+  { id: 'cat-14', name: 'Padarias, Doces & Açaí', slug: 'padarias-cafeterias' },
+  { id: 'cat-15', name: 'Móveis, Eletro & Decoração', slug: 'moveis-decoracao' },
+  { id: 'cat-16', name: 'Papelarias, Gráficas & Presentes', slug: 'papelarias-graficas' },
+  { id: 'cat-17', name: 'Contabilidade, Advocacia & Consultoria', slug: 'consultoria-escritorios' },
+  { id: 'cat-18', name: 'Agropecuária, Rações & Jardinagem', slug: 'agropecuaria-jardinagem' },
+  { id: 'cat-19', name: 'Academias, Esportes & Lazer', slug: 'academias-esportes' },
+  { id: 'cat-20', name: 'Hotéis, Pousadas & Turismo', slug: 'hoteis-pousadas' },
+  { id: 'cat-21', name: 'Óticas, Joias & Relojoarias', slug: 'oticas-joalherias' },
+  { id: 'cat-22', name: 'Gás, Água & Bebidas', slug: 'gas-agua-bebidas' },
+];
+
+let localCatalogSnapshot: {
+  categories: DirectoryCategoryTarget[];
+  cities: DirectoryCityTarget[];
+} = {
+  categories: DEFAULT_DIRECTORY_CATEGORIES,
+  cities: DEFAULT_REGIONAL_CITIES,
+};
+
+interface ServerGoogleMapsImporterConfig {
+  enabled: boolean;
+  intervalMinutes: number;
+  batchSize: number;
+  initialBatchSize: number;
+  nextQueryCursor: number;
+  totalImportedCount: number;
+  lastRunAt?: string;
+  nextRunAt?: string;
+  lastRunSummary?: string;
+  lastError?: string;
+}
+
+const DEFAULT_GMP_IMPORTER_CONFIG: ServerGoogleMapsImporterConfig = {
+  enabled: true,
+  intervalMinutes: 30,
+  batchSize: 10,
+  initialBatchSize: 50,
+  nextQueryCursor: 0,
+  totalImportedCount: 0,
+};
+
+let isGmpBatchRunning = false;
+let gmpSchedulerTimer: NodeJS.Timeout | null = null;
 
 interface ServerMercadoPagoConfig {
   enabled: boolean;
@@ -987,7 +1065,33 @@ app.put('/api/sync/:collection', async (req, res) => {
   try {
     const { collection } = req.params;
     const { items } = req.body as { items?: any[] };
-    await syncCollection(collection, Array.isArray(items) ? items : []);
+    const safeItems = Array.isArray(items) ? items : [];
+    if (collection === 'categories' && safeItems.length > 0) {
+      localCatalogSnapshot.categories = safeItems.map((c) => ({
+        id: String(c.id || ''),
+        name: String(c.name || ''),
+        slug: String(c.slug || ''),
+      }));
+    } else if (collection === 'cities' && safeItems.length > 0) {
+      localCatalogSnapshot.cities = safeItems.map((c) => ({
+        id: String(c.id || ''),
+        name: String(c.name || ''),
+        state: String(c.state || 'BA'),
+        isActive: Boolean(c.isActive),
+      }));
+    } else if (collection === 'businesses') {
+      for (const b of safeItems) {
+        if (b?.id) {
+          localBusinessesMirror.set(String(b.id), {
+            id: String(b.id),
+            name: String(b.name || ''),
+            slug: String(b.slug || ''),
+            phone: String(b.phone || ''),
+          });
+        }
+      }
+    }
+    await syncCollection(collection, safeItems);
     res.json({ success: true, databaseEnabled: true });
   } catch (err) {
     const message = err instanceof Error ? err.message : 'Database sync error.';
@@ -1094,6 +1198,12 @@ app.post('/api/entities/:resource', async (req, res) => {
   const payloadBody = req.body ? { ...req.body } : {};
 
   if (resource === 'businesses' && payloadBody.id) {
+    localBusinessesMirror.set(String(payloadBody.id), {
+      id: String(payloadBody.id),
+      name: String(payloadBody.name || ''),
+      slug: String(payloadBody.slug || ''),
+      phone: String(payloadBody.phone || ''),
+    });
     if (payloadBody.planId === 'plan-invite-premium-6m') {
       const adminSess = await resolveSessionFromRequest(req);
       if (!adminSess || adminSess.role !== 'admin') {
@@ -3036,6 +3146,582 @@ app.post('/api/webhooks/mercadopago', async (req, res) => {
   }
 });
 
+// ========================================================
+// Google Maps Platform Places Importer (Rascunhos + Agendador)
+// ========================================================
+
+async function getGoogleMapsImporterConfig(): Promise<ServerGoogleMapsImporterConfig> {
+  let dbCfg: Partial<ServerGoogleMapsImporterConfig> | null = null;
+  if (isDatabaseConfigured()) {
+    try {
+      dbCfg = await getSettingFromDb<Partial<ServerGoogleMapsImporterConfig>>('googleMapsImporterConfig');
+    } catch (err) {
+      if (isTransientConnectionError(err)) {
+        await closePool().catch(() => {});
+      }
+    }
+  }
+  const mirrorCfg = localSettingsMirror.get('googleMapsImporterConfig') as
+    | Partial<ServerGoogleMapsImporterConfig>
+    | undefined;
+  return {
+    ...DEFAULT_GMP_IMPORTER_CONFIG,
+    ...(mirrorCfg || {}),
+    ...(dbCfg || {}),
+  };
+}
+
+async function saveGoogleMapsImporterConfig(cfg: ServerGoogleMapsImporterConfig): Promise<void> {
+  localSettingsMirror.set('googleMapsImporterConfig', cfg);
+  if (isDatabaseConfigured()) {
+    try {
+      await upsertSetting('googleMapsImporterConfig', cfg);
+    } catch (err) {
+      if (isTransientConnectionError(err)) {
+        await closePool().catch(() => {});
+      } else {
+        console.warn('Erro ao salvar googleMapsImporterConfig no banco:', err);
+      }
+    }
+  }
+}
+
+function scheduleGoogleMapsTimer(cfg: ServerGoogleMapsImporterConfig) {
+  if (gmpSchedulerTimer) {
+    clearInterval(gmpSchedulerTimer);
+    gmpSchedulerTimer = null;
+  }
+  if (!cfg.enabled) {
+    return;
+  }
+  const intervalMinutes = Math.max(5, Number(cfg.intervalMinutes) || 30);
+  const intervalMs = intervalMinutes * 60 * 1000;
+
+  gmpSchedulerTimer = setInterval(() => {
+    void (async () => {
+      const latestCfg = await getGoogleMapsImporterConfig();
+      if (!latestCfg.enabled || !resolveGoogleMapsApiKey() || isGmpBatchRunning) {
+        return;
+      }
+      await executeGoogleMapsBatch(latestCfg.batchSize || 10);
+    })();
+  }, intervalMs);
+
+  gmpSchedulerTimer.unref?.();
+}
+
+function toBusinessSlug(name: string, existingSlugs: Set<string>): string {
+  const base =
+    (name || 'empresa')
+      .toLowerCase()
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .replace(/[^a-z0-9]+/g, '-')
+      .replace(/^-|-$/g, '') || 'empresa';
+  if (!existingSlugs.has(base)) {
+    existingSlugs.add(base);
+    return base;
+  }
+  let counter = 2;
+  while (existingSlugs.has(`${base}-${counter}`)) {
+    counter += 1;
+  }
+  const unique = `${base}-${counter}`;
+  existingSlugs.add(unique);
+  return unique;
+}
+
+function buildApprovedBusinessFromDraft(
+  draft: DbGoogleMapsBusinessDraft,
+  existingSlugs: Set<string>
+) {
+  const bizId = `biz-gmp-${Date.now()}-${crypto.randomBytes(2).toString('hex')}`;
+  const slug = toBusinessSlug(draft.name, existingSlugs);
+  return {
+    id: bizId,
+    name: draft.name,
+    slug,
+    cityId: draft.cityId || 'city-1',
+    categoryId: draft.categoryId || 'cat-1',
+    planId: 'plan-free',
+    description: draft.description || '',
+    phone: draft.phone || '',
+    whatsapp: draft.whatsapp || '',
+    address: draft.address || '',
+    neighborhood: draft.neighborhood || 'Centro',
+    ...(draft.openingHours ? { openingHours: draft.openingHours } : {}),
+    logoUrl: '',
+    ...(draft.website ? { website: draft.website } : {}),
+    isVerified: false,
+    emailVerified: false,
+    paymentStatus: 'active' as const,
+    subscriptionStatus: 'active' as const,
+    createdAt: getSaoPauloDateKey(),
+  };
+}
+
+async function listAllDraftsMerged(): Promise<{
+  drafts: DbGoogleMapsBusinessDraft[];
+  databaseEnabled: boolean;
+}> {
+  if (isDatabaseConfigured()) {
+    try {
+      const dbDrafts = await listBusinessDraftsFromDb();
+      for (const d of dbDrafts) {
+        localBusinessDrafts.set(d.id, d);
+      }
+      return { drafts: dbDrafts, databaseEnabled: true };
+    } catch (err) {
+      if (!isTransientConnectionError(err)) {
+        throw err;
+      }
+      await closePool().catch(() => {});
+    }
+  }
+
+  const orderWeight = (status: DbGoogleMapsBusinessDraft['status']) =>
+    status === 'pending' ? 0 : status === 'approved' ? 1 : 2;
+  const localList = Array.from(localBusinessDrafts.values()).sort((a, b) => {
+    const wDiff = orderWeight(a.status) - orderWeight(b.status);
+    if (wDiff !== 0) return wDiff;
+    return (b.createdAt || '').localeCompare(a.createdAt || '');
+  });
+  return { drafts: localList, databaseEnabled: false };
+}
+
+async function executeGoogleMapsBatch(targetCount: number) {
+  if (isGmpBatchRunning) {
+    return {
+      success: false,
+      busy: true,
+      addedCount: 0,
+      skippedDuplicates: 0,
+      queriesExecuted: 0,
+      quotaExceeded: false,
+      summary: 'Já existe uma busca do Google Maps em execução. Aguarde a conclusão.',
+      error: 'Já existe uma busca do Google Maps em execução. Aguarde a conclusão.',
+    };
+  }
+
+  isGmpBatchRunning = true;
+  try {
+    const cfg = await getGoogleMapsImporterConfig();
+    const existingPlaceIds = new Set<string>();
+    const existingSignatures = new Set<string>();
+    let categories = localCatalogSnapshot.categories;
+    let cities = localCatalogSnapshot.cities;
+
+    for (const d of localBusinessDrafts.values()) {
+      if (d.googlePlaceId) existingPlaceIds.add(d.googlePlaceId);
+      existingSignatures.add(normalizeBusinessSignature(d.name, d.phone));
+    }
+    for (const b of localBusinessesMirror.values()) {
+      existingSignatures.add(normalizeBusinessSignature(b.name, b.phone));
+    }
+
+    if (isDatabaseConfigured()) {
+      try {
+        const dbData = await getExistingDraftPlaceIdsAndBusinessNamesFromDb();
+        for (const pid of dbData.placeIds) existingPlaceIds.add(pid);
+        for (const biz of dbData.businesses) {
+          existingSignatures.add(normalizeBusinessSignature(biz.name, biz.phone));
+        }
+        if (dbData.categories.length > 0) {
+          categories = dbData.categories;
+          localCatalogSnapshot.categories = dbData.categories;
+        }
+        if (dbData.cities.length > 0) {
+          cities = dbData.cities;
+          localCatalogSnapshot.cities = dbData.cities;
+        }
+      } catch (err) {
+        if (isTransientConnectionError(err)) {
+          await closePool().catch(() => {});
+        }
+      }
+    }
+
+    const result = await runGoogleMapsImportBatch({
+      targetCount,
+      startCursor: cfg.nextQueryCursor || 0,
+      existingPlaceIds,
+      existingSignatures,
+      categories,
+      cities,
+    });
+
+    let persistedCount = 0;
+    if (result.addedDrafts.length > 0) {
+      for (const draft of result.addedDrafts) {
+        localBusinessDrafts.set(draft.id, draft);
+      }
+      if (isDatabaseConfigured()) {
+        try {
+          persistedCount = await insertBusinessDraftsInDb(result.addedDrafts);
+        } catch (err) {
+          if (isTransientConnectionError(err)) {
+            await closePool().catch(() => {});
+            persistedCount = result.addedDrafts.length;
+          } else {
+            throw err;
+          }
+        }
+      } else {
+        persistedCount = result.addedDrafts.length;
+      }
+    }
+
+    const intervalMinutes = Math.max(5, Number(cfg.intervalMinutes) || 30);
+    const updatedCfg: ServerGoogleMapsImporterConfig = {
+      ...cfg,
+      nextQueryCursor: result.nextCursor,
+      totalImportedCount: (cfg.totalImportedCount || 0) + persistedCount,
+      lastRunAt: new Date().toISOString(),
+      nextRunAt: cfg.enabled
+        ? new Date(Date.now() + intervalMinutes * 60 * 1000).toISOString()
+        : undefined,
+      lastRunSummary: result.summary,
+      lastError: result.error || undefined,
+    };
+
+    await saveGoogleMapsImporterConfig(updatedCfg);
+
+    return {
+      success: result.success,
+      busy: false,
+      addedCount: result.addedDrafts.length,
+      skippedDuplicates: result.skippedDuplicates,
+      queriesExecuted: result.queriesExecuted,
+      quotaExceeded: result.quotaExceeded,
+      summary: result.summary,
+      error: result.error,
+      config: updatedCfg,
+    };
+  } finally {
+    isGmpBatchRunning = false;
+  }
+}
+
+app.get('/api/google-maps/drafts', async (req, res) => {
+  const adminSess = await requireAdminSession(req, res);
+  if (!adminSess) return;
+
+  try {
+    const [{ drafts, databaseEnabled }, cfg] = await Promise.all([
+      listAllDraftsMerged(),
+      getGoogleMapsImporterConfig(),
+    ]);
+    res.json({
+      success: true,
+      databaseEnabled,
+      drafts,
+      config: {
+        ...cfg,
+        isRunning: isGmpBatchRunning,
+        hasApiKey: Boolean(resolveGoogleMapsApiKey()),
+      },
+    });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : 'Erro ao carregar rascunhos do Google Maps.';
+    res.status(500).json({ success: false, error: message });
+  }
+});
+
+app.post('/api/google-maps/import-batch', async (req, res) => {
+  const adminSess = await requireAdminSession(req, res);
+  if (!adminSess) return;
+
+  const requestedCount = Number((req.body as { count?: number } | undefined)?.count || 10);
+  const targetCount = Math.max(1, Math.min(50, Math.round(Number.isFinite(requestedCount) ? requestedCount : 10)));
+
+  try {
+    const batchResult = await executeGoogleMapsBatch(targetCount);
+    if (batchResult.busy) {
+      res.status(409).json(batchResult);
+      return;
+    }
+
+    const { drafts, databaseEnabled } = await listAllDraftsMerged();
+    const statusCode = batchResult.quotaExceeded
+      ? 429
+      : !batchResult.success && !resolveGoogleMapsApiKey()
+      ? 400
+      : 200;
+
+    res.status(statusCode).json({
+      ...batchResult,
+      databaseEnabled,
+      drafts,
+      config: {
+        ...(batchResult.config || (await getGoogleMapsImporterConfig())),
+        isRunning: isGmpBatchRunning,
+        hasApiKey: Boolean(resolveGoogleMapsApiKey()),
+      },
+    });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : 'Erro ao executar busca no Google Maps.';
+    res.status(500).json({ success: false, error: message });
+  }
+});
+
+app.put('/api/google-maps/scheduler', async (req, res) => {
+  const adminSess = await requireAdminSession(req, res);
+  if (!adminSess) return;
+
+  const { enabled, intervalMinutes, batchSize } = (req.body || {}) as {
+    enabled?: boolean;
+    intervalMinutes?: number;
+    batchSize?: number;
+  };
+
+  try {
+    const current = await getGoogleMapsImporterConfig();
+    const nextInterval = Math.max(
+      5,
+      Math.min(1440, Math.round(Number(intervalMinutes ?? current.intervalMinutes) || 30))
+    );
+    const nextBatch = Math.max(1, Math.min(50, Math.round(Number(batchSize ?? current.batchSize) || 10)));
+    const nextEnabled = typeof enabled === 'boolean' ? enabled : current.enabled;
+
+    const updated: ServerGoogleMapsImporterConfig = {
+      ...current,
+      enabled: nextEnabled,
+      intervalMinutes: nextInterval,
+      batchSize: nextBatch,
+      nextRunAt: nextEnabled
+        ? new Date(Date.now() + nextInterval * 60 * 1000).toISOString()
+        : undefined,
+    };
+
+    await saveGoogleMapsImporterConfig(updated);
+    scheduleGoogleMapsTimer(updated);
+
+    res.json({
+      success: true,
+      config: {
+        ...updated,
+        isRunning: isGmpBatchRunning,
+        hasApiKey: Boolean(resolveGoogleMapsApiKey()),
+      },
+    });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : 'Erro ao atualizar agendador do Google Maps.';
+    res.status(500).json({ success: false, error: message });
+  }
+});
+
+app.put('/api/google-maps/drafts/:id', async (req, res) => {
+  const adminSess = await requireAdminSession(req, res);
+  if (!adminSess) return;
+
+  const { id } = req.params;
+  const updates = (req.body || {}) as Partial<DbGoogleMapsBusinessDraft>;
+  const existingLocal = localBusinessDrafts.get(id);
+  if (existingLocal) {
+    localBusinessDrafts.set(id, { ...existingLocal, ...updates, updatedAt: new Date().toISOString() });
+  }
+
+  if (isDatabaseConfigured()) {
+    try {
+      const updatedDb = await updateBusinessDraftInDb(id, updates);
+      if (updatedDb) {
+        localBusinessDrafts.set(id, updatedDb);
+        res.json({ success: true, databaseEnabled: true, draft: updatedDb });
+        return;
+      }
+    } catch (err) {
+      if (!isTransientConnectionError(err)) {
+        const message = err instanceof Error ? err.message : 'Erro ao atualizar rascunho.';
+        res.status(500).json({ success: false, error: message });
+        return;
+      }
+      await closePool().catch(() => {});
+    }
+  }
+
+  const localDraft = localBusinessDrafts.get(id);
+  if (!localDraft) {
+    res.status(404).json({ success: false, error: 'Rascunho não encontrado.' });
+    return;
+  }
+  res.json({ success: true, databaseEnabled: false, draft: localDraft });
+});
+
+app.post('/api/google-maps/drafts/approve-bulk', async (req, res) => {
+  const adminSess = await requireAdminSession(req, res);
+  if (!adminSess) return;
+
+  const { ids } = (req.body || {}) as { ids?: string[] };
+  if (!Array.isArray(ids) || ids.length === 0) {
+    res.status(400).json({ success: false, error: 'Selecione ao menos um rascunho para aprovar.' });
+    return;
+  }
+
+  try {
+    const { drafts, databaseEnabled } = await listAllDraftsMerged();
+    const existingSlugs = new Set(
+      Array.from(localBusinessesMirror.values()).map((b) => b.slug).filter(Boolean)
+    );
+    const createdBusinesses: any[] = [];
+
+    for (const id of ids) {
+      const draft = drafts.find((d) => d.id === id);
+      if (!draft || draft.status === 'approved') continue;
+
+      const newBusiness = buildApprovedBusinessFromDraft(draft, existingSlugs);
+      localBusinessesMirror.set(newBusiness.id, {
+        id: newBusiness.id,
+        name: newBusiness.name,
+        slug: newBusiness.slug,
+        phone: newBusiness.phone,
+      });
+
+      if (databaseEnabled) {
+        const dbRes = await approveBusinessDraftInDb(draft.id, newBusiness);
+        if (dbRes.draft) {
+          localBusinessDrafts.set(draft.id, dbRes.draft);
+        }
+      } else {
+        localBusinessDrafts.set(draft.id, {
+          ...draft,
+          status: 'approved',
+          approvedBusinessId: newBusiness.id,
+          updatedAt: new Date().toISOString(),
+        });
+      }
+      createdBusinesses.push(newBusiness);
+    }
+
+    const latest = await listAllDraftsMerged();
+    res.json({
+      success: true,
+      databaseEnabled: latest.databaseEnabled,
+      approvedCount: createdBusinesses.length,
+      drafts: latest.drafts,
+      createdBusinesses,
+    });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : 'Erro ao aprovar rascunhos em lote.';
+    res.status(500).json({ success: false, error: message });
+  }
+});
+
+app.post('/api/google-maps/drafts/:id/approve', async (req, res) => {
+  const adminSess = await requireAdminSession(req, res);
+  if (!adminSess) return;
+
+  const { id } = req.params;
+  try {
+    const { drafts, databaseEnabled } = await listAllDraftsMerged();
+    const draft = drafts.find((d) => d.id === id);
+    if (!draft) {
+      res.status(404).json({ success: false, error: 'Rascunho não encontrado.' });
+      return;
+    }
+
+    const existingSlugs = new Set(
+      Array.from(localBusinessesMirror.values()).map((b) => b.slug).filter(Boolean)
+    );
+    const newBusiness = buildApprovedBusinessFromDraft(draft, existingSlugs);
+    localBusinessesMirror.set(newBusiness.id, {
+      id: newBusiness.id,
+      name: newBusiness.name,
+      slug: newBusiness.slug,
+      phone: newBusiness.phone,
+    });
+
+    let updatedDraft: DbGoogleMapsBusinessDraft = {
+      ...draft,
+      status: 'approved',
+      approvedBusinessId: newBusiness.id,
+      updatedAt: new Date().toISOString(),
+    };
+
+    if (databaseEnabled) {
+      const dbRes = await approveBusinessDraftInDb(draft.id, newBusiness);
+      if (dbRes.draft) {
+        updatedDraft = dbRes.draft;
+      }
+    }
+    localBusinessDrafts.set(draft.id, updatedDraft);
+
+    res.json({
+      success: true,
+      databaseEnabled,
+      draft: updatedDraft,
+      business: newBusiness,
+    });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : 'Erro ao aprovar rascunho.';
+    res.status(500).json({ success: false, error: message });
+  }
+});
+
+app.post('/api/google-maps/drafts/:id/reject', async (req, res) => {
+  const adminSess = await requireAdminSession(req, res);
+  if (!adminSess) return;
+
+  const { id } = req.params;
+  const existingLocal = localBusinessDrafts.get(id);
+  if (existingLocal) {
+    localBusinessDrafts.set(id, {
+      ...existingLocal,
+      status: 'rejected',
+      updatedAt: new Date().toISOString(),
+    });
+  }
+
+  if (isDatabaseConfigured()) {
+    try {
+      const updated = await updateBusinessDraftInDb(id, { status: 'rejected' });
+      if (updated) {
+        localBusinessDrafts.set(id, updated);
+        res.json({ success: true, databaseEnabled: true, draft: updated });
+        return;
+      }
+    } catch (err) {
+      if (!isTransientConnectionError(err)) {
+        const message = err instanceof Error ? err.message : 'Erro ao rejeitar rascunho.';
+        res.status(500).json({ success: false, error: message });
+        return;
+      }
+      await closePool().catch(() => {});
+    }
+  }
+
+  const localDraft = localBusinessDrafts.get(id);
+  if (!localDraft) {
+    res.status(404).json({ success: false, error: 'Rascunho não encontrado.' });
+    return;
+  }
+  res.json({ success: true, databaseEnabled: false, draft: localDraft });
+});
+
+app.delete('/api/google-maps/drafts/:id', async (req, res) => {
+  const adminSess = await requireAdminSession(req, res);
+  if (!adminSess) return;
+
+  const { id } = req.params;
+  localBusinessDrafts.delete(id);
+
+  if (isDatabaseConfigured()) {
+    try {
+      await deleteBusinessDraftInDb(id);
+      res.json({ success: true, databaseEnabled: true });
+      return;
+    } catch (err) {
+      if (!isTransientConnectionError(err)) {
+        const message = err instanceof Error ? err.message : 'Erro ao excluir rascunho.';
+        res.status(500).json({ success: false, error: message });
+        return;
+      }
+      await closePool().catch(() => {});
+    }
+  }
+
+  res.json({ success: true, databaseEnabled: false });
+});
+
 app.get('/api/health', async (_req, res) => {
   let database: 'connected' | 'not_configured' | 'error' = 'not_configured';
   let databaseError: string | undefined;
@@ -3164,10 +3850,30 @@ export class ErrorOverlay extends (typeof HTMLElement !== "undefined" ? HTMLElem
 
   const server = app.listen(PORT, '0.0.0.0', () => {
     console.log(`achenacidade server running on http://0.0.0.0:${PORT}`);
+    void (async () => {
+      try {
+        const gmpCfg = await getGoogleMapsImporterConfig();
+        if (gmpCfg.enabled) {
+          const intervalMs = Math.max(5, Number(gmpCfg.intervalMinutes) || 30) * 60 * 1000;
+          const nextCfg = {
+            ...gmpCfg,
+            nextRunAt: new Date(Date.now() + intervalMs).toISOString(),
+          };
+          await saveGoogleMapsImporterConfig(nextCfg);
+          scheduleGoogleMapsTimer(nextCfg);
+        }
+      } catch (err) {
+        console.warn('Could not initialize Google Maps scheduler on startup:', err);
+      }
+    })();
   });
 
   const gracefulShutdown = (signal: string) => {
     console.log(`Received ${signal}, shutting down achenacidade server gracefully...`);
+    if (gmpSchedulerTimer) {
+      clearInterval(gmpSchedulerTimer);
+      gmpSchedulerTimer = null;
+    }
     server.close(async () => {
       try {
         await closePool();
