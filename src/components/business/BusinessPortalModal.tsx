@@ -17,6 +17,7 @@ import {
 } from 'lucide-react';
 import { Business, Product } from '../../types';
 import { formatBRL, isLifetimePlan, isPaidPlan } from '../../utils/planPricing';
+import { getBusinessLogoUrl } from '../../utils/businessMedia';
 
 export const BusinessPortalModal: React.FC = () => {
   const {
@@ -286,11 +287,18 @@ export const BusinessPortalModal: React.FC = () => {
               {/* Store Identity & Plan Quota Banner */}
               <div className="p-5 rounded-2xl bg-gradient-to-r from-blue-900 to-indigo-950 text-white shadow-md flex flex-col sm:flex-row sm:items-center justify-between gap-4">
                 <div className="flex items-center gap-3">
-                  <img
-                    src={activeBusiness.logoUrl}
-                    alt={activeBusiness.name}
-                    className="w-14 h-14 rounded-xl object-cover border-2 border-white/20 bg-white"
-                  />
+                  <div className="w-14 h-14 rounded-xl overflow-hidden border-2 border-white/20 bg-white flex items-center justify-center shrink-0">
+                    {getBusinessLogoUrl(activeBusiness) ? (
+                      <img
+                        src={getBusinessLogoUrl(activeBusiness)}
+                        alt={activeBusiness.name}
+                        className="w-full h-full object-cover"
+                        referrerPolicy="no-referrer"
+                      />
+                    ) : (
+                      <Building2 className="w-6 h-6 text-slate-400" />
+                    )}
+                  </div>
                   <div>
                     <span className="text-[11px] font-bold text-orange-400 uppercase tracking-wider">
                       Gerenciando Loja

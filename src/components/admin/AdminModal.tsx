@@ -30,6 +30,7 @@ import { City, Category, Plan, PlanBillingType, PlanVipTier, AdminTheme, Busines
 import { AdminBusinessEditModal } from './AdminBusinessEditModal';
 import { generateHostGatorPackage, downloadFile } from '../../utils/hostgatorGenerator';
 import { formatBRL, getPlanBillingType, isInviteTrialPlan, isLifetimePlan } from '../../utils/planPricing';
+import { getBusinessLogoUrl } from '../../utils/businessMedia';
 
 export const AdminModal: React.FC = () => {
   const {
@@ -1105,11 +1106,21 @@ export const AdminModal: React.FC = () => {
                       return (
                         <tr key={biz.id} className="hover:bg-slate-50 dark:hover:bg-slate-800/50">
                           <td className="p-3 flex items-center gap-2">
-                            <img
-                              src={biz.logoUrl}
-                              alt={biz.name}
-                              className="w-8 h-8 rounded-lg object-cover"
-                            />
+                            <div className="w-8 h-8 rounded-lg overflow-hidden border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 shrink-0 flex items-center justify-center">
+                              {getBusinessLogoUrl(biz) ? (
+                                <img
+                                  src={getBusinessLogoUrl(biz)}
+                                  alt={biz.name}
+                                  className="w-full h-full object-cover"
+                                  referrerPolicy="no-referrer"
+                                  onError={(e) => {
+                                    e.currentTarget.style.display = 'none';
+                                  }}
+                                />
+                              ) : (
+                                <Building2 className="w-4 h-4 text-slate-400" />
+                              )}
+                            </div>
                             <div>
                               <div className="font-bold text-slate-900 dark:text-white">{biz.name}</div>
                               <span className="text-[10px] text-slate-500">{biz.neighborhood} · {biz.whatsapp}</span>

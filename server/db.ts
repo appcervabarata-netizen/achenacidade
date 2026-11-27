@@ -315,6 +315,7 @@ const EXPECTED_TABLE_COLUMNS: Record<string, Array<{ name: string; definition: s
     { name: 'weekly_schedule', definition: 'JSON NULL' },
     { name: 'logo_url', definition: 'LONGTEXT NULL' },
     { name: 'cover_url', definition: 'LONGTEXT NULL' },
+    { name: 'photo_url', definition: 'LONGTEXT NULL' },
     { name: 'instagram', definition: 'VARCHAR(255) NULL' },
     { name: 'facebook', definition: 'VARCHAR(255) NULL' },
     { name: 'website', definition: 'VARCHAR(255) NULL' },
@@ -732,6 +733,7 @@ export async function ensureDatabaseSchema(forceMigrate = false): Promise<boolea
           weekly_schedule JSON NULL,
           logo_url LONGTEXT NOT NULL,
           cover_url LONGTEXT NULL,
+          photo_url LONGTEXT NULL,
           instagram VARCHAR(255) NULL,
           facebook VARCHAR(255) NULL,
           website VARCHAR(255) NULL,
@@ -1080,8 +1082,9 @@ export async function readAllDirectoryData(connOrPool?: Pool | PoolConnection): 
       neighborhood: r.neighborhood || '',
       ...(r.opening_hours ? { openingHours: r.opening_hours } : {}),
       ...(r.weekly_schedule ? { weeklySchedule: parseJsonColumn(r.weekly_schedule, undefined) } : {}),
-      logoUrl: r.logo_url || '',
-      ...(r.cover_url ? { coverUrl: r.cover_url } : {}),
+      logoUrl: r.logo_url || r.photo_url || '',
+      ...(r.cover_url || r.photo_url ? { coverUrl: r.cover_url || r.photo_url } : {}),
+      ...(r.photo_url ? { photoUrl: r.photo_url } : {}),
       ...(r.instagram ? { instagram: r.instagram } : {}),
       ...(r.facebook ? { facebook: r.facebook } : {}),
       ...(r.website ? { website: r.website } : {}),
@@ -1270,10 +1273,10 @@ export async function replaceCollectionInConn(conn: PoolConnection, collection: 
         await conn.query(
           `INSERT INTO businesses (
              id, name, slug, city_id, category_id, plan_id, description, phone, whatsapp, email, owner_email,
-             address, neighborhood, opening_hours, weekly_schedule, logo_url, cover_url, instagram, facebook,
+             address, neighborhood, opening_hours, weekly_schedule, logo_url, cover_url, photo_url, instagram, facebook,
              website, password, is_verified, email_verified, payment_status, pending_plan_id,
              pending_billing_cycle, billing_cycle, plan_expires_at, invite_code, subscription_status, payment_token, created_at, sort_order
-           ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+           ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
           [
             b.id,
             b.name || '',
@@ -1290,8 +1293,9 @@ export async function replaceCollectionInConn(conn: PoolConnection, collection: 
             b.neighborhood || '',
             b.openingHours || null,
             b.weeklySchedule ? JSON.stringify(b.weeklySchedule) : null,
-            b.logoUrl || '',
-            b.coverUrl || null,
+            b.logoUrl || b.photoUrl || '',
+            b.coverUrl || b.photoUrl || null,
+            b.photoUrl || null,
             b.instagram || null,
             b.facebook || null,
             b.website || null,
@@ -1734,10 +1738,10 @@ export async function upsertEntity(resource: string, item: any): Promise<void> {
         await conn.query(
           `INSERT INTO businesses (
              id, name, slug, city_id, category_id, plan_id, description, phone, whatsapp, email, owner_email,
-             address, neighborhood, opening_hours, weekly_schedule, logo_url, cover_url, instagram, facebook,
+             address, neighborhood, opening_hours, weekly_schedule, logo_url, cover_url, photo_url, instagram, facebook,
              website, password, is_verified, email_verified, payment_status, pending_plan_id,
              pending_billing_cycle, billing_cycle, plan_expires_at, invite_code, subscription_status, payment_token, created_at, sort_order
-           ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+           ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
            ON DUPLICATE KEY UPDATE
              name = VALUES(name),
              slug = VALUES(slug),
@@ -1755,6 +1759,7 @@ export async function upsertEntity(resource: string, item: any): Promise<void> {
              weekly_schedule = VALUES(weekly_schedule),
              logo_url = VALUES(logo_url),
              cover_url = VALUES(cover_url),
+             photo_url = VALUES(photo_url),
              instagram = VALUES(instagram),
              facebook = VALUES(facebook),
              website = VALUES(website),
@@ -1785,8 +1790,9 @@ export async function upsertEntity(resource: string, item: any): Promise<void> {
             item.neighborhood || '',
             item.openingHours || null,
             item.weeklySchedule ? JSON.stringify(item.weeklySchedule) : null,
-            item.logoUrl || '',
-            item.coverUrl || null,
+            item.logoUrl || item.photoUrl || '',
+            item.coverUrl || item.photoUrl || null,
+            item.photoUrl || null,
             item.instagram || null,
             item.facebook || null,
             item.website || null,
@@ -2080,6 +2086,7 @@ const RESOURCE_FIELD_MAPS: Record<string, Record<string, FieldDef>> = {
     weeklySchedule: { col: 'weekly_schedule', transform: jsonTransform },
     logoUrl: { col: 'logo_url', transform: strTransform },
     coverUrl: { col: 'cover_url', transform: nullableStr },
+    photoUrl: { col: 'photo_url', transform: nullableStr },
     instagram: { col: 'instagram', transform: nullableStr },
     facebook: { col: 'facebook', transform: nullableStr },
     website: { col: 'website', transform: nullableStr },
@@ -3764,6 +3771,7 @@ export async function approveBusinessDraftInDb(
     openingHours?: string;
     logoUrl: string;
     coverUrl?: string;
+    photoUrl?: string;
     website?: string;
     createdAt: string;
   }
@@ -3779,9 +3787,9 @@ export async function approveBusinessDraftInDb(
     await conn.query(
       `INSERT INTO businesses (
          id, name, slug, city_id, category_id, plan_id, description, phone, whatsapp,
-         address, neighborhood, opening_hours, logo_url, cover_url, website, is_verified, email_verified,
+         address, neighborhood, opening_hours, logo_url, cover_url, photo_url, website, is_verified, email_verified,
          payment_status, subscription_status, created_at, sort_order
-       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 0, 'active', 'active', ?, ?)
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 0, 'active', 'active', ?, ?)
        ON DUPLICATE KEY UPDATE
          name = VALUES(name),
          city_id = VALUES(city_id),
@@ -3795,6 +3803,7 @@ export async function approveBusinessDraftInDb(
          opening_hours = VALUES(opening_hours),
          logo_url = VALUES(logo_url),
          cover_url = VALUES(cover_url),
+         photo_url = VALUES(photo_url),
          website = VALUES(website)`,
       [
         businessRecord.id,
@@ -3809,8 +3818,9 @@ export async function approveBusinessDraftInDb(
         businessRecord.address || '',
         businessRecord.neighborhood || '',
         businessRecord.openingHours || null,
-        businessRecord.logoUrl || '',
-        businessRecord.coverUrl || businessRecord.logoUrl || '',
+        businessRecord.logoUrl || businessRecord.photoUrl || '',
+        businessRecord.coverUrl || businessRecord.photoUrl || businessRecord.logoUrl || '',
+        businessRecord.photoUrl || null,
         businessRecord.website || null,
         businessRecord.createdAt || getSaoPauloDateKey(),
         Date.now() % 2147483647,

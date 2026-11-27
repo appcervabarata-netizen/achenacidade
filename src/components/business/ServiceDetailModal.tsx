@@ -15,8 +15,10 @@ import {
   ChevronRight,
   Heart,
   CheckCircle2,
+  Building2,
 } from 'lucide-react';
 import { normalizeWhatsappUrl } from '../../utils/seoHelper';
+import { getBusinessLogoUrl } from '../../utils/businessMedia';
 
 export const ServiceDetailModal: React.FC = () => {
   const {
@@ -162,11 +164,21 @@ export const ServiceDetailModal: React.FC = () => {
             {business && (
               <div className="p-4 rounded-2xl bg-blue-50/60 dark:bg-blue-950/30 border border-blue-100 dark:border-blue-900/40 flex items-center justify-between gap-4">
                 <div className="flex items-center gap-3 min-w-0">
-                  <img
-                    src={business.logoUrl}
-                    alt={business.name}
-                    className="w-12 h-12 rounded-xl object-cover shrink-0 border border-blue-200 dark:border-blue-800"
-                  />
+                  <div className="w-12 h-12 rounded-xl overflow-hidden shrink-0 border border-blue-200 dark:border-blue-800 bg-white dark:bg-slate-800 flex items-center justify-center">
+                    {getBusinessLogoUrl(business) ? (
+                      <img
+                        src={getBusinessLogoUrl(business)}
+                        alt={business.name}
+                        className="w-full h-full object-cover"
+                        referrerPolicy="no-referrer"
+                        onError={(e) => {
+                          e.currentTarget.style.display = 'none';
+                        }}
+                      />
+                    ) : (
+                      <Building2 className="w-5 h-5 text-slate-400" />
+                    )}
+                  </div>
                   <div className="min-w-0">
                     <span className="text-[11px] font-bold uppercase text-blue-700 dark:text-blue-300 tracking-wider">
                       Serviço Prestado por

@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { useDirectory } from '../../context/DirectoryContext';
 import { formatServicePrice, getServiceModeLabel } from '../../utils/serviceFormatters';
 import { normalizeWhatsappUrl } from '../../utils/seoHelper';
+import { getBusinessLogoUrl } from '../../utils/businessMedia';
 import { ConfirmModal } from '../common/ConfirmModal';
 import {
   X,
@@ -192,17 +193,29 @@ export const FavoritesModal: React.FC = () => {
             <div>
               {favoriteBusinesses.length > 0 ? (
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                  {favoriteBusinesses.map((biz) => (
+                  {favoriteBusinesses.map((biz) => {
+                    const logoSrc = getBusinessLogoUrl(biz);
+                    return (
                     <div
                       key={biz.id}
                       className="p-4 rounded-2xl bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 shadow-xs flex flex-col justify-between"
                     >
                       <div className="flex items-start gap-3">
-                        <img
-                          src={biz.logoUrl}
-                          alt={biz.name}
-                          className="w-12 h-12 rounded-xl object-cover shrink-0 border border-slate-100 dark:border-slate-700"
-                        />
+                        <div className="w-12 h-12 rounded-xl overflow-hidden shrink-0 border border-slate-100 dark:border-slate-700 bg-slate-100 dark:bg-slate-800 flex items-center justify-center">
+                          {logoSrc ? (
+                            <img
+                              src={logoSrc}
+                              alt={biz.name}
+                              className="w-full h-full object-cover"
+                              referrerPolicy="no-referrer"
+                              onError={(e) => {
+                                e.currentTarget.style.display = 'none';
+                              }}
+                            />
+                          ) : (
+                            <Building2 className="w-5 h-5 text-slate-400" />
+                          )}
+                        </div>
                         <div className="min-w-0 flex-1">
                           <h4
                             onClick={() => openModal('business_detail', biz.id)}
@@ -253,7 +266,8 @@ export const FavoritesModal: React.FC = () => {
                         </a>
                       </div>
                     </div>
-                  ))}
+                    );
+                  })}
                 </div>
               ) : (
                 <div className="text-center py-12 bg-slate-50 dark:bg-slate-800/40 rounded-2xl border border-slate-200 dark:border-slate-800 p-8">

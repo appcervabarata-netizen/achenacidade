@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 import { useDirectory } from '../../context/DirectoryContext';
 import {
   X,
@@ -19,9 +19,12 @@ import {
   BellRing,
   Award,
   Building2,
+  ShieldCheck,
+  KeyRound,
 } from 'lucide-react';
 import { isFounderPlan } from '../../utils/planPricing';
 import { formatServicePrice, getServiceModeLabel, getServiceWhatsAppMessage } from '../../utils/serviceFormatters';
+import { getBusinessCoverUrl, getBusinessLogoUrl } from '../../utils/businessMedia';
 import {
   normalizeWhatsappUrl,
   formatInstagramUrl,
@@ -53,7 +56,18 @@ export const BusinessDetailModal: React.FC = () => {
     pushPreferences,
     enablePushNotifications,
     trackBusinessMetric,
+    appGeneralConfig,
+    siteModeConfig,
   } = useDirectory();
+
+  const [coverError, setCoverError] = useState(false);
+  const [logoError, setLogoError] = useState(false);
+
+  const selectedBusinessId = activeModal.type === 'business_detail' ? activeModal.id : undefined;
+  useEffect(() => {
+    setCoverError(false);
+    setLogoError(false);
+  }, [selectedBusinessId]);
 
   if (activeModal.type !== 'business_detail' || !activeModal.id) {
     return null;
@@ -73,6 +87,9 @@ export const BusinessDetailModal: React.FC = () => {
     (s) => s.businessId === business.id && s.isActive
   );
 
+  const coverSrc = getBusinessCoverUrl(business);
+  const logoSrc = getBusinessLogoUrl(business);
+
   const phoneHref = formatTelHref(business.phone);
   const mailtoHref = formatMailtoHref(business.email);
   const instagramHref = formatInstagramUrl(business.instagram);
@@ -90,6 +107,18 @@ export const BusinessDetailModal: React.FC = () => {
     `Olá! Encontrei o perfil da ${business.name} no achenacidade e gostaria de atendimento.`
   );
 
+  const adminWhatsappRaw =
+    (appGeneralConfig.whatsappNumber || siteModeConfig.launch.whatsappNumber || '').trim();
+  const claimWhatsappHref = normalizeWhatsappUrl(
+    adminWhatsappRaw,
+    `Olá! Sou responsável pela empresa "${business.name}" (${
+      city ? `${city.name} - ${city.state}` : appGeneralConfig.cityLabel || 'Alagoinhas - BA'
+    }) e gostaria de verificar meu perfil e solicitar e-mail e senha para administrá-la no ${
+      appGeneralConfig.appName || 'achenacidade'
+    }.`
+  );
+  const showClaimSection = !business.isVerified;
+
   const formatPrice = (value: number) => {
     return new Intl.NumberFormat('pt-BR', {
       style: 'currency',
@@ -103,15 +132,19 @@ export const BusinessDetailModal: React.FC = () => {
         
         {/* Header / Cover */}
         <div className="relative h-44 sm:h-56 bg-slate-900 shrink-0">
-          <img
-            src={
-              business.coverUrl ||
-              'https://images.unsplash.com/photo-1517248135467-4c7edcad34c4?w=1200&h=400&fit=crop&q=80'
-            }
-            alt={business.name}
-            className="w-full h-full object-cover opacity-60"
-            referrerPolicy="no-referrer"
-          />
+          {coverSrc && !coverError ? (
+            <img
+              src={coverSrc}
+              alt={business.name}
+              className="w-full h-full object-cover opacity-75"
+              referrerPolicy="no-referrer"
+              onError={() => setCoverError(true)}
+            />
+          ) : (
+            <div className="w-full h-full bg-gradient-to-br from-slate-800 via-slate-900 to-blue-950 flex items-center justify-center">
+              <Building2 className="w-14 h-14 text-slate-600/50" />
+            </div>
+          )}
           <div className="absolute inset-0 bg-gradient-to-t from-slate-950 via-slate-950/40 to-transparent" />
 
           {/* Top action buttons */}
@@ -168,14 +201,13 @@ export const BusinessDetailModal: React.FC = () => {
 
           {/* Business Info inside Cover */}
           <div className="absolute bottom-4 left-6 right-6 flex items-end gap-4">
-            {business.logoUrl ? (
+            {logoSrc && !logoError ? (
               <img
-                src={business.logoUrl}
+                src={logoSrc}
                 alt={business.name}
                 className="w-20 h-20 sm:w-24 sm:h-24 rounded-2xl object-cover border-3 border-white dark:border-slate-900 shadow-lg bg-white shrink-0"
-                onError={(e) => {
-                  e.currentTarget.style.display = 'none';
-                }}
+                referrerPolicy="no-referrer"
+                onError={() => setLogoError(true)}
               />
             ) : (
               <div className="w-20 h-20 sm:w-24 sm:h-24 rounded-2xl border-3 border-white dark:border-slate-900 shadow-lg bg-slate-800 flex items-center justify-center shrink-0">
@@ -533,6 +565,54 @@ export const BusinessDetailModal: React.FC = () => {
                     </div>
                   );
                 })}
+              </div>
+            </div>
+          )}
+
+          {/* Owner Claim / Verifique sua empresa */}
+          {showClaimSection && (
+            <div className="rounded-2xl border border-amber-200 dark:border-amber-800/70 bg-gradient-to-br from-amber-50 via-white to-orange-50/70 dark:from-amber-950/30 dark:via-slate-900 dark:to-slate-900 p-4 sm:p-5 flex flex-col sm:flex-row sm:items-center justify-between gap-4 shadow-xs">
+              <div className="flex items-start gap-3.5 min-w-0">
+                <div className="w-10 h-10 rounded-xl bg-amber-100 dark:bg-amber-900/60 text-amber-700 dark:text-amber-300 flex items-center justify-center shrink-0">
+                  <ShieldCheck className="w-5 h-5" />
+                </div>
+                <div className="min-w-0">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="text-[10px] font-black uppercase tracking-wider px-2 py-0.5 rounded-full bg-amber-200/80 dark:bg-amber-900/80 text-amber-900 dark:text-amber-200">
+                      Verifique sua empresa
+                    </span>
+                    <h4 className="text-sm sm:text-base font-extrabold text-slate-900 dark:text-white font-display">
+                      Esta empresa é sua? Venha administrá-la!
+                    </h4>
+                  </div>
+                  <p className="mt-1 text-xs text-slate-600 dark:text-slate-300 leading-relaxed">
+                    Fale com a nossa equipe pelo WhatsApp para comprovar que você representa a{' '}
+                    <strong className="text-slate-800 dark:text-white">{business.name}</strong>. Nós criamos seu e-mail e
+                    senha de acesso para você ou sua equipe gerenciar o perfil, atualizar fotos e cadastrar produtos e serviços.
+                  </p>
+                </div>
+              </div>
+
+              <div className="flex flex-col sm:items-end gap-2 shrink-0">
+                {claimWhatsappHref && (
+                  <a
+                    href={claimWhatsappHref}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold shadow-sm transition cursor-pointer whitespace-nowrap"
+                  >
+                    <MessageCircle className="w-4 h-4" />
+                    <span>Assumir Empresa no WhatsApp</span>
+                  </a>
+                )}
+                <button
+                  type="button"
+                  onClick={() => openModal('business_portal')}
+                  className="inline-flex items-center justify-center gap-1.5 text-[11px] font-semibold text-slate-600 dark:text-slate-300 hover:text-blue-600 dark:hover:text-blue-400 transition cursor-pointer"
+                >
+                  <KeyRound className="w-3.5 h-3.5" />
+                  <span>Já tenho e-mail e senha · Acessar Painel</span>
+                </button>
               </div>
             </div>
           )}

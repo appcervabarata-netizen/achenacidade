@@ -17,6 +17,7 @@ import {
 } from '../../utils/planPricing';
 import { formatServicePrice, getServiceModeLabel } from '../../utils/serviceFormatters';
 import { cloneWeeklySchedule } from '../../utils/scheduleHelpers';
+import { getBusinessLogoUrl } from '../../utils/businessMedia';
 import serviceTechRepairImg from '../../assets/images/service_tech_repair_1794881238745.jpg';
 import servicePetGroomingImg from '../../assets/images/service_pet_grooming_1794881240613.jpg';
 import serviceCoffeeCateringImg from '../../assets/images/service_coffee_catering_1794881242678.jpg';
@@ -672,11 +673,18 @@ export const BusinessPortalScreen: React.FC = () => {
           <div className="h-5 w-px bg-slate-700 hidden sm:block" />
 
           <div className="flex items-center gap-2">
-            <img
-              src={activeBusiness?.logoUrl || 'https://images.unsplash.com/photo-1541888946425-d0fbb18086f6?w=200&h=200&fit=crop&q=80'}
-              alt={activeBusiness?.name || 'Loja'}
-              className="w-8 h-8 rounded-lg object-cover border border-white/20 bg-white"
-            />
+            <div className="w-8 h-8 rounded-lg overflow-hidden border border-white/20 bg-white flex items-center justify-center shrink-0">
+              {getBusinessLogoUrl(activeBusiness) ? (
+                <img
+                  src={getBusinessLogoUrl(activeBusiness)}
+                  alt={activeBusiness?.name || 'Loja'}
+                  className="w-full h-full object-cover"
+                  referrerPolicy="no-referrer"
+                />
+              ) : (
+                <Building2 className="w-4 h-4 text-slate-500" />
+              )}
+            </div>
             <div>
               <h1 className="text-sm sm:text-base font-extrabold font-display leading-tight truncate max-w-44 sm:max-w-xs">
                 {activeBusiness ? activeBusiness.name : 'Painel do Lojista'}
@@ -1202,11 +1210,18 @@ export const BusinessPortalScreen: React.FC = () => {
             {/* Top Banner Card */}
             <div className="p-6 rounded-3xl bg-gradient-to-r from-blue-900 via-indigo-900 to-slate-900 text-white shadow-lg flex flex-col md:flex-row md:items-center justify-between gap-6 border border-blue-500/20">
               <div className="flex items-center gap-4">
-                <img
-                  src={activeBusiness.logoUrl}
-                  alt={activeBusiness.name}
-                  className="w-16 h-16 rounded-2xl object-cover border-2 border-white/20 bg-white shrink-0 shadow-sm"
-                />
+                <div className="w-16 h-16 rounded-2xl overflow-hidden border-2 border-white/20 bg-white shrink-0 shadow-sm flex items-center justify-center">
+                  {getBusinessLogoUrl(activeBusiness) ? (
+                    <img
+                      src={getBusinessLogoUrl(activeBusiness)}
+                      alt={activeBusiness.name}
+                      className="w-full h-full object-cover"
+                      referrerPolicy="no-referrer"
+                    />
+                  ) : (
+                    <Building2 className="w-7 h-7 text-slate-400" />
+                  )}
+                </div>
                 <div>
                   <div className="flex flex-wrap items-center gap-2">
                     <span className="text-[10px] font-black uppercase tracking-wider px-2 py-0.5 rounded-full bg-orange-600 text-white">

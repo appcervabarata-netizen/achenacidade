@@ -82,6 +82,7 @@ export interface Business {
   weeklySchedule?: DaySchedule[];
   logoUrl: string;
   coverUrl?: string;
+  photoUrl?: string;
   instagram?: string;
   facebook?: string;
   website?: string;

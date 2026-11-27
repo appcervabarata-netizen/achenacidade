@@ -16,6 +16,7 @@ import {
   Award,
 } from 'lucide-react';
 import { isFounderPlan, isVipPlan } from '../../utils/planPricing';
+import { getBusinessCoverUrl, getBusinessLogoUrl } from '../../utils/businessMedia';
 
 export const StoresPage: React.FC = () => {
   const {
@@ -180,6 +181,8 @@ export const StoresPage: React.FC = () => {
               const plan = getPlan(biz.planId);
               const founder = isFounderPlan(plan);
               const vip = isVipPlan(plan);
+              const coverSrc = getBusinessCoverUrl(biz);
+              const logoSrc = getBusinessLogoUrl(biz);
 
               return (
                 <div
@@ -194,12 +197,15 @@ export const StoresPage: React.FC = () => {
                   <div>
                     {/* Cover image with favorite button and VIP badge */}
                     <div className="relative h-24 sm:h-36 w-full overflow-hidden bg-slate-100 dark:bg-slate-800">
-                      {biz.coverUrl || biz.logoUrl ? (
+                      {coverSrc ? (
                         <img
-                          src={biz.coverUrl || biz.logoUrl}
+                          src={coverSrc}
                           alt={biz.name}
                           className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500"
                           referrerPolicy="no-referrer"
+                          onError={(e) => {
+                            e.currentTarget.style.display = 'none';
+                          }}
                         />
                       ) : (
                         <div className="w-full h-full bg-gradient-to-br from-slate-800 via-slate-900 to-blue-950 flex items-center justify-center">
@@ -243,12 +249,15 @@ export const StoresPage: React.FC = () => {
                     <div className="p-2.5 sm:p-4">
                       <div className="flex items-start gap-2">
                         <div className="w-7 h-7 sm:w-9 sm:h-9 rounded-lg overflow-hidden border border-slate-200 dark:border-slate-700 shrink-0 bg-slate-100 dark:bg-slate-800 flex items-center justify-center">
-                          {biz.logoUrl ? (
+                          {logoSrc ? (
                             <img
-                              src={biz.logoUrl}
+                              src={logoSrc}
                               alt=""
                               className="w-full h-full object-cover"
                               referrerPolicy="no-referrer"
+                              onError={(e) => {
+                                e.currentTarget.style.display = 'none';
+                              }}
                             />
                           ) : (
                             <Building2 className="w-4 h-4 text-slate-500 dark:text-slate-400" />

@@ -3253,7 +3253,7 @@ function buildApprovedBusinessFromDraft(
     neighborhood: draft.neighborhood || 'Centro',
     ...(draft.openingHours ? { openingHours: draft.openingHours } : {}),
     logoUrl: resolvedPhotoUrl,
-    ...(resolvedPhotoUrl ? { coverUrl: resolvedPhotoUrl } : {}),
+    ...(resolvedPhotoUrl ? { coverUrl: resolvedPhotoUrl, photoUrl: resolvedPhotoUrl } : {}),
     ...(draft.website ? { website: draft.website } : {}),
     isVerified: false,
     emailVerified: false,

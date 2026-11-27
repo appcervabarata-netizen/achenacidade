@@ -59,6 +59,7 @@ import { AdminGeneralSettingsTab } from './AdminGeneralSettingsTab';
 import { AdminGoogleMapsTab } from './AdminGoogleMapsTab';
 import { AdminGoogleMapsDraftsTab } from './AdminGoogleMapsDraftsTab';
 import { generateHostGatorPackage, downloadFile } from '../../utils/hostgatorGenerator';
+import { getBusinessLogoUrl } from '../../utils/businessMedia';
 import {
   changeAdminPasswordViaApi,
   fetchAdminMercadoPagoConfigViaApi,
@@ -2583,11 +2584,21 @@ export const AdminScreen: React.FC = () => {
                       return (
                         <tr key={biz.id} className="hover:bg-slate-50 dark:hover:bg-slate-800/50">
                           <td className="p-3 flex items-center gap-2.5">
-                            <img
-                              src={biz.logoUrl}
-                              alt={biz.name}
-                              className="w-9 h-9 rounded-xl object-cover border border-slate-200 dark:border-slate-700 bg-white shrink-0"
-                            />
+                            <div className="w-9 h-9 rounded-xl overflow-hidden border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 shrink-0 flex items-center justify-center">
+                              {getBusinessLogoUrl(biz) ? (
+                                <img
+                                  src={getBusinessLogoUrl(biz)}
+                                  alt={biz.name}
+                                  className="w-full h-full object-cover"
+                                  referrerPolicy="no-referrer"
+                                  onError={(e) => {
+                                    e.currentTarget.style.display = 'none';
+                                  }}
+                                />
+                              ) : (
+                                <Building2 className="w-4 h-4 text-slate-400" />
+                              )}
+                            </div>
                             <div>
                               <div className="font-bold text-slate-900 dark:text-white flex items-center gap-1.5">
                                 <span>{biz.name}</span>

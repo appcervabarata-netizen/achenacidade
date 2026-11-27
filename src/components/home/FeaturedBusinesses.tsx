@@ -12,6 +12,7 @@ import {
   Award,
 } from 'lucide-react';
 import { isFounderPlan, isVipPlan } from '../../utils/planPricing';
+import { getBusinessLogoUrl } from '../../utils/businessMedia';
 
 export const FeaturedBusinesses: React.FC = () => {
   const {
@@ -84,6 +85,7 @@ export const FeaturedBusinesses: React.FC = () => {
               const productCount = getBusinessProductCount(biz.id);
               const founder = isFounderPlan(plan);
               const vip = isVipPlan(plan);
+              const logoSrc = getBusinessLogoUrl(biz);
 
               return (
                 <div
@@ -99,15 +101,21 @@ export const FeaturedBusinesses: React.FC = () => {
                   <div className="p-3 sm:p-5">
                     {/* Top Row: Logo, Title & Verified */}
                     <div className="flex items-start gap-2.5 sm:gap-3.5">
-                      <img
-                        src={biz.logoUrl}
-                        alt={biz.name}
-                        className="w-10 h-10 sm:w-14 sm:h-14 rounded-xl object-cover border border-slate-100 dark:border-slate-800 shadow-xs shrink-0 bg-slate-100"
-                        onError={(e) => {
-                          e.currentTarget.src =
-                            'https://images.unsplash.com/photo-1541888946425-d0fbb18086f6?w=100&h=100&fit=crop&q=80';
-                        }}
-                      />
+                      <div className="w-10 h-10 sm:w-14 sm:h-14 rounded-xl overflow-hidden border border-slate-100 dark:border-slate-800 shadow-xs shrink-0 bg-slate-100 dark:bg-slate-800 flex items-center justify-center">
+                        {logoSrc ? (
+                          <img
+                            src={logoSrc}
+                            alt={biz.name}
+                            className="w-full h-full object-cover"
+                            referrerPolicy="no-referrer"
+                            onError={(e) => {
+                              e.currentTarget.style.display = 'none';
+                            }}
+                          />
+                        ) : (
+                          <Building2 className="w-5 h-5 sm:w-6 sm:h-6 text-slate-400" />
+                        )}
+                      </div>
                       <div className="flex-1 min-w-0">
                         <div className="flex items-center gap-1">
                           <h3 className="text-xs sm:text-base font-bold text-slate-900 dark:text-white truncate">

@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { useDirectory } from '../../context/DirectoryContext';
 import { BusinessPortalTab } from '../../types';
 import { canManageRotatingBanners } from '../../utils/planPricing';
+import { getBusinessLogoUrl } from '../../utils/businessMedia';
 import {
   Home,
   Building2,
@@ -89,11 +90,12 @@ export const BottomNav: React.FC = () => {
             >
               <div className="flex items-center justify-between gap-3 pb-3 border-b border-slate-100 dark:border-slate-800">
                 <div className="flex items-center gap-2.5 min-w-0">
-                  {activeBusiness?.logoUrl ? (
+                  {getBusinessLogoUrl(activeBusiness) ? (
                     <img
-                      src={activeBusiness.logoUrl}
-                      alt={activeBusiness.name}
+                      src={getBusinessLogoUrl(activeBusiness)}
+                      alt={activeBusiness?.name || 'Minha Loja'}
                       className="w-9 h-9 rounded-xl object-cover border border-slate-200 dark:border-slate-700 shrink-0"
+                      referrerPolicy="no-referrer"
                     />
                   ) : (
                     <div className="w-9 h-9 rounded-xl bg-blue-600 text-white flex items-center justify-center shrink-0">

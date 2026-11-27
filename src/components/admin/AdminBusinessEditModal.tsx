@@ -3,6 +3,8 @@ import { Business, City, Category, Plan, DaySchedule } from '../../types';
 import { ImageUploadField } from '../common/ImageUploadField';
 import { cloneWeeklySchedule, compileWeeklyScheduleSummary } from '../../utils/scheduleHelpers';
 import { formatBRL, isInviteTrialPlan, isLifetimePlan } from '../../utils/planPricing';
+import { getBusinessLogoUrl } from '../../utils/businessMedia';
+import { normalizeWhatsappUrl } from '../../utils/seoHelper';
 import {
   X,
   Building2,
@@ -22,6 +24,8 @@ import {
   Eye,
   EyeOff,
   Sparkles,
+  Copy,
+  MessageCircle,
 } from 'lucide-react';
 
 interface AdminBusinessEditModalProps {
@@ -46,6 +50,7 @@ export const AdminBusinessEditModal: React.FC<AdminBusinessEditModalProps> = ({
   const [activeTab, setActiveTab] = useState<'geral' | 'contato' | 'midia' | 'apresentacao' | 'acesso'>('geral');
   const [showPassword, setShowPassword] = useState(false);
   const [saveSuccess, setSaveSuccess] = useState(false);
+  const [copiedCreds, setCopiedCreds] = useState(false);
 
   // Form state
   const [formData, setFormData] = useState({
@@ -68,6 +73,7 @@ export const AdminBusinessEditModal: React.FC<AdminBusinessEditModalProps> = ({
     website: '',
     logoUrl: '',
     coverUrl: '',
+    photoUrl: '',
     password: '',
   });
   const [schedule, setSchedule] = useState<DaySchedule[]>(() => cloneWeeklySchedule());
@@ -94,10 +100,12 @@ export const AdminBusinessEditModal: React.FC<AdminBusinessEditModalProps> = ({
         website: business.website || '',
         logoUrl: business.logoUrl || '',
         coverUrl: business.coverUrl || '',
+        photoUrl: business.photoUrl || '',
         password: '',
       });
       setSchedule(cloneWeeklySchedule(business.weeklySchedule));
       setSaveSuccess(false);
+      setCopiedCreds(false);
     }
   }, [business, cities, categories, plans]);
 
@@ -128,8 +136,9 @@ export const AdminBusinessEditModal: React.FC<AdminBusinessEditModalProps> = ({
       instagram: formData.instagram.trim(),
       facebook: formData.facebook.trim(),
       website: formData.website.trim(),
-      logoUrl: formData.logoUrl.trim() || business.logoUrl,
-      coverUrl: formData.coverUrl.trim(),
+      logoUrl: formData.logoUrl.trim() || formData.photoUrl.trim() || business.logoUrl,
+      coverUrl: formData.coverUrl.trim() || formData.photoUrl.trim(),
+      photoUrl: formData.photoUrl.trim(),
       ...(formData.password.trim() ? { password: formData.password.trim() } : {}),
     });
 
@@ -179,11 +188,18 @@ export const AdminBusinessEditModal: React.FC<AdminBusinessEditModalProps> = ({
         {/* Header */}
         <div className="px-5 py-4 border-b border-slate-200 dark:border-slate-800 bg-slate-50/80 dark:bg-slate-800/80 flex items-center justify-between shrink-0">
           <div className="flex items-center gap-3 min-w-0">
-            <img
-              src={formData.logoUrl || business.logoUrl}
-              alt={business.name}
-              className="w-10 h-10 rounded-xl object-cover border border-slate-200 dark:border-slate-700 bg-white shrink-0 shadow-xs"
-            />
+            <div className="w-10 h-10 rounded-xl overflow-hidden border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 shrink-0 shadow-xs flex items-center justify-center">
+              {getBusinessLogoUrl({ ...business, logoUrl: formData.logoUrl, coverUrl: formData.coverUrl, photoUrl: formData.photoUrl }) ? (
+                <img
+                  src={getBusinessLogoUrl({ ...business, logoUrl: formData.logoUrl, coverUrl: formData.coverUrl, photoUrl: formData.photoUrl })}
+                  alt={business.name}
+                  className="w-full h-full object-cover"
+                  referrerPolicy="no-referrer"
+                />
+              ) : (
+                <Building2 className="w-5 h-5 text-slate-400" />
+              )}
+            </div>
             <div className="truncate">
               <div className="flex items-center gap-2">
                 <h3 className="text-base sm:text-lg font-bold text-slate-900 dark:text-white truncate font-display">
@@ -516,6 +532,16 @@ export const AdminBusinessEditModal: React.FC<AdminBusinessEditModalProps> = ({
                   aspectRatio="banner"
                 />
               </div>
+
+              <div className="pt-3 border-t border-slate-200 dark:border-slate-800">
+                <ImageUploadField
+                  value={formData.photoUrl}
+                  onChange={(url) => setFormData({ ...formData, photoUrl: url })}
+                  label="Link da Foto Principal (Google Maps / photo_url)"
+                  helpText="Preenchido automaticamente nas importações do Google Maps e usado como fallback caso Logo ou Capa estejam vazios."
+                  aspectRatio="banner"
+                />
+              </div>
             </div>
           )}
 
@@ -737,6 +763,81 @@ export const AdminBusinessEditModal: React.FC<AdminBusinessEditModalProps> = ({
                 <span className="text-[10px] text-slate-500 mt-1 block">
                   A senha digitada será criptografada com scrypt antes de ser salva no MySQL.
                 </span>
+              </div>
+
+              {/* Verification toggle & Credential share helper */}
+              <div className="pt-2 space-y-3 border-t border-slate-200 dark:border-slate-800">
+                <label className="flex items-center gap-2.5 cursor-pointer select-none">
+                  <input
+                    type="checkbox"
+                    checked={formData.isVerified}
+                    onChange={(e) => setFormData({ ...formData, isVerified: e.target.checked })}
+                    className="w-4 h-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500"
+                  />
+                  <span className="text-xs font-bold text-slate-800 dark:text-slate-200">
+                    Marcar empresa como Verificada (remove o aviso &quot;Verifique sua empresa&quot; e ativa o selo azul)
+                  </span>
+                </label>
+
+                {formData.ownerEmail.trim() && (
+                  <div className="p-3.5 rounded-2xl bg-slate-50 dark:bg-slate-800/70 border border-slate-200 dark:border-slate-700 space-y-2.5">
+                    <p className="text-[11px] font-bold text-slate-700 dark:text-slate-200">
+                      Enviar acesso ao proprietário / funcionário (lembre-se de clicar em &quot;Salvar Alterações da Loja&quot;)
+                    </p>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const portalUrl = typeof window !== 'undefined' ? window.location.origin : '';
+                          const msg = [
+                            `Olá! Liberamos o acesso administrativo da empresa "${formData.name}" no achenacidade.`,
+                            portalUrl ? `Portal: ${portalUrl}` : '',
+                            `E-mail de login: ${formData.ownerEmail.trim()}`,
+                            formData.password.trim()
+                              ? `Senha: ${formData.password.trim()}`
+                              : 'Senha: use a senha definida pela administração',
+                            'Acesse "Painel do Lojista" para editar dados, fotos e cadastrar seus produtos e serviços.',
+                          ]
+                            .filter(Boolean)
+                            .join('\n');
+                          navigator.clipboard?.writeText(msg).then(() => {
+                            setCopiedCreds(true);
+                            setTimeout(() => setCopiedCreds(false), 2500);
+                          });
+                        }}
+                        className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-slate-900 hover:bg-slate-800 dark:bg-slate-700 dark:hover:bg-slate-600 text-white text-xs font-bold transition cursor-pointer"
+                      >
+                        {copiedCreds ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
+                        <span>{copiedCreds ? 'Credenciais Copiadas!' : 'Copiar Login e Senha'}</span>
+                      </button>
+
+                      {normalizeWhatsappUrl(formData.whatsapp || formData.phone, '') && (
+                        <a
+                          href={normalizeWhatsappUrl(
+                            formData.whatsapp || formData.phone,
+                            [
+                              `Olá! Liberamos o acesso administrativo da empresa "${formData.name}" no achenacidade.`,
+                              typeof window !== 'undefined' ? `Portal: ${window.location.origin}` : '',
+                              `E-mail de login: ${formData.ownerEmail.trim()}`,
+                              formData.password.trim()
+                                ? `Senha: ${formData.password.trim()}`
+                                : 'Senha: use a senha definida pela administração',
+                              'Acesse o "Painel do Lojista" para gerenciar sua loja e cadastrar seus produtos!',
+                            ]
+                              .filter(Boolean)
+                              .join('\n')
+                          )}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold transition cursor-pointer"
+                        >
+                          <MessageCircle className="w-3.5 h-3.5" />
+                          <span>Enviar Acesso no WhatsApp da Loja</span>
+                        </a>
+                      )}
+                    </div>
+                  </div>
+                )}
               </div>
             </div>
           )}
