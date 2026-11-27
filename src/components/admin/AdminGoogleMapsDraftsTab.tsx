@@ -1158,12 +1158,13 @@ export const AdminGoogleMapsDraftsTab: React.FC<AdminGoogleMapsDraftsTabProps> =
 
               <div className="sm:col-span-2">
                 <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">
-                  Descrição Comercial
+                  Descrição Comercial (Opcional)
                 </label>
                 <textarea
                   rows={3}
                   value={editForm.description}
                   onChange={(e) => setEditForm({ ...editForm, description: e.target.value })}
+                  placeholder="Descrição editorial extraída do Google Maps (se houver) ou preenchida manualmente"
                   className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-xs text-slate-900 dark:text-white"
                 />
               </div>

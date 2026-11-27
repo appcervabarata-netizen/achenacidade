@@ -959,6 +959,12 @@ export async function ensureDatabaseSchema(forceMigrate = false): Promise<boolea
         `DELETE FROM payment_transactions WHERE id IN ('tx-mp-01', 'tx-mp-02')`
       );
       await conn.query(`UPDATE banners SET price_monthly = 0 WHERE price_monthly > 0`);
+      await conn.query(
+        `UPDATE business_drafts SET description = '' WHERE description LIKE '%Cadastro importado do Google Maps aguardando conferência e atualização pelo lojista.%'`
+      );
+      await conn.query(
+        `UPDATE businesses SET description = '' WHERE description LIKE '%Cadastro importado do Google Maps aguardando conferência e atualização pelo lojista.%'`
+      );
 
       schemaInitialized = true;
       return true;

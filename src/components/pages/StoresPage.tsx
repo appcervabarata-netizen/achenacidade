@@ -280,9 +280,11 @@ export const StoresPage: React.FC = () => {
                         </div>
                       </div>
 
-                      <p className="mt-2 text-[11px] sm:text-xs text-slate-600 dark:text-slate-400 line-clamp-2">
-                        {biz.description}
-                      </p>
+                      {biz.description?.trim() && (
+                        <p className="mt-2 text-[11px] sm:text-xs text-slate-600 dark:text-slate-400 line-clamp-2">
+                          {biz.description}
+                        </p>
+                      )}
 
                       <div className="mt-2 text-[10px] sm:text-xs text-slate-500 flex items-center gap-1 truncate">
                         <MapPin className="w-3 h-3 text-orange-600 shrink-0" />

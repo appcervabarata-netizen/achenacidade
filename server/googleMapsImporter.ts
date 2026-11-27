@@ -23,6 +23,90 @@ export interface ImporterQueryPlanItem {
   includedType?: string;
 }
 
+export interface GoogleMapsExtractionFields {
+  address: boolean;
+  phone: boolean;
+  whatsapp: boolean;
+  openingHours: boolean;
+  website: boolean;
+  description: boolean;
+  photo: boolean;
+  categoryDetection: boolean;
+  googleMapsUri: boolean;
+  rating: boolean;
+  userRatingCount: boolean;
+}
+
+export const DEFAULT_GOOGLE_MAPS_EXTRACTION_FIELDS: GoogleMapsExtractionFields = {
+  address: true,
+  phone: true,
+  whatsapp: true,
+  openingHours: true,
+  website: true,
+  description: true,
+  photo: true,
+  categoryDetection: true,
+  googleMapsUri: true,
+  rating: true,
+  userRatingCount: true,
+};
+
+export function normalizeExtractionFields(
+  raw?: Partial<GoogleMapsExtractionFields> | null
+): GoogleMapsExtractionFields {
+  return {
+    address: raw?.address ?? DEFAULT_GOOGLE_MAPS_EXTRACTION_FIELDS.address,
+    phone: raw?.phone ?? DEFAULT_GOOGLE_MAPS_EXTRACTION_FIELDS.phone,
+    whatsapp: raw?.whatsapp ?? DEFAULT_GOOGLE_MAPS_EXTRACTION_FIELDS.whatsapp,
+    openingHours: raw?.openingHours ?? DEFAULT_GOOGLE_MAPS_EXTRACTION_FIELDS.openingHours,
+    website: raw?.website ?? DEFAULT_GOOGLE_MAPS_EXTRACTION_FIELDS.website,
+    description: raw?.description ?? DEFAULT_GOOGLE_MAPS_EXTRACTION_FIELDS.description,
+    photo: raw?.photo ?? DEFAULT_GOOGLE_MAPS_EXTRACTION_FIELDS.photo,
+    categoryDetection:
+      raw?.categoryDetection ?? DEFAULT_GOOGLE_MAPS_EXTRACTION_FIELDS.categoryDetection,
+    googleMapsUri: raw?.googleMapsUri ?? DEFAULT_GOOGLE_MAPS_EXTRACTION_FIELDS.googleMapsUri,
+    rating: raw?.rating ?? DEFAULT_GOOGLE_MAPS_EXTRACTION_FIELDS.rating,
+    userRatingCount: raw?.userRatingCount ?? DEFAULT_GOOGLE_MAPS_EXTRACTION_FIELDS.userRatingCount,
+  };
+}
+
+export function buildGoogleMapsFieldMask(fields: GoogleMapsExtractionFields): string {
+  const mask = ['places.id', 'places.displayName', 'places.businessStatus'];
+
+  if (fields.address) {
+    mask.push('places.formattedAddress', 'places.shortFormattedAddress', 'places.addressComponents');
+  }
+  if (fields.phone || fields.whatsapp) {
+    mask.push('places.nationalPhoneNumber', 'places.internationalPhoneNumber');
+  }
+  if (fields.openingHours) {
+    mask.push('places.regularOpeningHours');
+  }
+  if (fields.website) {
+    mask.push('places.websiteUri');
+  }
+  if (fields.description) {
+    mask.push('places.editorialSummary');
+  }
+  if (fields.photo) {
+    mask.push('places.photos');
+  }
+  if (fields.categoryDetection) {
+    mask.push('places.primaryType', 'places.primaryTypeDisplayName', 'places.types');
+  }
+  if (fields.googleMapsUri) {
+    mask.push('places.googleMapsUri');
+  }
+  if (fields.rating) {
+    mask.push('places.rating');
+  }
+  if (fields.userRatingCount) {
+    mask.push('places.userRatingCount');
+  }
+
+  return mask.join(',');
+}
+
 export interface GoogleMapsBatchResult {
   success: boolean;
   addedDrafts: DbGoogleMapsBusinessDraft[];
@@ -542,6 +626,7 @@ export async function runGoogleMapsImportBatch(params: {
   categories?: DirectoryCategoryTarget[];
   cities?: DirectoryCityTarget[];
   onlyAlagoinhas?: boolean;
+  extractionFields?: Partial<GoogleMapsExtractionFields>;
 }): Promise<GoogleMapsBatchResult> {
   const apiKey = resolveGoogleMapsApiKey();
   if (!apiKey) {
@@ -558,6 +643,7 @@ export async function runGoogleMapsImportBatch(params: {
     };
   }
 
+  const fields = normalizeExtractionFields(params.extractionFields);
   const schedule = buildRotatingQuerySchedule(params.categories, {
     onlyAlagoinhas: Boolean(params.onlyAlagoinhas),
   });
@@ -579,25 +665,7 @@ export async function runGoogleMapsImportBatch(params: {
   const seenPlaceIds = new Set(params.existingPlaceIds);
   const seenSignatures = new Set(params.existingSignatures);
 
-  const fieldMask = [
-    'places.id',
-    'places.displayName',
-    'places.formattedAddress',
-    'places.shortFormattedAddress',
-    'places.addressComponents',
-    'places.nationalPhoneNumber',
-    'places.internationalPhoneNumber',
-    'places.regularOpeningHours',
-    'places.websiteUri',
-    'places.googleMapsUri',
-    'places.photos',
-    'places.primaryType',
-    'places.primaryTypeDisplayName',
-    'places.types',
-    'places.businessStatus',
-    'places.rating',
-    'places.userRatingCount',
-  ].join(',');
+  const fieldMask = buildGoogleMapsFieldMask(fields);
 
   while (addedDrafts.length < target && queriesExecuted < maxQueries) {
     const queryItem = schedule[cursor];
@@ -668,52 +736,68 @@ export async function runGoogleMapsImportBatch(params: {
         const displayName = String(place?.displayName?.text || '').trim();
         if (!googlePlaceId || !displayName) continue;
 
-        const { phone, whatsapp } = extractBrazilianPhoneAndWhatsapp(
-          place?.nationalPhoneNumber,
-          place?.internationalPhoneNumber
-        );
-        const signature = normalizeBusinessSignature(displayName, phone);
+        const extractedPhone =
+          fields.phone || fields.whatsapp
+            ? extractBrazilianPhoneAndWhatsapp(
+                place?.nationalPhoneNumber,
+                place?.internationalPhoneNumber
+              )
+            : { phone: '', whatsapp: '' };
+        const phone = fields.phone ? extractedPhone.phone : '';
+        const whatsapp = fields.whatsapp ? extractedPhone.whatsapp : '';
+        const signature = normalizeBusinessSignature(displayName, extractedPhone.phone);
 
         if (seenPlaceIds.has(googlePlaceId) || seenSignatures.has(signature)) {
           skippedDuplicates += 1;
           continue;
         }
 
-        const addr = extractAddressParts(
-          place,
-          queryItem.locationLabel,
-          Boolean(params.onlyAlagoinhas)
-        );
-        if (!addr.isWithinRegion) {
+        const addr = fields.address
+          ? extractAddressParts(
+              place,
+              queryItem.locationLabel,
+              Boolean(params.onlyAlagoinhas)
+            )
+          : {
+              address: '',
+              neighborhood: '',
+              cityName: queryItem.cityQuery.toLowerCase().includes('alagoinhas')
+                ? 'Alagoinhas - BA'
+                : queryItem.locationLabel.replace(/\s*\(Região\)$/i, '').trim() || 'Alagoinhas - BA',
+              isWithinRegion: true,
+            };
+        if (fields.address && !addr.isWithinRegion) {
           continue;
         }
 
-        const mappedCat = inferBestCategoryFromPlace(
-          place,
-          queryItem.categoryId,
-          queryItem.categoryName,
-          params.categories || []
-        );
+        const mappedCat = fields.categoryDetection
+          ? inferBestCategoryFromPlace(
+              place,
+              queryItem.categoryId,
+              queryItem.categoryName,
+              params.categories || []
+            )
+          : { categoryId: queryItem.categoryId, categoryName: queryItem.categoryName };
 
         const cityId = mapCityIdFromDetectedCity(addr.cityName, params.cities || []);
-        const weekdayDescriptions: string[] = Array.isArray(
-          place?.regularOpeningHours?.weekdayDescriptions
-        )
-          ? place.regularOpeningHours.weekdayDescriptions
-          : [];
+        const weekdayDescriptions: string[] =
+          fields.openingHours && Array.isArray(place?.regularOpeningHours?.weekdayDescriptions)
+            ? place.regularOpeningHours.weekdayDescriptions
+            : [];
         const openingHours =
-          weekdayDescriptions.length > 0 ? weekdayDescriptions.join(' | ').slice(0, 480) : undefined;
+          fields.openingHours && weekdayDescriptions.length > 0
+            ? weekdayDescriptions.join(' | ').slice(0, 480)
+            : undefined;
 
-        const typeLabel =
-          String(place?.primaryTypeDisplayName?.text || '').trim() || mappedCat.categoryName;
-        const ratingPart =
-          typeof place?.rating === 'number' && typeof place?.userRatingCount === 'number'
-            ? ` Avaliação ${place.rating.toFixed(1)} (${place.userRatingCount} avaliações no Google Maps).`
-            : '';
+        // Somente utiliza a descrição oficial retornada pelo Google Maps (editorialSummary);
+        // caso não exista, mantém em branco (sem texto sintético).
+        const description = fields.description
+          ? String(place?.editorialSummary?.text || '').trim()
+          : '';
 
-        const description = `${typeLabel} em ${addr.neighborhood}, ${addr.cityName}.${ratingPart} Cadastro importado do Google Maps aguardando conferência e atualização pelo lojista.`;
-
-        const resolvedPhoto = await resolvePhotoFromPlacePhotosArray(place?.photos, apiKey);
+        const resolvedPhoto = fields.photo
+          ? await resolvePhotoFromPlacePhotosArray(place?.photos, apiKey)
+          : {};
 
         const draft: DbGoogleMapsBusinessDraft = {
           id: `draft-gmp-${Date.now()}-${crypto.randomBytes(3).toString('hex')}`,
@@ -730,8 +814,10 @@ export async function runGoogleMapsImportBatch(params: {
           address: addr.address,
           neighborhood: addr.neighborhood,
           ...(openingHours ? { openingHours } : {}),
-          ...(place?.websiteUri ? { website: String(place.websiteUri) } : {}),
-          ...(place?.googleMapsUri ? { googleMapsUri: String(place.googleMapsUri) } : {}),
+          ...(fields.website && place?.websiteUri ? { website: String(place.websiteUri) } : {}),
+          ...(fields.googleMapsUri && place?.googleMapsUri
+            ? { googleMapsUri: String(place.googleMapsUri) }
+            : {}),
           ...(resolvedPhoto.photoUrl ? { photoUrl: resolvedPhoto.photoUrl } : {}),
           ...(resolvedPhoto.photoAttributionName
             ? { photoAttributionName: resolvedPhoto.photoAttributionName }
@@ -739,9 +825,13 @@ export async function runGoogleMapsImportBatch(params: {
           ...(resolvedPhoto.photoAttributionUri
             ? { photoAttributionUri: resolvedPhoto.photoAttributionUri }
             : {}),
-          ...(place?.primaryType ? { primaryType: String(place.primaryType) } : {}),
-          ...(typeof place?.rating === 'number' ? { rating: Number(place.rating) } : {}),
-          ...(typeof place?.userRatingCount === 'number'
+          ...(fields.categoryDetection && place?.primaryType
+            ? { primaryType: String(place.primaryType) }
+            : {}),
+          ...(fields.rating && typeof place?.rating === 'number'
+            ? { rating: Number(place.rating) }
+            : {}),
+          ...(fields.userRatingCount && typeof place?.userRatingCount === 'number'
             ? { userRatingCount: Number(place.userRatingCount) }
             : {}),
           sourceQuery: `${queryItem.queryTerm} (${queryItem.cityQuery})`,

@@ -170,9 +170,11 @@ export const FeaturedBusinesses: React.FC = () => {
                     </div>
 
                     {/* Description: Hidden on small mobile to keep 2-column cards clean */}
-                    <p className="hidden sm:block mt-3 text-xs text-slate-600 dark:text-slate-300 line-clamp-2 leading-relaxed">
-                      {biz.description}
-                    </p>
+                    {biz.description?.trim() && (
+                      <p className="hidden sm:block mt-3 text-xs text-slate-600 dark:text-slate-300 line-clamp-2 leading-relaxed">
+                        {biz.description}
+                      </p>
+                    )}
 
                     {/* Location and Products count */}
                     <div className="mt-3 sm:mt-4 pt-2.5 sm:pt-3 border-t border-slate-100 dark:border-slate-800 flex items-center justify-between text-[11px] sm:text-xs text-slate-500 dark:text-slate-400">

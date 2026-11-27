@@ -64,12 +64,15 @@ import {
   type DbGoogleMapsBusinessDraft,
 } from './server/db.ts';
 import {
+  DEFAULT_GOOGLE_MAPS_EXTRACTION_FIELDS,
   runGoogleMapsImportBatch,
   fetchGooglePlacePhotoByPlaceId,
   normalizeBusinessSignature,
+  normalizeExtractionFields,
   resolveGoogleMapsApiKey,
   type DirectoryCategoryTarget,
   type DirectoryCityTarget,
+  type GoogleMapsExtractionFields,
 } from './server/googleMapsImporter.ts';
 
 dotenv.config();
@@ -202,6 +205,7 @@ interface ServerGoogleMapsImporterConfig {
   initialBatchSize: number;
   nextQueryCursor: number;
   totalImportedCount: number;
+  extractionFields: GoogleMapsExtractionFields;
   lastRunAt?: string;
   nextRunAt?: string;
   lastRunSummary?: string;
@@ -215,6 +219,7 @@ const DEFAULT_GMP_IMPORTER_CONFIG: ServerGoogleMapsImporterConfig = {
   initialBatchSize: 50,
   nextQueryCursor: 0,
   totalImportedCount: 0,
+  extractionFields: { ...DEFAULT_GOOGLE_MAPS_EXTRACTION_FIELDS },
 };
 
 let isGmpBatchRunning = false;
@@ -3169,6 +3174,10 @@ async function getGoogleMapsImporterConfig(): Promise<ServerGoogleMapsImporterCo
     ...DEFAULT_GMP_IMPORTER_CONFIG,
     ...(mirrorCfg || {}),
     ...(dbCfg || {}),
+    extractionFields: normalizeExtractionFields({
+      ...(mirrorCfg?.extractionFields || {}),
+      ...(dbCfg?.extractionFields || {}),
+    }),
   };
 }
 
@@ -3351,6 +3360,7 @@ async function executeGoogleMapsBatch(targetCount: number) {
       existingSignatures,
       categories,
       cities,
+      extractionFields: cfg.extractionFields,
     });
 
     let persistedCount = 0;
@@ -3522,10 +3532,25 @@ app.post('/api/google-maps/import-batch', async (req, res) => {
   const adminSess = await requireAdminSession(req, res);
   if (!adminSess) return;
 
-  const requestedCount = Number((req.body as { count?: number } | undefined)?.count || 10);
+  const body = (req.body || {}) as {
+    count?: number;
+    extractionFields?: Partial<GoogleMapsExtractionFields>;
+  };
+  const requestedCount = Number(body.count || 10);
   const targetCount = Math.max(1, Math.min(50, Math.round(Number.isFinite(requestedCount) ? requestedCount : 10)));
 
   try {
+    if (body.extractionFields && typeof body.extractionFields === 'object') {
+      const current = await getGoogleMapsImporterConfig();
+      await saveGoogleMapsImporterConfig({
+        ...current,
+        extractionFields: normalizeExtractionFields({
+          ...current.extractionFields,
+          ...body.extractionFields,
+        }),
+      });
+    }
+
     const batchResult = await executeGoogleMapsBatch(targetCount);
     if (batchResult.busy) {
       res.status(409).json(batchResult);
@@ -3559,10 +3584,11 @@ app.put('/api/google-maps/scheduler', async (req, res) => {
   const adminSess = await requireAdminSession(req, res);
   if (!adminSess) return;
 
-  const { enabled, intervalMinutes, batchSize } = (req.body || {}) as {
+  const { enabled, intervalMinutes, batchSize, extractionFields } = (req.body || {}) as {
     enabled?: boolean;
     intervalMinutes?: number;
     batchSize?: number;
+    extractionFields?: Partial<GoogleMapsExtractionFields>;
   };
 
   try {
@@ -3573,12 +3599,17 @@ app.put('/api/google-maps/scheduler', async (req, res) => {
     );
     const nextBatch = Math.max(1, Math.min(50, Math.round(Number(batchSize ?? current.batchSize) || 10)));
     const nextEnabled = typeof enabled === 'boolean' ? enabled : current.enabled;
+    const nextExtractionFields =
+      extractionFields && typeof extractionFields === 'object'
+        ? normalizeExtractionFields({ ...current.extractionFields, ...extractionFields })
+        : normalizeExtractionFields(current.extractionFields);
 
     const updated: ServerGoogleMapsImporterConfig = {
       ...current,
       enabled: nextEnabled,
       intervalMinutes: nextInterval,
       batchSize: nextBatch,
+      extractionFields: nextExtractionFields,
       nextRunAt: nextEnabled
         ? new Date(Date.now() + nextInterval * 60 * 1000).toISOString()
         : undefined,

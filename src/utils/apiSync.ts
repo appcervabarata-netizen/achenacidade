@@ -10,6 +10,7 @@ import type {
   EmailTemplate,
   EmailTemplateKey,
   GoogleMapsBusinessDraft,
+  GoogleMapsExtractionFields,
   GoogleMapsImporterConfig,
   MercadoPagoConfig,
   PaymentTransaction,
@@ -1278,7 +1279,8 @@ export async function fetchGoogleMapsDraftsViaApi(
 
 export async function runGoogleMapsImportBatchViaApi(
   token: string,
-  count: number
+  count: number,
+  extractionFields?: Partial<GoogleMapsExtractionFields>
 ): Promise<{
   success: boolean;
   addedCount?: number;
@@ -1300,7 +1302,10 @@ export async function runGoogleMapsImportBatchViaApi(
         'Content-Type': 'application/json',
         Accept: 'application/json',
       },
-      body: JSON.stringify({ count }),
+      body: JSON.stringify({
+        count,
+        ...(extractionFields ? { extractionFields } : {}),
+      }),
     });
     const data = (await res.json()) as any;
     dispatchQuotaExceededIfNeeded(res.status, data);
@@ -1325,7 +1330,12 @@ export async function runGoogleMapsImportBatchViaApi(
 
 export async function updateGoogleMapsSchedulerViaApi(
   token: string,
-  updates: { enabled?: boolean; intervalMinutes?: number; batchSize?: number }
+  updates: {
+    enabled?: boolean;
+    intervalMinutes?: number;
+    batchSize?: number;
+    extractionFields?: Partial<GoogleMapsExtractionFields>;
+  }
 ): Promise<{ success: boolean; config?: GoogleMapsImporterConfig; error?: string }> {
   if (!token) return { success: false, error: 'Sessão administrativa ausente.' };
   try {

@@ -14,11 +14,14 @@ import {
   type DbGoogleMapsBusinessDraft,
 } from './db.ts';
 import {
+  DEFAULT_GOOGLE_MAPS_EXTRACTION_FIELDS,
   normalizeBusinessSignature,
+  normalizeExtractionFields,
   resolveGoogleMapsApiKey,
   runGoogleMapsImportBatch,
   type DirectoryCategoryTarget,
   type DirectoryCityTarget,
+  type GoogleMapsExtractionFields,
 } from './googleMapsImporter.ts';
 
 const CRON_EXPRESSION = '*/30 * * * *';
@@ -36,6 +39,7 @@ interface ImporterConfigRecord {
   initialBatchSize: number;
   nextQueryCursor: number;
   totalImportedCount: number;
+  extractionFields?: GoogleMapsExtractionFields;
   lastRunAt?: string;
   nextRunAt?: string;
   lastRunSummary?: string;
@@ -80,6 +84,7 @@ const DEFAULT_IMPORTER_CONFIG: ImporterConfigRecord = {
   initialBatchSize: 50,
   nextQueryCursor: 0,
   totalImportedCount: 0,
+  extractionFields: { ...DEFAULT_GOOGLE_MAPS_EXTRACTION_FIELDS },
 };
 
 let isJobRunning = false;
@@ -271,7 +276,11 @@ async function runAlagoinhasDraftImportJob(
     }
 
     const dbCfg = await getSettingFromDb<Partial<ImporterConfigRecord>>(CONFIG_KEY);
-    currentCfg = { ...DEFAULT_IMPORTER_CONFIG, ...(dbCfg || {}) };
+    currentCfg = {
+      ...DEFAULT_IMPORTER_CONFIG,
+      ...(dbCfg || {}),
+      extractionFields: normalizeExtractionFields(dbCfg?.extractionFields),
+    };
 
     const existingData = await getExistingDraftPlaceIdsAndBusinessNamesFromDb();
     const existingPlaceIds = new Set<string>(existingData.placeIds);
@@ -290,6 +299,7 @@ async function runAlagoinhasDraftImportJob(
       categories,
       cities,
       onlyAlagoinhas: true,
+      extractionFields: currentCfg.extractionFields,
     });
 
     const normalizedDrafts: DbGoogleMapsBusinessDraft[] = batchResult.addedDrafts.map((draft) => ({

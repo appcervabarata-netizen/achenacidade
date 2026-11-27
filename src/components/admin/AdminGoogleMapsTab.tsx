@@ -3,6 +3,8 @@ import {
   Building2,
   Check,
   CheckCircle2,
+  ChevronDown,
+  ChevronUp,
   Clock,
   Compass,
   Edit2,
@@ -15,7 +17,9 @@ import {
   Phone,
   Play,
   RefreshCw,
+  Save,
   Search,
+  SlidersHorizontal,
   Sparkles,
   Star,
   Trash2,
@@ -24,7 +28,12 @@ import {
   AlertTriangle,
 } from 'lucide-react';
 import { useDirectory } from '../../context/DirectoryContext';
-import type { GoogleMapsBusinessDraft, GoogleMapsDraftStatus, GoogleMapsImporterConfig } from '../../types';
+import type {
+  GoogleMapsBusinessDraft,
+  GoogleMapsDraftStatus,
+  GoogleMapsExtractionFields,
+  GoogleMapsImporterConfig,
+} from '../../types';
 import {
   approveGoogleMapsDraftViaApi,
   bulkApproveGoogleMapsDraftsViaApi,
@@ -42,6 +51,111 @@ interface AdminGoogleMapsTabProps {
   onPendingCountChange?: (pendingCount: number) => void;
 }
 
+const DEFAULT_EXTRACTION_FIELDS: GoogleMapsExtractionFields = {
+  address: true,
+  phone: true,
+  whatsapp: true,
+  openingHours: true,
+  website: true,
+  description: true,
+  photo: true,
+  categoryDetection: true,
+  googleMapsUri: true,
+  rating: true,
+  userRatingCount: true,
+};
+
+interface ExtractionFieldOption {
+  key: keyof GoogleMapsExtractionFields;
+  label: string;
+  apiField: string;
+  skuTier: 'Essentials' | 'Pro' | 'Enterprise' | 'Atmosphere';
+  helper: string;
+}
+
+const COMPANY_EXTRACTION_FIELD_OPTIONS: ExtractionFieldOption[] = [
+  {
+    key: 'address',
+    label: 'Endereço e Bairro',
+    apiField: 'formattedAddress, addressComponents',
+    skuTier: 'Pro',
+    helper: 'Rua, número e bairro para exibição e filtro no guia.',
+  },
+  {
+    key: 'phone',
+    label: 'Telefone Comercial',
+    apiField: 'nationalPhoneNumber',
+    skuTier: 'Enterprise',
+    helper: 'Telefone fixo ou celular cadastrado na ficha.',
+  },
+  {
+    key: 'whatsapp',
+    label: 'Detectar WhatsApp Automático',
+    apiField: 'internationalPhoneNumber',
+    skuTier: 'Enterprise',
+    helper: 'Converte celulares baianos/nacionais para link de WhatsApp.',
+  },
+  {
+    key: 'openingHours',
+    label: 'Horário de Funcionamento',
+    apiField: 'regularOpeningHours',
+    skuTier: 'Enterprise',
+    helper: 'Dias e horários de atendimento do estabelecimento.',
+  },
+  {
+    key: 'website',
+    label: 'Site Oficial',
+    apiField: 'websiteUri',
+    skuTier: 'Enterprise',
+    helper: 'Endereço do site ou rede oficial informada.',
+  },
+  {
+    key: 'description',
+    label: 'Descrição Editorial do Google Maps',
+    apiField: 'editorialSummary',
+    skuTier: 'Atmosphere',
+    helper: 'Importa apenas se existir no Google; caso contrário, fica em branco.',
+  },
+  {
+    key: 'photo',
+    label: 'Foto / Fachada (URL)',
+    apiField: 'photos',
+    skuTier: 'Pro',
+    helper: 'Salva o link da foto oficial cadastrada no Google Maps.',
+  },
+];
+
+const GOOGLE_MAPS_EXTRACTION_FIELD_OPTIONS: ExtractionFieldOption[] = [
+  {
+    key: 'categoryDetection',
+    label: 'Categoria Automática',
+    apiField: 'primaryType, types',
+    skuTier: 'Pro',
+    helper: 'Classifica a empresa nas categorias do portal automaticamente.',
+  },
+  {
+    key: 'googleMapsUri',
+    label: 'Link "Ver no Google Maps"',
+    apiField: 'googleMapsUri',
+    skuTier: 'Essentials',
+    helper: 'Link direto para abrir a ficha original no Google Maps.',
+  },
+  {
+    key: 'rating',
+    label: 'Nota Média (Estrelas)',
+    apiField: 'rating',
+    skuTier: 'Enterprise',
+    helper: 'Nota média registrada pelos clientes no Google.',
+  },
+  {
+    key: 'userRatingCount',
+    label: 'Quantidade de Avaliações',
+    apiField: 'userRatingCount',
+    skuTier: 'Enterprise',
+    helper: 'Total de avaliações exibido ao lado da nota no painel.',
+  },
+];
+
 const DEFAULT_IMPORTER_CONFIG: GoogleMapsImporterConfig = {
   enabled: true,
   intervalMinutes: 30,
@@ -49,6 +163,7 @@ const DEFAULT_IMPORTER_CONFIG: GoogleMapsImporterConfig = {
   initialBatchSize: 50,
   nextQueryCursor: 0,
   totalImportedCount: 0,
+  extractionFields: { ...DEFAULT_EXTRACTION_FIELDS },
 };
 
 function formatDateTimePt(iso?: string): string {
@@ -72,6 +187,11 @@ export const AdminGoogleMapsTab: React.FC<AdminGoogleMapsTabProps> = ({
 
   const [drafts, setDrafts] = useState<GoogleMapsBusinessDraft[]>([]);
   const [config, setConfig] = useState<GoogleMapsImporterConfig>(DEFAULT_IMPORTER_CONFIG);
+  const [extractionFields, setExtractionFields] = useState<GoogleMapsExtractionFields>({
+    ...DEFAULT_EXTRACTION_FIELDS,
+  });
+  const [isExtractionConfigOpen, setIsExtractionConfigOpen] = useState(true);
+  const [isSavingExtractionFields, setIsSavingExtractionFields] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [runningBatchCount, setRunningBatchCount] = useState<number | null>(null);
@@ -119,7 +239,12 @@ export const AdminGoogleMapsTab: React.FC<AdminGoogleMapsTabProps> = ({
       return;
     }
     setDrafts(res.drafts || []);
-    if (res.config) setConfig(res.config);
+    if (res.config) {
+      setConfig(res.config);
+      if (res.config.extractionFields) {
+        setExtractionFields({ ...DEFAULT_EXTRACTION_FIELDS, ...res.config.extractionFields });
+      }
+    }
     setIsLoading(false);
   };
 
@@ -174,14 +299,77 @@ export const AdminGoogleMapsTab: React.FC<AdminGoogleMapsTabProps> = ({
     [selectedIds, visiblePendingIds]
   );
 
+  const activeExtractionCount = useMemo(
+    () => Object.values(extractionFields).filter(Boolean).length,
+    [extractionFields]
+  );
+
+  const handleToggleExtractionField = (key: keyof GoogleMapsExtractionFields) => {
+    setExtractionFields((prev) => {
+      const next = { ...prev, [key]: !prev[key] };
+      if (key === 'rating' && !next.rating) {
+        next.userRatingCount = false;
+      }
+      if (key === 'userRatingCount' && next.userRatingCount) {
+        next.rating = true;
+      }
+      return next;
+    });
+  };
+
+  const handleSelectAllExtractionFields = () => {
+    setExtractionFields({ ...DEFAULT_EXTRACTION_FIELDS });
+  };
+
+  const handleSelectEconomicPreset = () => {
+    setExtractionFields({
+      address: true,
+      phone: true,
+      whatsapp: true,
+      openingHours: false,
+      website: false,
+      description: false,
+      photo: true,
+      categoryDetection: true,
+      googleMapsUri: true,
+      rating: false,
+      userRatingCount: false,
+    });
+  };
+
+  const handleSaveExtractionFields = async () => {
+    if (!token || isSavingExtractionFields) return;
+    setIsSavingExtractionFields(true);
+    const res = await updateGoogleMapsSchedulerViaApi(token, { extractionFields });
+    setIsSavingExtractionFields(false);
+    if (!res.success) {
+      onNotify(res.error || 'Não foi possível salvar os campos de extração.');
+      return;
+    }
+    if (res.config) {
+      setConfig(res.config);
+      if (res.config.extractionFields) {
+        setExtractionFields({ ...DEFAULT_EXTRACTION_FIELDS, ...res.config.extractionFields });
+      }
+    }
+    onNotify(
+      `Campos de extração salvos (${activeExtractionCount} opcionais + identificação básica do Google Maps).`
+    );
+  };
+
   const handleRunBatch = async (count: number) => {
     if (!token || runningBatchCount !== null) return;
     setRunningBatchCount(count);
-    const res = await runGoogleMapsImportBatchViaApi(token, count);
+    const res = await runGoogleMapsImportBatchViaApi(token, count, extractionFields);
     setRunningBatchCount(null);
 
     if (res.drafts) setDrafts(res.drafts);
-    if (res.config) setConfig(res.config);
+    if (res.config) {
+      setConfig(res.config);
+      if (res.config.extractionFields) {
+        setExtractionFields({ ...DEFAULT_EXTRACTION_FIELDS, ...res.config.extractionFields });
+      }
+    }
 
     if (!res.success && res.error) {
       onNotify(res.error);
@@ -199,13 +387,19 @@ export const AdminGoogleMapsTab: React.FC<AdminGoogleMapsTabProps> = ({
       enabled: nextEnabled,
       intervalMinutes: 30,
       batchSize: 10,
+      extractionFields,
     });
     setIsTogglingScheduler(false);
     if (!res.success) {
       onNotify(res.error || 'Erro ao atualizar agendamento automático.');
       return;
     }
-    if (res.config) setConfig(res.config);
+    if (res.config) {
+      setConfig(res.config);
+      if (res.config.extractionFields) {
+        setExtractionFields({ ...DEFAULT_EXTRACTION_FIELDS, ...res.config.extractionFields });
+      }
+    }
     onNotify(
       nextEnabled
         ? 'Agendador automático ativado: 10 empresas a cada 30 minutos em Alagoinhas - BA e região.'
@@ -520,6 +714,202 @@ export const AdminGoogleMapsTab: React.FC<AdminGoogleMapsTabProps> = ({
         )}
       </div>
 
+      {/* Extraction Fields Configuration Panel */}
+      <div className="rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 overflow-hidden">
+        <button
+          type="button"
+          onClick={() => setIsExtractionConfigOpen((prev) => !prev)}
+          className="w-full p-4 sm:p-5 flex items-center justify-between gap-3 text-left hover:bg-slate-50/70 dark:hover:bg-slate-800/40 transition cursor-pointer"
+        >
+          <div className="flex items-start gap-3 min-w-0">
+            <div className="w-9 h-9 rounded-xl bg-blue-50 dark:bg-blue-950/50 text-blue-600 dark:text-blue-400 flex items-center justify-center shrink-0">
+              <SlidersHorizontal className="w-4 h-4" />
+            </div>
+            <div className="min-w-0">
+              <div className="flex flex-wrap items-center gap-2">
+                <h4 className="text-sm font-extrabold text-slate-900 dark:text-white">
+                  Campos Extraídos (Cadastro da Empresa &amp; Google Maps)
+                </h4>
+                <span className="text-[11px] font-mono tabular-nums font-bold px-2 py-0.5 rounded-md bg-blue-50 dark:bg-blue-950/60 text-blue-700 dark:text-blue-300">
+                  {activeExtractionCount}/{Object.keys(DEFAULT_EXTRACTION_FIELDS).length} ativos
+                </span>
+              </div>
+              <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
+                Escolha exatamente quais dados pedir na Places API (FieldMask). Sem descrição editorial no Google, o campo fica vazio.
+              </p>
+            </div>
+          </div>
+
+          <span className="p-1.5 rounded-lg text-slate-400 shrink-0">
+            {isExtractionConfigOpen ? (
+              <ChevronUp className="w-4 h-4" />
+            ) : (
+              <ChevronDown className="w-4 h-4" />
+            )}
+          </span>
+        </button>
+
+        {isExtractionConfigOpen && (
+          <div className="px-4 sm:px-5 pb-5 pt-1 border-t border-slate-100 dark:border-slate-800 space-y-4">
+            {/* Mandatory Base Fields Note & Presets */}
+            <div className="flex flex-col md:flex-row md:items-center justify-between gap-3 pt-3">
+              <div className="text-[11px] text-slate-600 dark:text-slate-400 flex flex-wrap items-center gap-1.5">
+                <span className="font-bold text-slate-700 dark:text-slate-200">
+                  Campos obrigatórios (sempre extraídos):
+                </span>
+                <span className="px-2 py-0.5 rounded-md bg-slate-100 dark:bg-slate-800 font-mono">
+                  Place ID
+                </span>
+                <span className="px-2 py-0.5 rounded-md bg-slate-100 dark:bg-slate-800 font-mono">
+                  Nome da Empresa
+                </span>
+                <span className="px-2 py-0.5 rounded-md bg-slate-100 dark:bg-slate-800 font-mono">
+                  Status de Funcionamento
+                </span>
+              </div>
+
+              <div className="flex flex-wrap items-center gap-2 shrink-0">
+                <button
+                  type="button"
+                  onClick={handleSelectAllExtractionFields}
+                  className="px-2.5 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 text-[11px] font-semibold text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-800 cursor-pointer"
+                >
+                  Marcar Todos
+                </button>
+                <button
+                  type="button"
+                  onClick={handleSelectEconomicPreset}
+                  className="px-2.5 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 text-[11px] font-semibold text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-800 cursor-pointer"
+                >
+                  Essencial (Cadastro Rápido)
+                </button>
+                <button
+                  type="button"
+                  disabled={isSavingExtractionFields}
+                  onClick={() => void handleSaveExtractionFields()}
+                  className="px-3.5 py-1.5 rounded-lg bg-blue-600 hover:bg-blue-700 disabled:opacity-60 text-white text-[11px] font-bold inline-flex items-center gap-1.5 cursor-pointer whitespace-nowrap"
+                >
+                  {isSavingExtractionFields ? (
+                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                  ) : (
+                    <Save className="w-3.5 h-3.5" />
+                  )}
+                  <span>Salvar Campos de Extração</span>
+                </button>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+              {/* Group 1: Cadastro da Empresa */}
+              <div className="p-3.5 rounded-xl bg-slate-50/80 dark:bg-slate-950/50 border border-slate-200 dark:border-slate-800 space-y-2.5">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-extrabold text-slate-900 dark:text-white flex items-center gap-1.5">
+                    <Building2 className="w-3.5 h-3.5 text-blue-600" />
+                    Campos do Cadastro da Empresa
+                  </span>
+                  <span className="text-[11px] text-slate-500">Salvos na loja ao aprovar</span>
+                </div>
+
+                <div className="space-y-2">
+                  {COMPANY_EXTRACTION_FIELD_OPTIONS.map((opt) => {
+                    const checked = extractionFields[opt.key];
+                    return (
+                      <label
+                        key={opt.key}
+                        className={`flex items-start gap-2.5 p-2.5 rounded-xl border transition cursor-pointer ${
+                          checked
+                            ? 'bg-white dark:bg-slate-900 border-blue-200 dark:border-blue-900/70'
+                            : 'bg-slate-100/60 dark:bg-slate-900/40 border-slate-200/70 dark:border-slate-800 opacity-75'
+                        }`}
+                      >
+                        <input
+                          type="checkbox"
+                          checked={checked}
+                          onChange={() => handleToggleExtractionField(opt.key)}
+                          className="mt-0.5 w-4 h-4 rounded accent-blue-600 shrink-0 cursor-pointer"
+                        />
+                        <div className="min-w-0 flex-1">
+                          <div className="flex flex-wrap items-center justify-between gap-1.5">
+                            <span className="text-xs font-bold text-slate-900 dark:text-white">
+                              {opt.label}
+                            </span>
+                            <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300">
+                              {opt.skuTier}
+                            </span>
+                          </div>
+                          <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-0.5 leading-snug">
+                            {opt.helper}{' '}
+                            <span className="font-mono text-[10px] text-slate-400">
+                              ({opt.apiField})
+                            </span>
+                          </p>
+                        </div>
+                      </label>
+                    );
+                  })}
+                </div>
+              </div>
+
+              {/* Group 2: Dados do Google Maps */}
+              <div className="p-3.5 rounded-xl bg-slate-50/80 dark:bg-slate-950/50 border border-slate-200 dark:border-slate-800 space-y-2.5 flex flex-col justify-between">
+                <div className="space-y-2.5">
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-extrabold text-slate-900 dark:text-white flex items-center gap-1.5">
+                      <Compass className="w-3.5 h-3.5 text-emerald-600" />
+                      Metadados e Classificação do Google Maps
+                    </span>
+                    <span className="text-[11px] text-slate-500">FieldMask Places API</span>
+                  </div>
+
+                  <div className="space-y-2">
+                    {GOOGLE_MAPS_EXTRACTION_FIELD_OPTIONS.map((opt) => {
+                      const checked = extractionFields[opt.key];
+                      return (
+                        <label
+                          key={opt.key}
+                          className={`flex items-start gap-2.5 p-2.5 rounded-xl border transition cursor-pointer ${
+                            checked
+                              ? 'bg-white dark:bg-slate-900 border-emerald-200 dark:border-emerald-900/70'
+                              : 'bg-slate-100/60 dark:bg-slate-900/40 border-slate-200/70 dark:border-slate-800 opacity-75'
+                          }`}
+                        >
+                          <input
+                            type="checkbox"
+                            checked={checked}
+                            onChange={() => handleToggleExtractionField(opt.key)}
+                            className="mt-0.5 w-4 h-4 rounded accent-emerald-600 shrink-0 cursor-pointer"
+                          />
+                          <div className="min-w-0 flex-1">
+                            <div className="flex flex-wrap items-center justify-between gap-1.5">
+                              <span className="text-xs font-bold text-slate-900 dark:text-white">
+                                {opt.label}
+                              </span>
+                              <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300">
+                                {opt.skuTier}
+                              </span>
+                            </div>
+                            <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-0.5 leading-snug">
+                              {opt.helper}{' '}
+                              <span className="font-mono text-[10px] text-slate-400">
+                                ({opt.apiField})
+                              </span>
+                            </p>
+                          </div>
+                        </label>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                <div className="p-3 rounded-xl bg-blue-50/70 dark:bg-blue-950/30 border border-blue-200/80 dark:border-blue-900/60 text-[11px] text-blue-900 dark:text-blue-200 leading-relaxed">
+                  <strong>Dica de economia e qualidade:</strong> apenas os campos marcados acima são enviados no cabeçalho <code className="font-mono">X-Goog-FieldMask</code> das próximas buscas manuais e do agendador automático de 30 minutos.
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
+
       {/* Filters & Bulk Toolbar */}
       <div className="p-4 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 flex flex-col lg:flex-row lg:items-center justify-between gap-3">
         <div className="flex flex-wrap items-center gap-2">
@@ -773,6 +1163,12 @@ export const AdminGoogleMapsTab: React.FC<AdminGoogleMapsTabProps> = ({
                         </>
                       )}
                     </div>
+
+                    {draft.description?.trim() && (
+                      <p className="text-xs text-slate-500 dark:text-slate-400 line-clamp-2">
+                        {draft.description}
+                      </p>
+                    )}
 
                     <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-slate-500 dark:text-slate-400">
                       {draft.phone && (
@@ -1079,12 +1475,13 @@ export const AdminGoogleMapsTab: React.FC<AdminGoogleMapsTabProps> = ({
 
               <div className="sm:col-span-2">
                 <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">
-                  Descrição Comercial
+                  Descrição Comercial (Opcional)
                 </label>
                 <textarea
                   rows={3}
                   value={editForm.description}
                   onChange={(e) => setEditForm({ ...editForm, description: e.target.value })}
+                  placeholder="Descrição editorial extraída do Google Maps (se houver) ou preenchida manualmente"
                   className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-xs text-slate-900 dark:text-white"
                 />
               </div>

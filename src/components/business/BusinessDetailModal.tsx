@@ -323,16 +323,22 @@ export const BusinessDetailModal: React.FC = () => {
 
           {/* Details & Location */}
           <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-            <div className="md:col-span-2 space-y-3">
-              <h3 className="text-base font-bold text-slate-900 dark:text-white font-display">
-                Sobre a Empresa
-              </h3>
-              <p className="text-sm text-slate-600 dark:text-slate-300 leading-relaxed whitespace-pre-line">
-                {business.description}
-              </p>
-            </div>
+            {business.description?.trim() && (
+              <div className="md:col-span-2 space-y-3">
+                <h3 className="text-base font-bold text-slate-900 dark:text-white font-display">
+                  Sobre a Empresa
+                </h3>
+                <p className="text-sm text-slate-600 dark:text-slate-300 leading-relaxed whitespace-pre-line">
+                  {business.description}
+                </p>
+              </div>
+            )}
 
-            <div className="space-y-4 p-4 rounded-2xl bg-slate-50 dark:bg-slate-800/40 border border-slate-100 dark:border-slate-800 text-xs">
+            <div
+              className={`${
+                business.description?.trim() ? '' : 'md:col-span-3'
+              } space-y-4 p-4 rounded-2xl bg-slate-50 dark:bg-slate-800/40 border border-slate-100 dark:border-slate-800 text-xs`}
+            >
               <div>
                 <span className="font-bold text-slate-900 dark:text-white flex items-center gap-1.5 mb-1">
                   <MapPin className="w-3.5 h-3.5 text-orange-500" />

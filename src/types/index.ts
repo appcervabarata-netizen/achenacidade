@@ -478,6 +478,20 @@ export interface GoogleMapsBusinessDraft {
   updatedAt?: string;
 }
 
+export interface GoogleMapsExtractionFields {
+  address: boolean;
+  phone: boolean;
+  whatsapp: boolean;
+  openingHours: boolean;
+  website: boolean;
+  description: boolean;
+  photo: boolean;
+  categoryDetection: boolean;
+  googleMapsUri: boolean;
+  rating: boolean;
+  userRatingCount: boolean;
+}
+
 export interface GoogleMapsImporterConfig {
   enabled: boolean;
   intervalMinutes: number;
@@ -485,6 +499,7 @@ export interface GoogleMapsImporterConfig {
   initialBatchSize: number;
   nextQueryCursor: number;
   totalImportedCount: number;
+  extractionFields?: GoogleMapsExtractionFields;
   lastRunAt?: string;
   nextRunAt?: string;
   lastRunSummary?: string;
