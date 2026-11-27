@@ -469,6 +469,9 @@ const EXPECTED_TABLE_COLUMNS: Record<string, Array<{ name: string; definition: s
     { name: 'opening_hours', definition: 'TEXT NULL' },
     { name: 'website', definition: 'VARCHAR(500) NULL' },
     { name: 'google_maps_uri', definition: 'VARCHAR(700) NULL' },
+    { name: 'photo_url', definition: 'LONGTEXT NULL' },
+    { name: 'photo_attribution_name', definition: 'VARCHAR(255) NULL' },
+    { name: 'photo_attribution_uri', definition: 'VARCHAR(500) NULL' },
     { name: 'primary_type', definition: 'VARCHAR(120) NULL' },
     { name: 'rating', definition: 'DECIMAL(3,2) NULL' },
     { name: 'user_rating_count', definition: 'INT NULL' },
@@ -926,6 +929,9 @@ export async function ensureDatabaseSchema(forceMigrate = false): Promise<boolea
           opening_hours TEXT NULL,
           website VARCHAR(500) NULL,
           google_maps_uri VARCHAR(700) NULL,
+          photo_url LONGTEXT NULL,
+          photo_attribution_name VARCHAR(255) NULL,
+          photo_attribution_uri VARCHAR(500) NULL,
           primary_type VARCHAR(120) NULL,
           rating DECIMAL(3,2) NULL,
           user_rating_count INT NULL,
@@ -3540,6 +3546,9 @@ export interface DbGoogleMapsBusinessDraft {
   openingHours?: string;
   website?: string;
   googleMapsUri?: string;
+  photoUrl?: string;
+  photoAttributionName?: string;
+  photoAttributionUri?: string;
   primaryType?: string;
   rating?: number;
   userRatingCount?: number;
@@ -3569,6 +3578,9 @@ function mapBusinessDraftRow(r: RowDataPacket): DbGoogleMapsBusinessDraft {
     ...(r.opening_hours ? { openingHours: String(r.opening_hours) } : {}),
     ...(r.website ? { website: String(r.website) } : {}),
     ...(r.google_maps_uri ? { googleMapsUri: String(r.google_maps_uri) } : {}),
+    ...(r.photo_url ? { photoUrl: String(r.photo_url) } : {}),
+    ...(r.photo_attribution_name ? { photoAttributionName: String(r.photo_attribution_name) } : {}),
+    ...(r.photo_attribution_uri ? { photoAttributionUri: String(r.photo_attribution_uri) } : {}),
     ...(r.primary_type ? { primaryType: String(r.primary_type) } : {}),
     ...(toOptionalNumber(r.rating) !== undefined ? { rating: toOptionalNumber(r.rating) } : {}),
     ...(toOptionalNumber(r.user_rating_count) !== undefined
@@ -3645,9 +3657,10 @@ export async function insertBusinessDraftsInDb(
       `INSERT IGNORE INTO business_drafts (
          id, google_place_id, name, city_id, city_name, category_id, category_name, plan_id,
          description, phone, whatsapp, address, neighborhood, opening_hours, website,
-         google_maps_uri, primary_type, rating, user_rating_count, source_query,
+         google_maps_uri, photo_url, photo_attribution_name, photo_attribution_uri,
+         primary_type, rating, user_rating_count, source_query,
          source_location_label, status, approved_business_id, created_at
-       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         d.id,
         d.googlePlaceId,
@@ -3665,6 +3678,9 @@ export async function insertBusinessDraftsInDb(
         d.openingHours || null,
         d.website || null,
         d.googleMapsUri || null,
+        d.photoUrl || null,
+        d.photoAttributionName || null,
+        d.photoAttributionUri || null,
         d.primaryType || null,
         d.rating ?? null,
         d.userRatingCount ?? null,
@@ -3702,6 +3718,9 @@ export async function updateBusinessDraftInDb(
     { key: 'neighborhood', col: 'neighborhood' },
     { key: 'openingHours', col: 'opening_hours' },
     { key: 'website', col: 'website' },
+    { key: 'photoUrl', col: 'photo_url' },
+    { key: 'photoAttributionName', col: 'photo_attribution_name' },
+    { key: 'photoAttributionUri', col: 'photo_attribution_uri' },
     { key: 'status', col: 'status' },
     { key: 'approvedBusinessId', col: 'approved_business_id' },
   ];
@@ -3744,6 +3763,7 @@ export async function approveBusinessDraftInDb(
     neighborhood: string;
     openingHours?: string;
     logoUrl: string;
+    coverUrl?: string;
     website?: string;
     createdAt: string;
   }
@@ -3759,9 +3779,9 @@ export async function approveBusinessDraftInDb(
     await conn.query(
       `INSERT INTO businesses (
          id, name, slug, city_id, category_id, plan_id, description, phone, whatsapp,
-         address, neighborhood, opening_hours, logo_url, website, is_verified, email_verified,
+         address, neighborhood, opening_hours, logo_url, cover_url, website, is_verified, email_verified,
          payment_status, subscription_status, created_at, sort_order
-       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 0, 'active', 'active', ?, ?)
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 0, 'active', 'active', ?, ?)
        ON DUPLICATE KEY UPDATE
          name = VALUES(name),
          city_id = VALUES(city_id),
@@ -3773,6 +3793,8 @@ export async function approveBusinessDraftInDb(
          address = VALUES(address),
          neighborhood = VALUES(neighborhood),
          opening_hours = VALUES(opening_hours),
+         logo_url = VALUES(logo_url),
+         cover_url = VALUES(cover_url),
          website = VALUES(website)`,
       [
         businessRecord.id,
@@ -3788,6 +3810,7 @@ export async function approveBusinessDraftInDb(
         businessRecord.neighborhood || '',
         businessRecord.openingHours || null,
         businessRecord.logoUrl || '',
+        businessRecord.coverUrl || businessRecord.logoUrl || '',
         businessRecord.website || null,
         businessRecord.createdAt || getSaoPauloDateKey(),
         Date.now() % 2147483647,

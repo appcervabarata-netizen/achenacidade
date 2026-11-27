@@ -8,6 +8,7 @@ import {
   Edit2,
   ExternalLink,
   Filter,
+  Image as ImageIcon,
   Loader2,
   MapPin,
   Pause,
@@ -28,6 +29,7 @@ import {
   approveGoogleMapsDraftViaApi,
   bulkApproveGoogleMapsDraftsViaApi,
   deleteGoogleMapsDraftViaApi,
+  fetchGoogleMapsDraftPhotoViaApi,
   fetchGoogleMapsDraftsViaApi,
   rejectGoogleMapsDraftViaApi,
   runGoogleMapsImportBatchViaApi,
@@ -96,9 +98,11 @@ export const AdminGoogleMapsTab: React.FC<AdminGoogleMapsTabProps> = ({
     whatsapp: '',
     openingHours: '',
     website: '',
+    photoUrl: '',
     description: '',
   });
   const [isSavingEdit, setIsSavingEdit] = useState(false);
+  const [isFetchingPhoto, setIsFetchingPhoto] = useState(false);
 
   const loadDraftsAndConfig = async (silent = false) => {
     if (!token) {
@@ -288,8 +292,24 @@ export const AdminGoogleMapsTab: React.FC<AdminGoogleMapsTabProps> = ({
       whatsapp: draft.whatsapp || '',
       openingHours: draft.openingHours || '',
       website: draft.website || '',
+      photoUrl: draft.photoUrl || '',
       description: draft.description || '',
     });
+  };
+
+  const handleFetchPhotoForEditingDraft = async () => {
+    if (!token || !editingDraft || isFetchingPhoto) return;
+    setIsFetchingPhoto(true);
+    const res = await fetchGoogleMapsDraftPhotoViaApi(token, editingDraft.id);
+    setIsFetchingPhoto(false);
+    if (!res.success || !res.draft?.photoUrl) {
+      onNotify(res.error || 'Nenhuma foto encontrada no Google Maps para esta empresa.');
+      return;
+    }
+    setEditingDraft(res.draft);
+    setEditForm((prev) => ({ ...prev, photoUrl: res.draft?.photoUrl || '' }));
+    setDrafts((prev) => prev.map((d) => (d.id === res.draft!.id ? res.draft! : d)));
+    onNotify('URL da foto importada do Google Maps e salva no rascunho!');
   };
 
   const handleSaveEdit = async (e: React.FormEvent) => {
@@ -299,6 +319,7 @@ export const AdminGoogleMapsTab: React.FC<AdminGoogleMapsTabProps> = ({
     const selectedCat = categories.find((c) => c.id === editForm.categoryId);
     const res = await updateGoogleMapsDraftViaApi(token, editingDraft.id, {
       ...editForm,
+      photoUrl: editForm.photoUrl.trim(),
       categoryName: selectedCat?.name || editingDraft.categoryName,
     });
     setIsSavingEdit(false);
@@ -699,6 +720,22 @@ export const AdminGoogleMapsTab: React.FC<AdminGoogleMapsTabProps> = ({
                     />
                   )}
 
+                  <div className="w-12 h-12 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-100 dark:bg-slate-800 overflow-hidden shrink-0 flex items-center justify-center mt-0.5">
+                    {draft.photoUrl ? (
+                      <img
+                        src={draft.photoUrl}
+                        alt={draft.name}
+                        loading="lazy"
+                        className="w-full h-full object-cover"
+                        onError={(e) => {
+                          (e.currentTarget as HTMLImageElement).style.display = 'none';
+                        }}
+                      />
+                    ) : (
+                      <ImageIcon className="w-5 h-5 text-slate-400" />
+                    )}
+                  </div>
+
                   <div className="min-w-0 flex-1 space-y-1.5">
                     <div className="flex flex-wrap items-center gap-2">
                       <h4 className="text-sm font-extrabold text-slate-900 dark:text-white">
@@ -754,8 +791,8 @@ export const AdminGoogleMapsTab: React.FC<AdminGoogleMapsTabProps> = ({
                             : ''}
                         </span>
                       )}
-                      <span className="font-semibold text-slate-600 dark:text-slate-300">
-                        Fonte: Google Maps
+                      <span className={draft.photoUrl ? 'font-semibold text-emerald-600 dark:text-emerald-400' : ''}>
+                        {draft.photoUrl ? 'Foto URL pronta' : 'Sem foto'}
                       </span>
                       {draft.googleMapsUri && (
                         <a
@@ -767,6 +804,20 @@ export const AdminGoogleMapsTab: React.FC<AdminGoogleMapsTabProps> = ({
                           <span>Ver no Google Maps</span>
                           <ExternalLink className="w-3 h-3" />
                         </a>
+                      )}
+                      {draft.photoUrl && draft.photoAttributionName && (
+                        draft.photoAttributionUri ? (
+                          <a
+                            href={draft.photoAttributionUri}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="hover:underline"
+                          >
+                            Foto: {draft.photoAttributionName}
+                          </a>
+                        ) : (
+                          <span>Foto: {draft.photoAttributionName}</span>
+                        )
                       )}
                     </div>
                   </div>
@@ -971,6 +1022,47 @@ export const AdminGoogleMapsTab: React.FC<AdminGoogleMapsTabProps> = ({
                   onChange={(e) => setEditForm({ ...editForm, website: e.target.value })}
                   className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-xs text-slate-900 dark:text-white"
                 />
+              </div>
+
+              <div className="sm:col-span-2">
+                <div className="flex items-center justify-between gap-2 mb-1">
+                  <label className="block text-xs font-bold text-slate-700 dark:text-slate-300">
+                    URL da Foto / Logo (Link da Imagem)
+                  </label>
+                  <button
+                    type="button"
+                    disabled={isFetchingPhoto || isSavingEdit}
+                    onClick={() => void handleFetchPhotoForEditingDraft()}
+                    className="text-[11px] font-bold text-blue-600 dark:text-blue-400 hover:underline inline-flex items-center gap-1 cursor-pointer disabled:opacity-50"
+                  >
+                    {isFetchingPhoto ? (
+                      <Loader2 className="w-3 h-3 animate-spin" />
+                    ) : (
+                      <ImageIcon className="w-3 h-3" />
+                    )}
+                    <span>{isFetchingPhoto ? 'Buscando foto...' : 'Buscar Foto do Google Maps'}</span>
+                  </button>
+                </div>
+                <div className="flex items-center gap-3">
+                  <div className="w-12 h-12 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-100 dark:bg-slate-800 overflow-hidden shrink-0 flex items-center justify-center">
+                    {editForm.photoUrl.trim() ? (
+                      <img
+                        src={editForm.photoUrl.trim()}
+                        alt={editForm.name || 'Preview'}
+                        className="w-full h-full object-cover"
+                      />
+                    ) : (
+                      <ImageIcon className="w-5 h-5 text-slate-400" />
+                    )}
+                  </div>
+                  <input
+                    type="url"
+                    value={editForm.photoUrl}
+                    onChange={(e) => setEditForm({ ...editForm, photoUrl: e.target.value })}
+                    placeholder="https://lh3.googleusercontent.com/... ou link direto da foto"
+                    className="flex-1 px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-xs text-slate-900 dark:text-white"
+                  />
+                </div>
               </div>
 
               <div className="sm:col-span-2">

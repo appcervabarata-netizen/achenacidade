@@ -69,6 +69,7 @@ interface CronExecutionReport {
     city: string;
     planId: string;
     status: string;
+    photoUrl?: string;
   }>;
 }
 
@@ -350,6 +351,7 @@ async function runAlagoinhasDraftImportJob(
         city: d.cityName,
         planId: d.planId || DEFAULT_PLAN_ID,
         status: d.status,
+        ...(d.photoUrl ? { photoUrl: d.photoUrl } : {}),
       })),
     };
 

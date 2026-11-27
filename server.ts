@@ -65,6 +65,7 @@ import {
 } from './server/db.ts';
 import {
   runGoogleMapsImportBatch,
+  fetchGooglePlacePhotoByPlaceId,
   normalizeBusinessSignature,
   resolveGoogleMapsApiKey,
   type DirectoryCategoryTarget,
@@ -3237,6 +3238,7 @@ function buildApprovedBusinessFromDraft(
 ) {
   const bizId = `biz-gmp-${Date.now()}-${crypto.randomBytes(2).toString('hex')}`;
   const slug = toBusinessSlug(draft.name, existingSlugs);
+  const resolvedPhotoUrl = (draft.photoUrl || '').trim();
   return {
     id: bizId,
     name: draft.name,
@@ -3250,7 +3252,8 @@ function buildApprovedBusinessFromDraft(
     address: draft.address || '',
     neighborhood: draft.neighborhood || 'Centro',
     ...(draft.openingHours ? { openingHours: draft.openingHours } : {}),
-    logoUrl: '',
+    logoUrl: resolvedPhotoUrl,
+    ...(resolvedPhotoUrl ? { coverUrl: resolvedPhotoUrl } : {}),
     ...(draft.website ? { website: draft.website } : {}),
     isVerified: false,
     emailVerified: false,
@@ -3741,6 +3744,63 @@ app.post('/api/google-maps/drafts/:id/approve', async (req, res) => {
     });
   } catch (err) {
     const message = err instanceof Error ? err.message : 'Erro ao aprovar rascunho.';
+    res.status(500).json({ success: false, error: message });
+  }
+});
+
+app.post('/api/google-maps/drafts/:id/fetch-photo', async (req, res) => {
+  const adminSess = await requireAdminSession(req, res);
+  if (!adminSess) return;
+
+  const { id } = req.params;
+  try {
+    const { drafts, databaseEnabled } = await listAllDraftsMerged();
+    const draft = drafts.find((d) => d.id === id);
+    if (!draft) {
+      res.status(404).json({ success: false, error: 'Rascunho não encontrado.' });
+      return;
+    }
+
+    const photoResult = await fetchGooglePlacePhotoByPlaceId(draft.googlePlaceId);
+    if (!photoResult.success || !photoResult.photo?.photoUrl) {
+      res.status(400).json({
+        success: false,
+        error: photoResult.error || 'Nenhuma foto localizada no Google Maps para este local.',
+      });
+      return;
+    }
+
+    const updates: Partial<DbGoogleMapsBusinessDraft> = {
+      photoUrl: photoResult.photo.photoUrl,
+      ...(photoResult.photo.photoAttributionName
+        ? { photoAttributionName: photoResult.photo.photoAttributionName }
+        : {}),
+      ...(photoResult.photo.photoAttributionUri
+        ? { photoAttributionUri: photoResult.photo.photoAttributionUri }
+        : {}),
+    };
+
+    let updatedDraft: DbGoogleMapsBusinessDraft = {
+      ...draft,
+      ...updates,
+      updatedAt: new Date().toISOString(),
+    };
+
+    if (databaseEnabled) {
+      const updatedDb = await updateBusinessDraftInDb(id, updates);
+      if (updatedDb) {
+        updatedDraft = updatedDb;
+      }
+    }
+    localBusinessDrafts.set(id, updatedDraft);
+
+    res.json({
+      success: true,
+      databaseEnabled,
+      draft: updatedDraft,
+    });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : 'Erro ao buscar foto no Google Maps.';
     res.status(500).json({ success: false, error: message });
   }
 });

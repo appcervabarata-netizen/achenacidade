@@ -1507,3 +1507,31 @@ export async function deleteGoogleMapsDraftViaApi(
     };
   }
 }
+
+export async function fetchGoogleMapsDraftPhotoViaApi(
+  token: string,
+  id: string
+): Promise<{ success: boolean; draft?: GoogleMapsBusinessDraft; error?: string }> {
+  if (!token) return { success: false, error: 'Sessão administrativa ausente.' };
+  try {
+    const res = await fetch(`/api/google-maps/drafts/${encodeURIComponent(id)}/fetch-photo`, {
+      method: 'POST',
+      cache: 'no-store',
+      headers: {
+        Authorization: `Bearer ${token}`,
+        Accept: 'application/json',
+      },
+    });
+    const data = (await res.json()) as any;
+    if (!res.ok || !data.success) {
+      return { success: false, error: data.error || 'Erro ao buscar foto no Google Maps.' };
+    }
+    return { success: true, draft: data.draft };
+  } catch (err) {
+    return {
+      success: false,
+      error: err instanceof Error ? err.message : 'Erro de rede ao buscar foto.',
+    };
+  }
+}
+

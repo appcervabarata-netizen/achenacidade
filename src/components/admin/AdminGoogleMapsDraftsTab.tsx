@@ -11,6 +11,7 @@ import {
   Edit2,
   ExternalLink,
   Filter,
+  Image as ImageIcon,
   Loader2,
   MapPin,
   Phone,
@@ -29,6 +30,7 @@ import type {
 import {
   approveGoogleMapsDraftViaApi,
   deleteGoogleMapsDraftViaApi,
+  fetchGoogleMapsDraftPhotoViaApi,
   fetchGoogleMapsDraftsViaApi,
   updateGoogleMapsDraftViaApi,
 } from '../../utils/apiSync';
@@ -122,9 +124,11 @@ export const AdminGoogleMapsDraftsTab: React.FC<AdminGoogleMapsDraftsTabProps> =
     whatsapp: '',
     openingHours: '',
     website: '',
+    photoUrl: '',
     description: '',
   });
   const [savingAction, setSavingAction] = useState<'save' | 'save_and_approve' | null>(null);
+  const [isFetchingPhoto, setIsFetchingPhoto] = useState(false);
 
   // Delete Confirmation Modal State
   const [draftToDelete, setDraftToDelete] = useState<GoogleMapsBusinessDraft | null>(null);
@@ -247,8 +251,24 @@ export const AdminGoogleMapsDraftsTab: React.FC<AdminGoogleMapsDraftsTabProps> =
       whatsapp: draft.whatsapp || '',
       openingHours: draft.openingHours || '',
       website: draft.website || '',
+      photoUrl: draft.photoUrl || '',
       description: draft.description || '',
     });
+  };
+
+  const handleFetchPhotoForEditingDraft = async () => {
+    if (!token || !editingDraft || isFetchingPhoto) return;
+    setIsFetchingPhoto(true);
+    const res = await fetchGoogleMapsDraftPhotoViaApi(token, editingDraft.id);
+    setIsFetchingPhoto(false);
+    if (!res.success || !res.draft?.photoUrl) {
+      onNotify(res.error || 'Nenhuma foto encontrada no Google Maps para esta empresa.');
+      return;
+    }
+    setEditingDraft(res.draft);
+    setEditForm((prev) => ({ ...prev, photoUrl: res.draft?.photoUrl || '' }));
+    setDrafts((prev) => prev.map((d) => (d.id === res.draft!.id ? res.draft! : d)));
+    onNotify('URL da foto importada do Google Maps e salva no rascunho!');
   };
 
   const submitEditModal = async (approveAfterSave: boolean) => {
@@ -258,6 +278,7 @@ export const AdminGoogleMapsDraftsTab: React.FC<AdminGoogleMapsDraftsTabProps> =
     const selectedCat = categories.find((c) => c.id === editForm.categoryId);
     const saveRes = await updateGoogleMapsDraftViaApi(token, editingDraft.id, {
       ...editForm,
+      photoUrl: editForm.photoUrl.trim(),
       categoryName: selectedCat?.name || editingDraft.categoryName,
     });
 
@@ -583,39 +604,78 @@ export const AdminGoogleMapsDraftsTab: React.FC<AdminGoogleMapsDraftsTabProps> =
                         className="hover:bg-slate-50/80 dark:hover:bg-slate-800/40 transition-colors"
                       >
                         <td className="py-3.5 px-4 align-top max-w-md">
-                          <div className="font-bold text-sm text-slate-900 dark:text-white leading-snug">
-                            {draft.name}
-                          </div>
-                          <div className="mt-1 text-xs text-slate-600 dark:text-slate-300 flex items-start gap-1.5">
-                            <MapPin className="w-3.5 h-3.5 text-orange-600 shrink-0 mt-0.5" />
-                            <span className="line-clamp-2">
-                              {draft.address || `${draft.neighborhood}, ${draft.cityName}`}
-                            </span>
-                          </div>
-                          <div className="mt-1.5 flex flex-wrap items-center gap-2 text-[11px] text-slate-500 dark:text-slate-400">
-                            <span className="text-amber-700 dark:text-amber-400 font-semibold">
-                              Rascunho
-                            </span>
-                            <span aria-hidden="true">·</span>
-                            <span>Fonte: Google Maps</span>
-                            <span aria-hidden="true">·</span>
-                            <span className="font-mono tabular-nums">
-                              {formatDateTimePt(draft.createdAt)}
-                            </span>
-                            {draft.googleMapsUri && (
-                              <>
+                          <div className="flex items-start gap-3">
+                            <div className="w-12 h-12 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-100 dark:bg-slate-800 overflow-hidden shrink-0 flex items-center justify-center">
+                              {draft.photoUrl ? (
+                                <img
+                                  src={draft.photoUrl}
+                                  alt={draft.name}
+                                  loading="lazy"
+                                  className="w-full h-full object-cover"
+                                  onError={(e) => {
+                                    (e.currentTarget as HTMLImageElement).style.display = 'none';
+                                  }}
+                                />
+                              ) : (
+                                <ImageIcon className="w-5 h-5 text-slate-400" />
+                              )}
+                            </div>
+
+                            <div className="min-w-0 flex-1">
+                              <div className="font-bold text-sm text-slate-900 dark:text-white leading-snug">
+                                {draft.name}
+                              </div>
+                              <div className="mt-1 text-xs text-slate-600 dark:text-slate-300 flex items-start gap-1.5">
+                                <MapPin className="w-3.5 h-3.5 text-orange-600 shrink-0 mt-0.5" />
+                                <span className="line-clamp-2">
+                                  {draft.address || `${draft.neighborhood}, ${draft.cityName}`}
+                                </span>
+                              </div>
+                              <div className="mt-1.5 flex flex-wrap items-center gap-2 text-[11px] text-slate-500 dark:text-slate-400">
+                                <span className="text-amber-700 dark:text-amber-400 font-semibold">
+                                  Rascunho
+                                </span>
                                 <span aria-hidden="true">·</span>
-                                <a
-                                  href={draft.googleMapsUri}
-                                  target="_blank"
-                                  rel="noopener noreferrer"
-                                  className="inline-flex items-center gap-1 text-blue-600 dark:text-blue-400 hover:underline font-semibold"
-                                >
-                                  <span>Ver no Maps</span>
-                                  <ExternalLink className="w-3 h-3" />
-                                </a>
-                              </>
-                            )}
+                                <span className={draft.photoUrl ? 'text-emerald-600 dark:text-emerald-400 font-semibold' : ''}>
+                                  {draft.photoUrl ? 'Com foto URL' : 'Sem foto'}
+                                </span>
+                                <span aria-hidden="true">·</span>
+                                <span className="font-mono tabular-nums">
+                                  {formatDateTimePt(draft.createdAt)}
+                                </span>
+                                {draft.googleMapsUri && (
+                                  <>
+                                    <span aria-hidden="true">·</span>
+                                    <a
+                                      href={draft.googleMapsUri}
+                                      target="_blank"
+                                      rel="noopener noreferrer"
+                                      className="inline-flex items-center gap-1 text-blue-600 dark:text-blue-400 hover:underline font-semibold"
+                                    >
+                                      <span>Ver no Maps</span>
+                                      <ExternalLink className="w-3 h-3" />
+                                    </a>
+                                  </>
+                                )}
+                                {draft.photoUrl && draft.photoAttributionName && (
+                                  <>
+                                    <span aria-hidden="true">·</span>
+                                    {draft.photoAttributionUri ? (
+                                      <a
+                                        href={draft.photoAttributionUri}
+                                        target="_blank"
+                                        rel="noopener noreferrer"
+                                        className="hover:underline"
+                                      >
+                                        Foto: {draft.photoAttributionName}
+                                      </a>
+                                    ) : (
+                                      <span>Foto: {draft.photoAttributionName}</span>
+                                    )}
+                                  </>
+                                )}
+                              </div>
+                            </div>
                           </div>
                         </td>
 
@@ -704,20 +764,35 @@ export const AdminGoogleMapsDraftsTab: React.FC<AdminGoogleMapsDraftsTabProps> =
               const isBusy = busyDraftId === draft.id;
               return (
                 <div key={draft.id} className="p-4 space-y-3">
-                  <div className="space-y-1">
-                    <h4 className="text-sm font-extrabold text-slate-900 dark:text-white">
-                      {draft.name}
-                    </h4>
-                    <div className="flex flex-wrap items-center gap-1.5 text-xs text-slate-500 dark:text-slate-400">
-                      <span className="font-semibold text-amber-700 dark:text-amber-400">
-                        Rascunho
-                      </span>
-                      <span aria-hidden="true">·</span>
-                      <span>{getCategoryLabel(draft)}</span>
-                      <span aria-hidden="true">·</span>
-                      <span className="font-mono tabular-nums">
-                        {formatDateTimePt(draft.createdAt)}
-                      </span>
+                  <div className="flex items-start gap-3">
+                    <div className="w-12 h-12 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-100 dark:bg-slate-800 overflow-hidden shrink-0 flex items-center justify-center">
+                      {draft.photoUrl ? (
+                        <img
+                          src={draft.photoUrl}
+                          alt={draft.name}
+                          loading="lazy"
+                          className="w-full h-full object-cover"
+                        />
+                      ) : (
+                        <ImageIcon className="w-5 h-5 text-slate-400" />
+                      )}
+                    </div>
+
+                    <div className="space-y-1 min-w-0 flex-1">
+                      <h4 className="text-sm font-extrabold text-slate-900 dark:text-white">
+                        {draft.name}
+                      </h4>
+                      <div className="flex flex-wrap items-center gap-1.5 text-xs text-slate-500 dark:text-slate-400">
+                        <span className="font-semibold text-amber-700 dark:text-amber-400">
+                          Rascunho
+                        </span>
+                        <span aria-hidden="true">·</span>
+                        <span>{getCategoryLabel(draft)}</span>
+                        <span aria-hidden="true">·</span>
+                        <span className="font-mono tabular-nums">
+                          {formatDateTimePt(draft.createdAt)}
+                        </span>
+                      </div>
                     </div>
                   </div>
 
@@ -1014,6 +1089,47 @@ export const AdminGoogleMapsDraftsTab: React.FC<AdminGoogleMapsDraftsTabProps> =
                   onChange={(e) => setEditForm({ ...editForm, website: e.target.value })}
                   className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-xs text-slate-900 dark:text-white"
                 />
+              </div>
+
+              <div className="sm:col-span-2">
+                <div className="flex items-center justify-between gap-2 mb-1">
+                  <label className="block text-xs font-bold text-slate-700 dark:text-slate-300">
+                    URL da Foto / Logo (Link da Imagem)
+                  </label>
+                  <button
+                    type="button"
+                    disabled={isFetchingPhoto || Boolean(savingAction)}
+                    onClick={() => void handleFetchPhotoForEditingDraft()}
+                    className="text-[11px] font-bold text-blue-600 dark:text-blue-400 hover:underline inline-flex items-center gap-1 cursor-pointer disabled:opacity-50"
+                  >
+                    {isFetchingPhoto ? (
+                      <Loader2 className="w-3 h-3 animate-spin" />
+                    ) : (
+                      <ImageIcon className="w-3 h-3" />
+                    )}
+                    <span>{isFetchingPhoto ? 'Buscando foto...' : 'Buscar Foto do Google Maps'}</span>
+                  </button>
+                </div>
+                <div className="flex items-center gap-3">
+                  <div className="w-12 h-12 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-100 dark:bg-slate-800 overflow-hidden shrink-0 flex items-center justify-center">
+                    {editForm.photoUrl.trim() ? (
+                      <img
+                        src={editForm.photoUrl.trim()}
+                        alt={editForm.name || 'Preview'}
+                        className="w-full h-full object-cover"
+                      />
+                    ) : (
+                      <ImageIcon className="w-5 h-5 text-slate-400" />
+                    )}
+                  </div>
+                  <input
+                    type="url"
+                    value={editForm.photoUrl}
+                    onChange={(e) => setEditForm({ ...editForm, photoUrl: e.target.value })}
+                    placeholder="https://lh3.googleusercontent.com/... ou link direto da foto"
+                    className="flex-1 px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-xs text-slate-900 dark:text-white"
+                  />
+                </div>
               </div>
 
               <div className="sm:col-span-2">

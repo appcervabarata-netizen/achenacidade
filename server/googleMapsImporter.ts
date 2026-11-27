@@ -421,6 +421,119 @@ function inferBestCategoryFromPlace(
   return { categoryId: fallbackCategoryId, categoryName: fallbackCategoryName };
 }
 
+export interface ResolvedGooglePlacePhoto {
+  photoUrl?: string;
+  photoAttributionName?: string;
+  photoAttributionUri?: string;
+}
+
+// Place Photos (New): resolves direct CDN photoUri via skipHttpRedirect=true (never embeds API keys in persisted URLs)
+// Reference: https://developers.google.com/maps/documentation/places/web-service/place-photos?utm_campaign=gmp_mcp_codeassist_v1_aistudio
+export async function resolvePhotoFromPlacePhotosArray(
+  photos: unknown,
+  apiKey: string
+): Promise<ResolvedGooglePlacePhoto> {
+  if (!Array.isArray(photos) || photos.length === 0 || !apiKey) {
+    return {};
+  }
+
+  for (const photo of photos.slice(0, 2)) {
+    const photoName = typeof (photo as any)?.name === 'string' ? (photo as any).name.trim() : '';
+    if (!photoName) continue;
+
+    try {
+      const cleanName = photoName.replace(/^\/+/, '');
+      const mediaEndpoint = `https://places.googleapis.com/v1/${cleanName}/media?maxWidthPx=800&skipHttpRedirect=true`;
+      const response = await fetch(mediaEndpoint, {
+        method: 'GET',
+        headers: {
+          'X-Goog-Api-Key': apiKey,
+          'X-Goog-Maps-Solution-ID': 'gmp_mcp_codeassist_v1_aistudio',
+        },
+      });
+      if (!response.ok) continue;
+
+      const data = (await response.json().catch(() => ({}))) as { photoUri?: string };
+      const rawUri = typeof data?.photoUri === 'string' ? data.photoUri.trim() : '';
+      const normalizedUri = rawUri.startsWith('//') ? `https:${rawUri}` : rawUri;
+      if (!normalizedUri.startsWith('http://') && !normalizedUri.startsWith('https://')) {
+        continue;
+      }
+
+      const attrList = Array.isArray((photo as any)?.authorAttributions)
+        ? (photo as any).authorAttributions
+        : [];
+      const firstAttr = attrList[0] as { displayName?: string; uri?: string } | undefined;
+      const attrName = typeof firstAttr?.displayName === 'string' ? firstAttr.displayName.trim() : '';
+      const rawAttrUri = typeof firstAttr?.uri === 'string' ? firstAttr.uri.trim() : '';
+      const attrUri = rawAttrUri.startsWith('//') ? `https:${rawAttrUri}` : rawAttrUri;
+
+      return {
+        photoUrl: normalizedUri,
+        ...(attrName ? { photoAttributionName: attrName } : {}),
+        ...(attrUri ? { photoAttributionUri: attrUri } : {}),
+      };
+    } catch {
+      // Try next photo candidate if available
+    }
+  }
+
+  return {};
+}
+
+export async function fetchGooglePlacePhotoByPlaceId(
+  googlePlaceId: string
+): Promise<{ success: boolean; photo?: ResolvedGooglePlacePhoto; error?: string }> {
+  const apiKey = resolveGoogleMapsApiKey();
+  if (!apiKey) {
+    return {
+      success: false,
+      error: 'Chave GOOGLE_MAPS_API_KEY não configurada no servidor.',
+    };
+  }
+  const cleanId = (googlePlaceId || '').trim();
+  if (!cleanId) {
+    return { success: false, error: 'Place ID do Google Maps ausente.' };
+  }
+
+  try {
+    const detailsRes = await fetch(
+      `https://places.googleapis.com/v1/places/${encodeURIComponent(cleanId)}`,
+      {
+        method: 'GET',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Goog-Api-Key': apiKey,
+          'X-Goog-FieldMask': 'id,photos',
+          'X-Goog-Maps-Solution-ID': 'gmp_mcp_codeassist_v1_aistudio',
+        },
+      }
+    );
+    const detailsData = (await detailsRes.json().catch(() => ({}))) as any;
+    if (!detailsRes.ok) {
+      return {
+        success: false,
+        error: String(detailsData?.error?.message || `Google Maps Places API (${detailsRes.status})`),
+      };
+    }
+
+    const resolved = await resolvePhotoFromPlacePhotosArray(detailsData?.photos, apiKey);
+    if (!resolved.photoUrl) {
+      return {
+        success: false,
+        error: 'Este estabelecimento não possui foto pública cadastrada no Google Maps.',
+      };
+    }
+
+    return { success: true, photo: resolved };
+  } catch (err) {
+    return {
+      success: false,
+      error: err instanceof Error ? err.message : 'Erro ao consultar foto no Google Maps.',
+    };
+  }
+}
+
 export async function runGoogleMapsImportBatch(params: {
   targetCount: number;
   startCursor: number;
@@ -477,6 +590,7 @@ export async function runGoogleMapsImportBatch(params: {
     'places.regularOpeningHours',
     'places.websiteUri',
     'places.googleMapsUri',
+    'places.photos',
     'places.primaryType',
     'places.primaryTypeDisplayName',
     'places.types',
@@ -599,6 +713,8 @@ export async function runGoogleMapsImportBatch(params: {
 
         const description = `${typeLabel} em ${addr.neighborhood}, ${addr.cityName}.${ratingPart} Cadastro importado do Google Maps aguardando conferência e atualização pelo lojista.`;
 
+        const resolvedPhoto = await resolvePhotoFromPlacePhotosArray(place?.photos, apiKey);
+
         const draft: DbGoogleMapsBusinessDraft = {
           id: `draft-gmp-${Date.now()}-${crypto.randomBytes(3).toString('hex')}`,
           googlePlaceId,
@@ -616,6 +732,13 @@ export async function runGoogleMapsImportBatch(params: {
           ...(openingHours ? { openingHours } : {}),
           ...(place?.websiteUri ? { website: String(place.websiteUri) } : {}),
           ...(place?.googleMapsUri ? { googleMapsUri: String(place.googleMapsUri) } : {}),
+          ...(resolvedPhoto.photoUrl ? { photoUrl: resolvedPhoto.photoUrl } : {}),
+          ...(resolvedPhoto.photoAttributionName
+            ? { photoAttributionName: resolvedPhoto.photoAttributionName }
+            : {}),
+          ...(resolvedPhoto.photoAttributionUri
+            ? { photoAttributionUri: resolvedPhoto.photoAttributionUri }
+            : {}),
           ...(place?.primaryType ? { primaryType: String(place.primaryType) } : {}),
           ...(typeof place?.rating === 'number' ? { rating: Number(place.rating) } : {}),
           ...(typeof place?.userRatingCount === 'number'

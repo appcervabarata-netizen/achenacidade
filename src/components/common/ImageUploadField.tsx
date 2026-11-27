@@ -84,10 +84,12 @@ export const ImageUploadField: React.FC<ImageUploadFieldProps> = ({
       ? 'aspect-[4/3]'
       : 'aspect-square max-w-44';
 
+  const isDataUrl = Boolean(value && value.startsWith('data:'));
+
   return (
-    <div className="space-y-2">
+    <div className="space-y-2.5">
       {label && (
-        <div className="flex items-center justify-between">
+        <div className="flex items-center justify-between gap-2">
           <label className="block text-xs font-bold text-slate-700 dark:text-slate-300">
             {label} {required && <span className="text-red-500">*</span>}
           </label>
@@ -96,7 +98,7 @@ export const ImageUploadField: React.FC<ImageUploadFieldProps> = ({
             onClick={() => setShowUrlInput(!showUrlInput)}
             className="text-[11px] font-semibold text-blue-600 dark:text-blue-400 hover:underline cursor-pointer"
           >
-            {showUrlInput ? 'Usar upload de arquivo' : 'Ou inserir por URL externa'}
+            {showUrlInput ? 'Mostrar envio de arquivo' : 'Focar apenas no link'}
           </button>
         </div>
       )}
@@ -105,7 +107,7 @@ export const ImageUploadField: React.FC<ImageUploadFieldProps> = ({
         <div className="flex gap-2">
           <input
             type="url"
-            value={customUrl || value}
+            value={isDataUrl ? '' : customUrl || value}
             onChange={(e) => {
               setCustomUrl(e.target.value);
               onChange(e.target.value);
@@ -122,7 +124,7 @@ export const ImageUploadField: React.FC<ImageUploadFieldProps> = ({
           </button>
         </div>
       ) : (
-        <div className="space-y-3">
+        <div className="space-y-2.5">
           {/* Main Dropzone & Upload Box */}
           <div
             onDragOver={(e) => {
@@ -203,6 +205,26 @@ export const ImageUploadField: React.FC<ImageUploadFieldProps> = ({
                 </div>
               )}
             </div>
+          </div>
+
+          <div className="flex items-center gap-2">
+            <span className="text-[11px] font-semibold text-slate-500 dark:text-slate-400 shrink-0">
+              URL da imagem:
+            </span>
+            <input
+              type="url"
+              value={isDataUrl ? '' : value}
+              onChange={(e) => {
+                setCustomUrl(e.target.value);
+                onChange(e.target.value);
+              }}
+              placeholder={
+                isDataUrl
+                  ? 'Imagem local carregada (cole uma URL https:// se preferir substituir)'
+                  : 'https://lh3.googleusercontent.com/... ou link direto da foto'
+              }
+              className="flex-1 px-3 py-1.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-xs text-slate-900 dark:text-white"
+            />
           </div>
 
           {/* Preset Samples (Quick Pick) */}

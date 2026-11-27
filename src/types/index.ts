@@ -463,6 +463,9 @@ export interface GoogleMapsBusinessDraft {
   openingHours?: string;
   website?: string;
   googleMapsUri?: string;
+  photoUrl?: string;
+  photoAttributionName?: string;
+  photoAttributionUri?: string;
   primaryType?: string;
   rating?: number;
   userRatingCount?: number;
