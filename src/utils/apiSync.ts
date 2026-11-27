@@ -1202,16 +1202,51 @@ function dispatchQuotaExceededIfNeeded(status: number, payload: any) {
   }
 }
 
-export async function fetchGoogleMapsDraftsViaApi(token: string): Promise<{
+export async function fetchGoogleMapsDraftsViaApi(
+  token: string,
+  options?: {
+    status?: 'pending' | 'approved' | 'rejected' | 'all';
+    page?: number;
+    pageSize?: number;
+    search?: string;
+    categoryId?: string;
+    city?: string;
+  }
+): Promise<{
   success: boolean;
   databaseEnabled?: boolean;
   drafts?: GoogleMapsBusinessDraft[];
+  pagination?: {
+    page: number;
+    pageSize: number;
+    totalItems: number;
+    totalPages: number;
+    hasPreviousPage: boolean;
+    hasNextPage: boolean;
+  };
+  counts?: {
+    total: number;
+    pending: number;
+    approved: number;
+    rejected: number;
+  };
+  availableCities?: string[];
   config?: GoogleMapsImporterConfig;
   error?: string;
 }> {
   if (!token) return { success: false, error: 'Sessão administrativa ausente.' };
   try {
-    const res = await fetch('/api/google-maps/drafts', {
+    const params = new URLSearchParams();
+    if (options?.status) params.set('status', options.status);
+    if (typeof options?.page === 'number') params.set('page', String(options.page));
+    if (typeof options?.pageSize === 'number') params.set('pageSize', String(options.pageSize));
+    if (options?.search && options.search.trim()) params.set('search', options.search.trim());
+    if (options?.categoryId && options.categoryId !== 'all') params.set('categoryId', options.categoryId);
+    if (options?.city && options.city !== 'all') params.set('city', options.city);
+    const qs = params.toString();
+    const url = qs ? `/api/google-maps/drafts?${qs}` : '/api/google-maps/drafts';
+
+    const res = await fetch(url, {
       method: 'GET',
       cache: 'no-store',
       headers: {
@@ -1228,6 +1263,9 @@ export async function fetchGoogleMapsDraftsViaApi(token: string): Promise<{
       success: true,
       databaseEnabled: Boolean(data.databaseEnabled),
       drafts: Array.isArray(data.drafts) ? data.drafts : [],
+      pagination: data.pagination,
+      counts: data.counts,
+      availableCities: Array.isArray(data.availableCities) ? data.availableCities : [],
       config: data.config,
     };
   } catch (err) {

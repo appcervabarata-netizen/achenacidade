@@ -47,6 +47,7 @@ import {
   Link2,
   Ban,
   Compass,
+  ClipboardList,
 } from 'lucide-react';
 import { AdminTheme, Business, Plan, PlanBillingType, PlanCycleDiscounts, PlanVipTier } from '../../types';
 import { AdminBusinessEditModal } from './AdminBusinessEditModal';
@@ -56,10 +57,12 @@ import { AdminEmailTab } from './AdminEmailTab';
 import { AdminDatabaseTab } from './AdminDatabaseTab';
 import { AdminGeneralSettingsTab } from './AdminGeneralSettingsTab';
 import { AdminGoogleMapsTab } from './AdminGoogleMapsTab';
+import { AdminGoogleMapsDraftsTab } from './AdminGoogleMapsDraftsTab';
 import { generateHostGatorPackage, downloadFile } from '../../utils/hostgatorGenerator';
 import {
   changeAdminPasswordViaApi,
   fetchAdminMercadoPagoConfigViaApi,
+  fetchGoogleMapsDraftsViaApi,
   testMercadoPagoViaApi,
 } from '../../utils/apiSync';
 import {
@@ -133,9 +136,27 @@ export const AdminScreen: React.FC = () => {
 
   // Active admin tab
   const [activeTab, setActiveTab] = useState<
-    'dashboard' | 'cities' | 'categories' | 'plans' | 'businesses' | 'google_maps' | 'banners' | 'payments' | 'emails' | 'creatives' | 'sitemode' | 'theme' | 'general_seo' | 'security' | 'database' | 'hostgator'
+    'dashboard' | 'cities' | 'categories' | 'plans' | 'businesses' | 'google_maps' | 'google_maps_drafts' | 'banners' | 'payments' | 'emails' | 'creatives' | 'sitemode' | 'theme' | 'general_seo' | 'security' | 'database' | 'hostgator'
   >('dashboard');
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(true);
+  const [pendingMapsDraftsCount, setPendingMapsDraftsCount] = useState<number>(0);
+
+  useEffect(() => {
+    if (!authSession.token) return;
+    let active = true;
+    void fetchGoogleMapsDraftsViaApi(authSession.token, {
+      status: 'pending',
+      page: 1,
+      pageSize: 5,
+    }).then((res) => {
+      if (active && res.success && res.counts) {
+        setPendingMapsDraftsCount(res.counts.pending);
+      }
+    });
+    return () => {
+      active = false;
+    };
+  }, [authSession.token]);
 
   // Session & Admin Password Security State
   const [sessionDurationForm, setSessionDurationForm] = useState({
@@ -278,7 +299,6 @@ export const AdminScreen: React.FC = () => {
     linkUrl: '#produtos',
     advertiserName: '',
     cityId: 'all',
-    priceMonthly: 149.90,
     isActive: true,
     badgeText: 'Patrocinador Oficial',
   });
@@ -293,7 +313,6 @@ export const AdminScreen: React.FC = () => {
       linkUrl: '#lojas',
       advertiserName: '',
       cityId: 'all',
-      priceMonthly: 149.90,
       isActive: true,
       badgeText: 'Destaque Patrocinado',
     });
@@ -311,7 +330,7 @@ export const AdminScreen: React.FC = () => {
       linkUrl: bannerForm.linkUrl.trim(),
       advertiserName: bannerForm.advertiserName.trim(),
       cityId: bannerForm.cityId,
-      priceMonthly: Number(bannerForm.priceMonthly),
+      priceMonthly: 0,
       isActive: bannerForm.isActive,
       badgeText: bannerForm.badgeText.trim() || 'Publicidade',
     };
@@ -446,12 +465,6 @@ export const AdminScreen: React.FC = () => {
   const totalProducts = products.length;
   const totalServices = services.length;
   const totalCatalogItems = totalProducts + totalServices;
-  const monthlyRevenue = businesses.reduce((acc, b) => {
-    if (b.subscriptionStatus === 'cancelled') return acc;
-    const p = plans.find((pl) => pl.id === b.planId);
-    if (!p || isLifetimePlan(p) || isInviteTrialPlan(p)) return acc;
-    return acc + (p.priceMonthly || 0);
-  }, 0);
 
   const handleCopy = (key: string, text: string) => {
     navigator.clipboard.writeText(text);
@@ -875,6 +888,12 @@ export const AdminScreen: React.FC = () => {
           { id: 'plans', label: 'Planos', icon: CreditCard, count: plans.length },
           { id: 'businesses', label: 'Empresas', icon: Building2, count: businesses.length },
           { id: 'google_maps', label: 'Google Maps', icon: Compass },
+          {
+            id: 'google_maps_drafts',
+            label: 'Rascunhos Maps',
+            icon: ClipboardList,
+            count: pendingMapsDraftsCount,
+          },
           { id: 'banners', label: 'Banners', icon: Megaphone, count: banners.length },
           { id: 'payments', label: 'Pagamentos', icon: DollarSign },
           { id: 'emails', label: 'E-mails', icon: Mail, count: emailLogs.length },
@@ -1033,15 +1052,15 @@ export const AdminScreen: React.FC = () => {
         {/* TAB: DASHBOARD */}
         {activeTab === 'dashboard' && (
           <div className="space-y-6">
-            <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
               <div className="p-4 rounded-2xl bg-blue-50 dark:bg-blue-950/40 border border-blue-200 dark:border-blue-900">
                 <span className="text-xs font-bold text-blue-700 dark:text-blue-300 uppercase tracking-wider">
                   Cidades Cadastradas
                 </span>
-                <div className="mt-2 text-2xl sm:text-3xl font-extrabold text-blue-900 dark:text-white font-mono">
+                <div className="mt-2 text-2xl sm:text-3xl font-extrabold text-blue-900 dark:text-white font-mono tabular-nums">
                   {totalCities}
                 </div>
-                <span className="text-[11px] text-slate-500 dark:text-slate-400">
+                <span className="text-[11px] text-slate-500 dark:text-slate-400 tabular-nums">
                   {activeCitiesCount} ativas no seletor
                 </span>
               </div>
@@ -1050,7 +1069,7 @@ export const AdminScreen: React.FC = () => {
                 <span className="text-xs font-bold text-orange-700 dark:text-orange-300 uppercase tracking-wider">
                   Empresas Ativas
                 </span>
-                <div className="mt-2 text-2xl sm:text-3xl font-extrabold text-orange-900 dark:text-white font-mono">
+                <div className="mt-2 text-2xl sm:text-3xl font-extrabold text-orange-900 dark:text-white font-mono tabular-nums">
                   {totalBusinesses}
                 </div>
                 <span className="text-[11px] text-slate-500 dark:text-slate-400">
@@ -1067,18 +1086,6 @@ export const AdminScreen: React.FC = () => {
                 </div>
                 <span className="text-[11px] text-slate-500 dark:text-slate-400 tabular-nums">
                   {totalProducts} produtos · {totalServices} serviços
-                </span>
-              </div>
-
-              <div className="p-4 rounded-2xl bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700">
-                <span className="text-xs font-bold text-slate-700 dark:text-slate-300 uppercase tracking-wider">
-                  Faturamento Mensal
-                </span>
-                <div className="mt-2 text-2xl sm:text-3xl font-extrabold text-slate-900 dark:text-white font-mono">
-                  R$ {monthlyRevenue.toFixed(2)}
-                </div>
-                <span className="text-[11px] text-slate-500 dark:text-slate-400">
-                  Soma das assinaturas
                 </span>
               </div>
             </div>
@@ -2715,36 +2722,29 @@ export const AdminScreen: React.FC = () => {
               <Megaphone className="w-5 h-5 text-amber-500 shrink-0 mt-0.5" />
               <div>
                 <h4 className="text-sm font-bold text-slate-900 dark:text-white">
-                  Controle Exclusivo de Banners & Publicidade Patrocinada
+                  Controle de Banners & Publicidade em Destaque
                 </h4>
                 <p className="text-xs text-slate-600 dark:text-slate-400 mt-0.5">
-                  Conforme configurado, os banners publicitários são <strong>cadastrados apenas pelo Administrador</strong> e são <strong>cobrados separadamente</strong> dos planos de assinatura de produtos das lojas.
+                  Gerencie os banners publicitários exibidos nas áreas de destaque do portal e acompanhe o total de cliques de cada campanha.
                 </p>
               </div>
             </div>
 
             {/* Metrics */}
-            <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
               <div className="p-4 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800">
                 <span className="text-xs font-bold text-slate-500 uppercase tracking-wider">Total de Banners</span>
-                <div className="text-2xl font-black text-slate-900 dark:text-white mt-1">{banners.length}</div>
+                <div className="text-2xl font-black font-mono tabular-nums text-slate-900 dark:text-white mt-1">{banners.length}</div>
               </div>
               <div className="p-4 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800">
                 <span className="text-xs font-bold text-emerald-600 uppercase tracking-wider">Banners Ativos</span>
-                <div className="text-2xl font-black text-emerald-600 mt-1">
+                <div className="text-2xl font-black font-mono tabular-nums text-emerald-600 mt-1">
                   {banners.filter((b) => b.isActive).length}
                 </div>
               </div>
               <div className="p-4 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800">
-                <span className="text-xs font-bold text-blue-600 uppercase tracking-wider">Faturamento Banners</span>
-                <div className="text-2xl font-black text-blue-600 mt-1">
-                  R$ {banners.filter((b) => b.isActive).reduce((acc, b) => acc + b.priceMonthly, 0).toFixed(2).replace('.', ',')}
-                </div>
-                <span className="text-[10px] text-slate-400">/mês em publicidade</span>
-              </div>
-              <div className="p-4 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800">
                 <span className="text-xs font-bold text-orange-600 uppercase tracking-wider">Cliques Totais</span>
-                <div className="text-2xl font-black text-orange-600 mt-1">
+                <div className="text-2xl font-black font-mono tabular-nums text-orange-600 mt-1">
                   {banners.reduce((acc, b) => acc + (b.clicksCount || 0), 0)}
                 </div>
               </div>
@@ -2876,7 +2876,7 @@ export const AdminScreen: React.FC = () => {
                   {editingBannerId ? <Edit2 className="w-4 h-4 text-blue-600" /> : <Plus className="w-4 h-4 text-orange-600" />}
                   {editingBannerId
                     ? 'Editar Banner Patrocinado'
-                    : 'Cadastrar Novo Banner Patrocinado (Cobrança Separada)'}
+                    : 'Cadastrar Novo Banner Patrocinado'}
                 </h4>
                 {editingBannerId && (
                   <button
@@ -2950,21 +2950,6 @@ export const AdminScreen: React.FC = () => {
                         </option>
                       ))}
                     </select>
-                  </div>
-
-                  <div>
-                    <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">
-                      Valor Cobrado Avulso (R$/mês) *
-                    </label>
-                    <input
-                      type="number"
-                      step="0.01"
-                      min="0"
-                      value={bannerForm.priceMonthly}
-                      onChange={(e) => setBannerForm({ ...bannerForm, priceMonthly: Number(e.target.value) })}
-                      required
-                      className="w-full px-3 py-2 text-xs rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-900 dark:text-white outline-none focus:ring-2 focus:ring-orange-500"
-                    />
                   </div>
 
                   <div>
@@ -3067,9 +3052,6 @@ export const AdminScreen: React.FC = () => {
 
                       <div className="flex items-center justify-between text-xs mb-1">
                         <span className="font-bold text-slate-900 dark:text-white">{b.advertiserName}</span>
-                        <span className="font-extrabold text-blue-600">
-                          R$ {b.priceMonthly.toFixed(2).replace('.', ',')}/mês
-                        </span>
                       </div>
 
                       <div className="flex items-center justify-between text-[11px] text-slate-500">
@@ -3105,7 +3087,6 @@ export const AdminScreen: React.FC = () => {
                               linkUrl: b.linkUrl || '#produtos',
                               advertiserName: b.advertiserName,
                               cityId: b.cityId || 'all',
-                              priceMonthly: b.priceMonthly,
                               isActive: b.isActive,
                               badgeText: b.badgeText || 'Patrocinador Oficial',
                             });
@@ -3560,7 +3541,19 @@ export const AdminScreen: React.FC = () => {
 
         {/* TAB: GOOGLE MAPS IMPORTER */}
         {activeTab === 'google_maps' && (
-          <AdminGoogleMapsTab onNotify={(msg) => showAdminToast(msg)} />
+          <AdminGoogleMapsTab
+            onNotify={(msg) => showAdminToast(msg)}
+            onPendingCountChange={setPendingMapsDraftsCount}
+          />
+        )}
+
+        {/* TAB: GOOGLE MAPS RASCUNHOS PAGINADOS */}
+        {activeTab === 'google_maps_drafts' && (
+          <AdminGoogleMapsDraftsTab
+            onNotify={(msg) => showAdminToast(msg)}
+            onPendingCountChange={setPendingMapsDraftsCount}
+            onNavigateToImporter={() => setActiveTab('google_maps')}
+          />
         )}
 
         {/* TAB: CRIATIVOS INSTAGRAM & STORIES */}

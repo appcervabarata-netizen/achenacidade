@@ -37,6 +37,7 @@ import {
 
 interface AdminGoogleMapsTabProps {
   onNotify: (message: string) => void;
+  onPendingCountChange?: (pendingCount: number) => void;
 }
 
 const DEFAULT_IMPORTER_CONFIG: GoogleMapsImporterConfig = {
@@ -60,7 +61,10 @@ function formatDateTimePt(iso?: string): string {
   });
 }
 
-export const AdminGoogleMapsTab: React.FC<AdminGoogleMapsTabProps> = ({ onNotify }) => {
+export const AdminGoogleMapsTab: React.FC<AdminGoogleMapsTabProps> = ({
+  onNotify,
+  onPendingCountChange,
+}) => {
   const { authSession, categories, cities, registerApprovedBusinessesFromDrafts } = useDirectory();
   const token = authSession.token || '';
 
@@ -130,6 +134,12 @@ export const AdminGoogleMapsTab: React.FC<AdminGoogleMapsTabProps> = ({ onNotify
     }
     return { total: drafts.length, pending, approved, rejected };
   }, [drafts]);
+
+  useEffect(() => {
+    if (!isLoading && !loadError) {
+      onPendingCountChange?.(counts.pending);
+    }
+  }, [counts.pending, isLoading, loadError, onPendingCountChange]);
 
   const filteredDrafts = useMemo(() => {
     const q = searchQuery.trim().toLowerCase();

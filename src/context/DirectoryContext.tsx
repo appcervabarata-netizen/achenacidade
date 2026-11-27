@@ -812,11 +812,15 @@ export const DirectoryProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     });
   };
 
-  // Ad Banners State (Admin only, billed separately)
+  // Ad Banners State
   const [banners, setBanners] = useState<AdBanner[]>(() => {
     try {
       const saved = localStorage.getItem('achenacidade_banners');
-      return saved ? JSON.parse(saved) : initialBanners;
+      if (!saved) return initialBanners;
+      const parsed = JSON.parse(saved) as AdBanner[];
+      return Array.isArray(parsed)
+        ? parsed.map((b) => ({ ...b, priceMonthly: 0 }))
+        : initialBanners;
     } catch {
       return initialBanners;
     }
@@ -1103,7 +1107,11 @@ export const DirectoryProvider: React.FC<{ children: React.ReactNode }> = ({ chi
   const [paymentTransactions, setPaymentTransactions] = useState<PaymentTransaction[]>(() => {
     try {
       const saved = localStorage.getItem('achenacidade_payment_transactions');
-      return saved ? JSON.parse(saved) : initialPaymentTransactions;
+      if (!saved) return initialPaymentTransactions;
+      const parsed = JSON.parse(saved) as PaymentTransaction[];
+      return Array.isArray(parsed)
+        ? parsed.filter((tx) => tx.id !== 'tx-mp-01' && tx.id !== 'tx-mp-02')
+        : initialPaymentTransactions;
     } catch {
       return initialPaymentTransactions;
     }
@@ -3295,8 +3303,14 @@ export const DirectoryProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     if (data.products) setProducts(data.products);
     if (data.services) setServices(data.services);
     if (data.storeProductCategories) setStoreProductCategories(data.storeProductCategories);
-    if (data.banners) setBanners(data.banners);
-    if (data.paymentTransactions) setPaymentTransactions(data.paymentTransactions);
+    if (data.banners) {
+      setBanners(data.banners.map((b) => ({ ...b, priceMonthly: 0 })));
+    }
+    if (data.paymentTransactions) {
+      setPaymentTransactions(
+        data.paymentTransactions.filter((tx) => tx.id !== 'tx-mp-01' && tx.id !== 'tx-mp-02')
+      );
+    }
     if (data.emailLogs) setEmailLogs(data.emailLogs);
 
     if (data.settings?.adminTheme) setAdminThemeState(data.settings.adminTheme);

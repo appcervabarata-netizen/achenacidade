@@ -9,11 +9,14 @@
     "build": "vite build",
     "preview": "vite preview",
     "clean": "rm -rf dist server.js",
-    "lint": "tsc --noEmit"
+    "lint": "tsc --noEmit",
+    "cron:maps": "tsx server/cronGoogleMapsAlagoinhas.ts",
+    "cron:maps:once": "tsx server/cronGoogleMapsAlagoinhas.ts --run-once"
   },
   "dependencies": {
     "@google/genai": "^2.4.0",
     "@tailwindcss/vite": "^4.3.3",
+    "@types/node-cron": "^3.0.11",
     "@types/nodemailer": "^8.0.2",
     "@types/qrcode": "^1.5.6",
     "@vitejs/plugin-react": "^6.1.1",
@@ -22,6 +25,7 @@
     "lucide-react": "^0.546.0",
     "motion": "^12.23.24",
     "mysql2": "^3.24.6",
+    "node-cron": "^4.6.0",
     "nodemailer": "^10.6.0",
     "qrcode": "^1.5.4",
     "react": "^19.0.1",

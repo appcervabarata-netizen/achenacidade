@@ -127,12 +127,6 @@ export const AdminModal: React.FC = () => {
   const activeCitiesCount = cities.filter((c) => c.isActive).length;
   const totalBusinesses = businesses.length;
   const totalProducts = products.length;
-  const monthlyRevenue = businesses.reduce((acc, b) => {
-    if (b.subscriptionStatus === 'cancelled') return acc;
-    const p = plans.find((pl) => pl.id === b.planId);
-    if (!p || isLifetimePlan(p) || isInviteTrialPlan(p)) return acc;
-    return acc + (p.priceMonthly || 0);
-  }, 0);
 
   // Copy code helper
   const handleCopy = (key: string, text: string) => {
@@ -380,15 +374,15 @@ export const AdminModal: React.FC = () => {
           {activeTab === 'dashboard' && (
             <div className="space-y-6">
               {/* Stat Cards */}
-              <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
                 <div className="p-4 rounded-2xl bg-blue-50 dark:bg-blue-950/40 border border-blue-200 dark:border-blue-900">
                   <span className="text-xs font-bold text-blue-700 dark:text-blue-300 uppercase tracking-wider">
                     Cidades Cadastradas
                   </span>
-                  <div className="mt-2 text-2xl sm:text-3xl font-extrabold text-blue-900 dark:text-white font-mono">
+                  <div className="mt-2 text-2xl sm:text-3xl font-extrabold text-blue-900 dark:text-white font-mono tabular-nums">
                     {totalCities}
                   </div>
-                  <span className="text-[11px] text-slate-500 dark:text-slate-400">
+                  <span className="text-[11px] text-slate-500 dark:text-slate-400 tabular-nums">
                     {activeCitiesCount} ativas no seletor
                   </span>
                 </div>
@@ -397,7 +391,7 @@ export const AdminModal: React.FC = () => {
                   <span className="text-xs font-bold text-orange-700 dark:text-orange-300 uppercase tracking-wider">
                     Empresas Ativas
                   </span>
-                  <div className="mt-2 text-2xl sm:text-3xl font-extrabold text-orange-900 dark:text-white font-mono">
+                  <div className="mt-2 text-2xl sm:text-3xl font-extrabold text-orange-900 dark:text-white font-mono tabular-nums">
                     {totalBusinesses}
                   </div>
                   <span className="text-[11px] text-slate-500 dark:text-slate-400">
@@ -409,23 +403,11 @@ export const AdminModal: React.FC = () => {
                   <span className="text-xs font-bold text-emerald-700 dark:text-emerald-300 uppercase tracking-wider">
                     Produtos na Vitrine
                   </span>
-                  <div className="mt-2 text-2xl sm:text-3xl font-extrabold text-emerald-900 dark:text-white font-mono">
+                  <div className="mt-2 text-2xl sm:text-3xl font-extrabold text-emerald-900 dark:text-white font-mono tabular-nums">
                     {totalProducts}
                   </div>
                   <span className="text-[11px] text-slate-500 dark:text-slate-400">
                     Controlados por plano
-                  </span>
-                </div>
-
-                <div className="p-4 rounded-2xl bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700">
-                  <span className="text-xs font-bold text-slate-700 dark:text-slate-300 uppercase tracking-wider">
-                    Faturamento Mensal
-                  </span>
-                  <div className="mt-2 text-2xl sm:text-3xl font-extrabold text-slate-900 dark:text-white font-mono">
-                    R$ {monthlyRevenue.toFixed(2)}
-                  </div>
-                  <span className="text-[11px] text-slate-500 dark:text-slate-400">
-                    Soma das assinaturas
                   </span>
                 </div>
               </div>

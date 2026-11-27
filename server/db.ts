@@ -460,6 +460,7 @@ const EXPECTED_TABLE_COLUMNS: Record<string, Array<{ name: string; definition: s
     { name: 'city_name', definition: "VARCHAR(255) NOT NULL DEFAULT 'Alagoinhas - BA'" },
     { name: 'category_id', definition: "VARCHAR(120) NOT NULL DEFAULT 'cat-1'" },
     { name: 'category_name', definition: 'VARCHAR(255) NULL' },
+    { name: 'plan_id', definition: "VARCHAR(120) NOT NULL DEFAULT 'plan-free'" },
     { name: 'description', definition: 'LONGTEXT NULL' },
     { name: 'phone', definition: "VARCHAR(80) NOT NULL DEFAULT ''" },
     { name: 'whatsapp', definition: "VARCHAR(80) NOT NULL DEFAULT ''" },
@@ -916,6 +917,7 @@ export async function ensureDatabaseSchema(forceMigrate = false): Promise<boolea
           city_name VARCHAR(255) NOT NULL DEFAULT 'Alagoinhas - BA',
           category_id VARCHAR(120) NOT NULL DEFAULT 'cat-1',
           category_name VARCHAR(255) NULL,
+          plan_id VARCHAR(120) NOT NULL DEFAULT 'plan-free',
           description LONGTEXT NULL,
           phone VARCHAR(80) NOT NULL DEFAULT '',
           whatsapp VARCHAR(80) NOT NULL DEFAULT '',
@@ -944,6 +946,11 @@ export async function ensureDatabaseSchema(forceMigrate = false): Promise<boolea
       }
 
       await ensureDefaultAdminUser(conn);
+
+      await conn.query(
+        `DELETE FROM payment_transactions WHERE id IN ('tx-mp-01', 'tx-mp-02')`
+      );
+      await conn.query(`UPDATE banners SET price_monthly = 0 WHERE price_monthly > 0`);
 
       schemaInitialized = true;
       return true;
@@ -3524,6 +3531,7 @@ export interface DbGoogleMapsBusinessDraft {
   cityName: string;
   categoryId: string;
   categoryName?: string;
+  planId?: string;
   description: string;
   phone: string;
   whatsapp: string;
@@ -3552,6 +3560,7 @@ function mapBusinessDraftRow(r: RowDataPacket): DbGoogleMapsBusinessDraft {
     cityName: String(r.city_name || 'Alagoinhas - BA'),
     categoryId: String(r.category_id || 'cat-1'),
     ...(r.category_name ? { categoryName: String(r.category_name) } : {}),
+    planId: String(r.plan_id || 'plan-free'),
     description: String(r.description || ''),
     phone: String(r.phone || ''),
     whatsapp: String(r.whatsapp || ''),
@@ -3634,11 +3643,11 @@ export async function insertBusinessDraftsInDb(
   for (const d of drafts) {
     const [res] = await activePool.query<any>(
       `INSERT IGNORE INTO business_drafts (
-         id, google_place_id, name, city_id, city_name, category_id, category_name,
+         id, google_place_id, name, city_id, city_name, category_id, category_name, plan_id,
          description, phone, whatsapp, address, neighborhood, opening_hours, website,
          google_maps_uri, primary_type, rating, user_rating_count, source_query,
          source_location_label, status, approved_business_id, created_at
-       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         d.id,
         d.googlePlaceId,
@@ -3647,6 +3656,7 @@ export async function insertBusinessDraftsInDb(
         d.cityName,
         d.categoryId,
         d.categoryName || null,
+        d.planId || 'plan-free',
         d.description || '',
         d.phone || '',
         d.whatsapp || '',
@@ -3684,6 +3694,7 @@ export async function updateBusinessDraftInDb(
     { key: 'cityName', col: 'city_name' },
     { key: 'categoryId', col: 'category_id' },
     { key: 'categoryName', col: 'category_name' },
+    { key: 'planId', col: 'plan_id' },
     { key: 'description', col: 'description' },
     { key: 'phone', col: 'phone' },
     { key: 'whatsapp', col: 'whatsapp' },

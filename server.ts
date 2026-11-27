@@ -3243,7 +3243,7 @@ function buildApprovedBusinessFromDraft(
     slug,
     cityId: draft.cityId || 'city-1',
     categoryId: draft.categoryId || 'cat-1',
-    planId: 'plan-free',
+    planId: draft.planId || 'plan-free',
     description: draft.description || '',
     phone: draft.phone || '',
     whatsapp: draft.whatsapp || '',
@@ -3411,15 +3411,103 @@ app.get('/api/google-maps/drafts', async (req, res) => {
       listAllDraftsMerged(),
       getGoogleMapsImporterConfig(),
     ]);
+
+    const counts = {
+      total: drafts.length,
+      pending: drafts.filter((d) => d.status === 'pending').length,
+      approved: drafts.filter((d) => d.status === 'approved').length,
+      rejected: drafts.filter((d) => d.status === 'rejected').length,
+    };
+
+    const statusParam = typeof req.query.status === 'string' ? req.query.status.trim() : 'all';
+    const categoryIdParam = typeof req.query.categoryId === 'string' ? req.query.categoryId.trim() : 'all';
+    const cityParam = typeof req.query.city === 'string' ? req.query.city.trim() : 'all';
+    const searchParam = typeof req.query.search === 'string' ? req.query.search.trim().toLowerCase() : '';
+    const hasPageParam = typeof req.query.page === 'string' || typeof req.query.pageSize === 'string';
+
+    const statusScoped =
+      statusParam && statusParam !== 'all'
+        ? drafts.filter((d) => d.status === statusParam)
+        : drafts;
+
+    const availableCities = Array.from(
+      new Set(statusScoped.map((d) => (d.cityName || '').trim()).filter(Boolean))
+    ).sort((a, b) => a.localeCompare(b, 'pt-BR'));
+
+    const filtered = statusScoped.filter((d) => {
+      if (categoryIdParam && categoryIdParam !== 'all' && d.categoryId !== categoryIdParam) {
+        return false;
+      }
+      if (
+        cityParam &&
+        cityParam !== 'all' &&
+        (d.cityName || '').trim().toLowerCase() !== cityParam.toLowerCase()
+      ) {
+        return false;
+      }
+      if (searchParam) {
+        const haystack = [
+          d.name,
+          d.neighborhood,
+          d.cityName,
+          d.categoryName,
+          d.address,
+          d.phone,
+          d.whatsapp,
+          d.sourceQuery,
+        ]
+          .filter(Boolean)
+          .join(' ')
+          .toLowerCase();
+        if (!haystack.includes(searchParam)) return false;
+      }
+      return true;
+    });
+
+    const configPayload = {
+      ...cfg,
+      isRunning: isGmpBatchRunning,
+      hasApiKey: Boolean(resolveGoogleMapsApiKey()),
+    };
+
+    if (hasPageParam) {
+      const pageSize = Math.max(
+        5,
+        Math.min(100, Math.round(Number(req.query.pageSize) || 10))
+      );
+      const totalItems = filtered.length;
+      const totalPages = Math.max(1, Math.ceil(totalItems / pageSize));
+      const requestedPage = Math.round(Number(req.query.page) || 1);
+      const page = Math.max(1, Math.min(totalPages, requestedPage));
+      const startIndex = (page - 1) * pageSize;
+      const pagedDrafts = filtered.slice(startIndex, startIndex + pageSize);
+
+      res.json({
+        success: true,
+        databaseEnabled,
+        drafts: pagedDrafts,
+        counts,
+        availableCities,
+        pagination: {
+          page,
+          pageSize,
+          totalItems,
+          totalPages,
+          hasPreviousPage: page > 1,
+          hasNextPage: page < totalPages,
+        },
+        config: configPayload,
+      });
+      return;
+    }
+
     res.json({
       success: true,
       databaseEnabled,
-      drafts,
-      config: {
-        ...cfg,
-        isRunning: isGmpBatchRunning,
-        hasApiKey: Boolean(resolveGoogleMapsApiKey()),
-      },
+      drafts: filtered,
+      counts,
+      availableCities,
+      config: configPayload,
     });
   } catch (err) {
     const message = err instanceof Error ? err.message : 'Erro ao carregar rascunhos do Google Maps.';

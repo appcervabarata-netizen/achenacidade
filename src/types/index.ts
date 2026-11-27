@@ -454,6 +454,7 @@ export interface GoogleMapsBusinessDraft {
   cityName: string;
   categoryId: string;
   categoryName?: string;
+  planId?: string;
   description: string;
   phone: string;
   whatsapp: string;
@@ -486,5 +487,21 @@ export interface GoogleMapsImporterConfig {
   lastError?: string;
   isRunning?: boolean;
   hasApiKey?: boolean;
+}
+
+export interface GoogleMapsDraftsPagination {
+  page: number;
+  pageSize: number;
+  totalItems: number;
+  totalPages: number;
+  hasPreviousPage: boolean;
+  hasNextPage: boolean;
+}
+
+export interface GoogleMapsDraftsCounts {
+  total: number;
+  pending: number;
+  approved: number;
+  rejected: number;
 }
 

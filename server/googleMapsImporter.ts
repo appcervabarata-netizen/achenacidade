@@ -197,15 +197,19 @@ export function resolveGoogleMapsApiKey(): string {
 }
 
 export function buildRotatingQuerySchedule(
-  availableCategories?: DirectoryCategoryTarget[]
+  availableCategories?: DirectoryCategoryTarget[],
+  options?: { onlyAlagoinhas?: boolean }
 ): ImporterQueryPlanItem[] {
   const categoryNameById = new Map((availableCategories || []).map((c) => [c.id, c.name]));
   const plan: ImporterQueryPlanItem[] = [];
+  const locations = options?.onlyAlagoinhas
+    ? REGIONAL_LOCATIONS.filter((loc) => loc.cityQuery.toLowerCase().includes('alagoinhas'))
+    : REGIONAL_LOCATIONS;
 
   // Intercala categorias diferentes antes de avançar para a próxima localidade/termo
   // garantindo máxima variedade em cada lote (50 ou 10 empresas)
-  for (let locIdx = 0; locIdx < REGIONAL_LOCATIONS.length; locIdx++) {
-    const loc = REGIONAL_LOCATIONS[locIdx];
+  for (let locIdx = 0; locIdx < locations.length; locIdx++) {
+    const loc = locations[locIdx];
     for (let catIdx = 0; catIdx < CATEGORY_QUERY_BLUEPRINTS.length; catIdx++) {
       const bp = CATEGORY_QUERY_BLUEPRINTS[catIdx];
       const term = bp.terms[locIdx % bp.terms.length];
@@ -256,7 +260,11 @@ function extractBrazilianPhoneAndWhatsapp(national?: string, international?: str
   };
 }
 
-function extractAddressParts(place: any, fallbackCityLabel: string): {
+function extractAddressParts(
+  place: any,
+  fallbackCityLabel: string,
+  onlyAlagoinhas = false
+): {
   address: string;
   neighborhood: string;
   cityName: string;
@@ -330,7 +338,9 @@ function extractAddressParts(place: any, fallbackCityLabel: string): {
 
   const isWithinRegion =
     stateRaw.toUpperCase() === 'BA' &&
-    allowedRegionalCities.some((allowed) => normalizedCity.includes(allowed));
+    (onlyAlagoinhas
+      ? normalizedCity.includes('alagoinhas')
+      : allowedRegionalCities.some((allowed) => normalizedCity.includes(allowed)));
 
   return {
     address,
@@ -418,6 +428,7 @@ export async function runGoogleMapsImportBatch(params: {
   existingSignatures: Set<string>;
   categories?: DirectoryCategoryTarget[];
   cities?: DirectoryCityTarget[];
+  onlyAlagoinhas?: boolean;
 }): Promise<GoogleMapsBatchResult> {
   const apiKey = resolveGoogleMapsApiKey();
   if (!apiKey) {
@@ -434,7 +445,9 @@ export async function runGoogleMapsImportBatch(params: {
     };
   }
 
-  const schedule = buildRotatingQuerySchedule(params.categories);
+  const schedule = buildRotatingQuerySchedule(params.categories, {
+    onlyAlagoinhas: Boolean(params.onlyAlagoinhas),
+  });
   const totalPlans = schedule.length;
   const target = Math.max(1, Math.min(60, Math.round(params.targetCount)));
 
@@ -552,7 +565,11 @@ export async function runGoogleMapsImportBatch(params: {
           continue;
         }
 
-        const addr = extractAddressParts(place, queryItem.locationLabel);
+        const addr = extractAddressParts(
+          place,
+          queryItem.locationLabel,
+          Boolean(params.onlyAlagoinhas)
+        );
         if (!addr.isWithinRegion) {
           continue;
         }
@@ -590,6 +607,7 @@ export async function runGoogleMapsImportBatch(params: {
           cityName: addr.cityName,
           categoryId: mappedCat.categoryId,
           categoryName: mappedCat.categoryName,
+          planId: 'plan-free',
           description,
           phone,
           whatsapp,
